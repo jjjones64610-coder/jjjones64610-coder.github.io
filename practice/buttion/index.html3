@@ -1,0 +1,33 @@
+document.addEventListener("DOMContentLoaded", () => {
+  const img = document.querySelector("img[usemap]");
+  const mapName = img.getAttribute("usemap").replace("#", "");
+  const map = document.querySelector(`map[name="${mapName}"]`);
+
+  if (!map) {
+    console.error(`No <map> found with name="${mapName}"`);
+  } else {
+    console.log(`Image is correctly linked to map "${mapName}"`);
+  }
+
+  // Check that each <area> has required attributes
+  map.querySelectorAll("area").forEach((area, i) => {
+    if (!area.hasAttribute("shape") || !area.hasAttribute("coords") || !area.hasAttribute("href")) {
+      console.error(`Area ${i} is missing required attributes`);
+    } else {
+      console.log(`Area ${i} is valid: shape=${area.shape}, coords=${area.coords}`);
+    }
+  });
+});
+
+// Popup functions
+function showPopup(e) {
+  e.preventDefault(); // stop default link
+  document.getElementById("overlay").style.display = "block";
+  document.getElementById("popup").style.display = "block";
+}
+
+function closePopup() {
+  document.getElementById("overlay").style.display = "none";
+  document.getElementById("popup").style.display = "none";
+}
+

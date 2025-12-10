@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Buttion Demo</title>
+  <!-- Link to CSS -->
+  <link rel="stylesheet" href="index.html2">
+</head>
+<body>
+  <!-- Main image -->
+  <img src="images/IMG_1132.jpeg" alt="Image Press" usemap="#pic">
+
+  <!-- Image map -->
+  <map name="pic">
+    <!-- Center circle triggers popup -->
+    <area shape="circle" coords="300,150,50" href="#" alt="Center" onclick="showPopup(event)">
+    <!-- Example other area -->
+    <area shape="rect" coords="50,40,200,160" href="page.html" alt="Other link">
+  </map>
+
+  <!-- Overlay + popup -->
+  <div id="overlay" onclick="closePopup()"></div>
+  <div id="popup">
+    <h2>Center Area Clicked</h2>
+    <img src="images/Screenshot-2025-12-08-at-2.39.44-PM.jpeg" alt="Popup Screenshot" style="max-width:100%; height:auto;">
+    <button onclick="closePopup()">Close</button>
+  </div>
+
+  <!-- Link to JS -->
+  <script src="index.html3"></script>
+</body>
+</html>
+
