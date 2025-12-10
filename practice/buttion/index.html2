@@ -1,50 +1,171 @@
+:root{
+  --overlay-bg: rgba(0,0,0,0.6);
+  --popup-bg: #fff;
+  --popup-border: #333;
+  --accent: #333;
+  --accent-hover: #555;
+  --radius: 8px;
+  --max-popup-width: 600px;
+}
+
+/* base */
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  color: #111;
+  background: #fafafa;
 }
 
+/* container to center image if you want */
+.image-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+  box-sizing: border-box;
+  position: relative;
+}
+
+/* make image scale responsively while keeping natural size option.
+   IMPORTANT: if your image map coords are pixel-based and you want them to keep working after scaling,
+   include the JS provided below to rescale the area coords dynamically.
+*/
 img[usemap] {
   display: block;
-  max-width: none; /* keep natural size so coords match */
+  width: 100%;
+  height: auto;
+  max-width: 100%;
   border: 0;
+  line-height: 0;
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
+/* If you absolutely must keep the image at its natural size (so coords match without JS),
+   add the class "keep-natural-size" on the img element to override the responsive rule:
+   <img src="..." class="keep-natural-size" usemap="#mymap">
+*/
+img.keep-natural-size {
+  width: auto;
+  max-width: none;
+}
+
+/* overlay that covers the page when popup is active */
 #overlay {
   display: none;
   position: fixed;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  background: rgba(0,0,0,0.5);
+  inset: 0; /* top:0; right:0; bottom:0; left:0; */
+  background: var(--overlay-bg);
   z-index: 999;
+  transition: opacity 180ms ease;
+  opacity: 0;
+  pointer-events: none;
 }
 
+#overlay.active {
+  display: block;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* popup centered on screen */
 #popup {
   display: none;
   position: fixed;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  background: #fff;
-  border: 2px solid #333;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.98);
+  background: var(--popup-bg);
+  border: 2px solid var(--popup-border);
   padding: 20px;
   z-index: 1000;
-  max-width: 600px;
-  text-align: center;
+  width: min(var(--max-popup-width), 92%);
+  box-sizing: border-box;
+  text-align: left;
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  transition: transform 160ms ease, opacity 160ms ease;
+  opacity: 0;
 }
 
+/* active states */
+#popup.active {
+  display: block;
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+
+/* header and content */
 #popup h2 {
-  margin-top: 0;
+  margin: 0 0 8px 0;
+  font-size: 1.25rem;
 }
 
-#popup button {
-  margin-top: 15px;
+#popup p {
+  margin: 0 0 12px 0;
+  line-height: 1.45;
+  font-size: 0.98rem;
+}
+
+/* actions */
+#popup .actions {
+  margin-top: 12px;
+  text-align: right;
+}
+
+/* primary button */
+#popup button,
+#popup .btn {
+  margin-left: 8px;
   padding: 8px 12px;
-  background: #333;
+  background: var(--accent);
   color: #fff;
   border: none;
+  border-radius: 6px;
   cursor: pointer;
+  font-size: 0.95rem;
 }
 
-#popup button:hover {
-  background: #555;
+#popup button:hover,
+#popup .btn:hover {
+  background: var(--accent-hover);
 }
 
+/* close X in top-right (optional) */
+#popup .close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: transparent;
+  color: #333;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* small screens adjustments */
+@media (max-width: 480px) {
+  #popup {
+    padding: 14px;
+    width: calc(100% - 28px);
+    left: 50%;
+    top: 50%;
+  }
+  #popup h2 { font-size: 1.05rem; }
+}
+
+/* Accessibility helper: hidden visually but available to screen readers */
+.sr-only {
+  position: absolute !important;
+  height: 1px; width: 1px;
+  overflow: hidden;
+  clip: rect(1px,1px,1px,1px);
+  white-space: nowrap;
+}
