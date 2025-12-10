@@ -1,33 +1,192 @@
-document.addEventListener("DOMContentLoaded", () => {
-  const img = document.querySelector("img[usemap]");
-  const mapName = img.getAttribute("usemap").replace("#", "");
-  const map = document.querySelector(`map[name="${mapName}"]`);
-
-  if (!map) {
-    console.error(`No <map> found with name="${mapName}"`);
-  } else {
-    console.log(`Image is correctly linked to map "${mapName}"`);
+(function () {
+  // small debounce helper
+  function debounce(fn, wait) {
+    let t;
+    return function () {
+      const args = arguments;
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
+    };
   }
 
-  // Check that each <area> has required attributes
-  map.querySelectorAll("area").forEach((area, i) => {
-    if (!area.hasAttribute("shape") || !area.hasAttribute("coords") || !area.hasAttribute("href")) {
-      console.error(`Area ${i} is missing required attributes`);
-    } else {
-      console.log(`Area ${i} is valid: shape=${area.shape}, coords=${area.coords}`);
+  // Parse coords string -> numbers
+  function parseCoords(coordsStr) {
+    return coordsStr.split(',').map(s => Number(s.trim()));
+  }
+
+  // Format coords array -> string
+  function formatCoords(arr) {
+    return arr.join(',');
+  }
+
+  // Scale coords according to shape
+  function scaleCoords(shape, originalCoords, scale) {
+    // For circle: x,y,r -> scale x,y, r
+    // For rect: left,top,right,bottom -> scale all
+    // For poly: pairs -> scale all
+    if (!Array.isArray(originalCoords) || originalCoords.length === 0) return originalCoords;
+    switch ((shape || '').toLowerCase()) {
+      case 'circle':
+        if (originalCoords.length >= 3) {
+          return [
+            Math.round(originalCoords[0] * scale),
+            Math.round(originalCoords[1] * scale),
+            Math.round(originalCoords[2] * scale)
+          ];
+        }
+        return originalCoords.map(v => Math.round(v * scale));
+      case 'rect':
+      case 'rectangle':
+        return originalCoords.map(v => Math.round(v * scale));
+      case 'poly':
+      case 'polygon':
+      default:
+        return originalCoords.map(v => Math.round(v * scale));
     }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    // Find all images that use an image map
+    const images = Array.from(document.querySelectorAll('img[usemap]'));
+
+    if (images.length === 0) {
+      console.warn('No <img> with a usemap attribute found on this page.');
+    }
+
+    // Popup elements
+    const overlay = document.getElementById('overlay');
+    const popup = document.getElementById('popup');
+
+    // Ensure overlay/popup exist - if not, create minimal fallbacks to avoid errors
+    if (!overlay) {
+      console.warn('#overlay not found. Creating fallback overlay.');
+    }
+    if (!popup) {
+      console.warn('#popup not found. Creating fallback popup.');
+    }
+
+    function setActiveState(isActive) {
+      if (overlay) {
+        overlay.classList.toggle('active', isActive);
+        overlay.style.display = isActive ? 'block' : 'none';
+        overlay.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+      }
+      if (popup) {
+        popup.classList.toggle('active', isActive);
+        popup.style.display = isActive ? 'block' : 'none';
+        popup.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+        if (isActive) {
+          // focus first focusable element or the close button
+          const btn = popup.querySelector('button, [tabindex]:not([tabindex="-1"])');
+          if (btn && typeof btn.focus === 'function') btn.focus();
+        }
+      }
+    }
+
+    function openPopup(e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      setActiveState(true);
+    }
+
+    function closePopup(e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      setActiveState(false);
+    }
+
+    // Expose to window for compatibility with inline onclick attributes
+    window.showPopup = openPopup;
+    window.closePopup = closePopup;
+
+    // Close popup via overlay click
+    if (overlay) {
+      overlay.addEventListener('click', closePopup);
+    }
+
+    // Close on ESC
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' || ev.key === 'Esc') {
+        // only close if popup is active
+        const isActive = popup ? popup.classList.contains('active') || popup.style.display !== 'none' : false;
+        if (isActive) closePopup(ev);
+      }
+    });
+
+    // For each image/usemap, wire up area validation, event handlers and coordinate scaling
+    images.forEach((img) => {
+      const usemap = img.getAttribute('usemap');
+      if (!usemap) return;
+      const mapName = usemap.replace('#', '').trim();
+      if (!mapName) return;
+
+      const map = document.querySelector(`map[name="${mapName}"]`);
+      if (!map) {
+        console.error(`No <map> found with name="${mapName}" for image`, img);
+        return;
+      }
+
+      // Pre-store original coords for each area so scaling is predictable
+      const areas = Array.from(map.querySelectorAll('area'));
+      areas.forEach((area, idx) => {
+        // Validate presence of required attributes
+        if (!area.hasAttribute('shape') || !area.hasAttribute('coords')) {
+          console.error(`Area ${idx} missing required 'shape' or 'coords' attribute`, area);
+        }
+
+        // Save original coords if not already saved
+        if (!area.dataset.originalCoords) {
+          area.dataset.originalCoords = area.getAttribute('coords') || '';
+        }
+
+        // If area href is just "#" (or empty), intercept the click and open popup
+        const href = (area.getAttribute('href') || '').trim();
+        // Use dataset attribute data-popup="true" or href="#" to indicate popup behavior
+        const wantsPopup = href === '#' || area.dataset.popup === 'true' || area.getAttribute('data-popup') === 'true';
+        if (wantsPopup) {
+          // Remove inline onclick to avoid double-calls when using this script; if inline exists we'll still work
+          area.addEventListener('click', (ev) => {
+            if (href === '#') ev.preventDefault();
+            openPopup(ev);
+          });
+        }
+      });
+
+      // Resize handler to scale coords relative to image's natural size
+      function resizeMap() {
+        // if no naturalWidth (image not loaded), skip; image load handler will call resizeMap later
+        const naturalW = img.naturalWidth || img.getAttribute('width') || 0;
+        const naturalH = img.naturalHeight || img.getAttribute('height') || 0;
+        const displayW = img.clientWidth || img.offsetWidth || naturalW;
+        const displayH = img.clientHeight || img.offsetHeight || naturalH;
+
+        // If we don't have natural size, skip scaling (can't compute ratio)
+        if (!naturalW || isNaN(naturalW) || naturalW === 0) {
+          // nothing we can do right now
+          return;
+        }
+
+        // scale based on width (common case). If needed, a separate scaleY could be used.
+        const scale = displayW / naturalW;
+
+        areas.forEach((area) => {
+          const orig = area.dataset.originalCoords || area.getAttribute('coords') || '';
+          if (!orig) return;
+          const origNums = parseCoords(orig);
+          const scaled = scaleCoords((area.getAttribute('shape') || ''), origNums, scale);
+          area.setAttribute('coords', formatCoords(scaled));
+        });
+      }
+
+      // Run on image load and on window resize
+      if (img.complete) {
+        resizeMap();
+      } else {
+        img.addEventListener('load', resizeMap);
+      }
+      // Also run after a small delay in case fonts/layout change
+      window.addEventListener('resize', debounce(resizeMap, 120));
+    });
+
+    // Final log for devs to show script is active
+    console.log('Image map & popup script initialized.');
   });
-});
-
-// Popup functions
-function showPopup(e) {
-  e.preventDefault(); // stop default link
-  document.getElementById("overlay").style.display = "block";
-  document.getElementById("popup").style.display = "block";
-}
-
-function closePopup() {
-  document.getElementById("overlay").style.display = "none";
-  document.getElementById("popup").style.display = "none";
-}
-
+})();
