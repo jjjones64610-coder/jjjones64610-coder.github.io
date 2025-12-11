@@ -9,38 +9,38 @@
   <style>
     html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
     /* center & responsive image container */
-    .img-wrap{max-width:800px;margin:20px auto;text-align:center}
+    .img-wrap{max-width:800px;margin:20px auto;text-align:center; position:relative}
     .img-wrap img{max-width:100%;height:auto;display:block;margin:0 auto}
 
-    /* overlay */
-    #overlay{
-      position:fixed;
-      inset:0;
-      background:rgba(0,0,0,0.45);
-      display:none;
-      z-index:999;
-      cursor:pointer;
-    }
-
-    /* popup */
-    #popup{
-      position:fixed;
+    /* small overlay text that appears over the image center */
+    .img-overlay{
+      position:absolute;
       left:50%;
       top:50%;
       transform:translate(-50%,-50%);
-      background:#fff;
-      padding:16px;
+      background:rgba(0,0,0,0.75);
+      color:#fff;
+      padding:12px 16px;
       border-radius:8px;
-      box-shadow:0 8px 30px rgba(0,0,0,0.25);
-      max-width:90%;
-      width:420px;
+      box-shadow:0 6px 18px rgba(0,0,0,0.35);
       display:none;
-      z-index:1000;
+      z-index:10;
+      pointer-events:auto;
+      font-weight:600;
+      letter-spacing:0.3px;
+      text-align:center;
+      white-space:nowrap;
     }
-    #popup h2{margin:0 0 8px;font-size:1.1rem}
-    #popup img{max-width:100%;height:auto;display:block;margin-bottom:10px}
-    #popup button{padding:8px 12px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;cursor:pointer}
-    #popup button:hover{background:#eaeaea}
+
+    /* Optional small close affordance inside the overlay */
+    .img-overlay button{
+      margin-left:10px;
+      background:transparent;
+      border:0;
+      color:rgba(255,255,255,0.9);
+      cursor:pointer;
+      font-weight:700;
+    }
 
     /* Make <area> appear clickable on hover in some browsers */
     area{cursor:pointer}
@@ -53,56 +53,59 @@
 
     <!-- Image map -->
     <map name="pic">
-      <!-- Center circle triggers popup -->
+      <!-- Center circle triggers overlay text -->
       <!-- coords are pixel values relative to the image's intrinsic size.
            If you change the displayed image size you may need to update coords
            or use a library to scale imagemaps responsively. -->
-      <area shape="circle" coords="300,150,50" href="#" alt="Center" onclick="showPopup(event)">
+      <area shape="circle" coords="300,150,50" href="#" alt="Center" onclick="showText(event)">
       <!-- Example other area -->
       <area shape="rect" coords="50,40,200,160" href="page.html" alt="Other link">
     </map>
-  </div>
 
-  <!-- Overlay + popup -->
-  <div id="overlay" onclick="closePopup()" aria-hidden="true"></div>
-
-  <div id="popup" role="dialog" aria-modal="true" aria-hidden="true">
-    <h2>Center Area Clicked</h2>
-    <img src="images/Screenshot-2025-12-08-at-2.39.44-PM.jpeg" alt="Popup Screenshot">
-    <div style="text-align:right">
-      <button type="button" onclick="closePopup()">Close</button>
+    <!-- Text overlay that appears over the image center -->
+    <div id="imgOverlay" class="img-overlay" role="status" aria-hidden="true">
+      dont touch
+      <button aria-label="Close message" onclick="hideText()" title="Close">×</button>
     </div>
   </div>
 
   <!-- Inline JS so the page works without external files -->
   <script>
-    function showPopup(e){
+    function showText(e){
       if(e && e.preventDefault) e.preventDefault();
-      document.getElementById('overlay').style.display = 'block';
-      const p = document.getElementById('popup');
-      p.style.display = 'block';
-      p.setAttribute('aria-hidden','false');
-      document.getElementById('overlay').setAttribute('aria-hidden','false');
-      // Focus the popup for accessibility
-      p.querySelector('button')?.focus();
+      const overlay = document.getElementById('imgOverlay');
+      overlay.style.display = 'block';
+      overlay.setAttribute('aria-hidden','false');
+      // move focus to the close button for accessibility
+      overlay.querySelector('button')?.focus();
+      // optional: hide automatically after a few seconds (comment out if you don't want this)
+      // setTimeout(hideText, 3500);
     }
 
-    function closePopup(){
-      document.getElementById('overlay').style.display = 'none';
-      const p = document.getElementById('popup');
-      p.style.display = 'none';
-      p.setAttribute('aria-hidden','true');
-      document.getElementById('overlay').setAttribute('aria-hidden','true');
+    function hideText(){
+      const overlay = document.getElementById('imgOverlay');
+      overlay.style.display = 'none';
+      overlay.setAttribute('aria-hidden','true');
+      // return focus to the image
+      document.getElementById('mainImage')?.focus();
     }
 
-    // Close popup with ESC key
+    // Close overlay with ESC key
     document.addEventListener('keydown', function(e){
       if(e.key === 'Escape'){
-        const p = document.getElementById('popup');
-        if(p && p.style.display !== 'none') closePopup();
+        const overlay = document.getElementById('imgOverlay');
+        if(overlay && overlay.style.display !== 'none') hideText();
       }
     });
 
+    // If you also want clicking anywhere outside the overlay (but inside .img-wrap) to close:
+    document.querySelector('.img-wrap').addEventListener('click', function(e){
+      const overlay = document.getElementById('imgOverlay');
+      // if overlay is visible and click target is not inside the overlay, hide it
+      if(overlay && overlay.style.display !== 'none' && !overlay.contains(e.target) && e.target.tagName !== 'AREA'){
+        hideText();
+      }
+    }, true);
   </script>
 </body>
 </html>
