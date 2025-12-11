@@ -1,18 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Buttion Demo</title>
-
-  <!-- Simple styles so overlay/popup actually appear -->
   <style>
     html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
-    /* center & responsive image container */
     .img-wrap{max-width:800px;margin:20px auto;text-align:center; position:relative}
-    .img-wrap img{max-width:100%;height:auto;display:block;margin:0 auto}
-
-    /* small overlay text that appears over the image center */
+    /* ensure the image is focusable and clickable */
+    #mainImage{max-width:100%;height:auto;display:block;margin:0 auto;cursor:pointer}
+    /* overlay text that appears centered over the image */
     .img-overlay{
       position:absolute;
       left:50%;
@@ -27,85 +24,90 @@
       z-index:10;
       pointer-events:auto;
       font-weight:600;
-      letter-spacing:0.3px;
       text-align:center;
       white-space:nowrap;
     }
-
-    /* Optional small close affordance inside the overlay */
     .img-overlay button{
       margin-left:10px;
-      background:transparent;
-      border:0;
-      color:rgba(255,255,255,0.9);
-      cursor:pointer;
-      font-weight:700;
+      background:transparent;border:0;color:rgba(255,255,255,0.9);
+      cursor:pointer;font-weight:700;
     }
-
-    /* Make <area> appear clickable on hover in some browsers */
-    area{cursor:pointer}
   </style>
 </head>
 <body>
   <div class="img-wrap">
-    <!-- Main image. NOTE: keep the image file path correct -->
-    <img src="images/IMG_1132.jpeg" alt="Image Press" usemap="#pic" id="mainImage">
+    <!-- Try ./images/IMG_1132.jpeg or correct path. This example uses the same relative path you had.
+         If it fails to load the onerror handler will swap in a placeholder so you can test. -->
+    <img id="mainImage" src="./images/IMG_1132.jpeg" alt="Image Press" tabindex="0" />
 
-    <!-- Image map -->
-    <map name="pic">
-      <!-- Center circle triggers overlay text -->
-      <!-- coords are pixel values relative to the image's intrinsic size.
-           If you change the displayed image size you may need to update coords
-           or use a library to scale imagemaps responsively. -->
-      <area shape="circle" coords="300,150,50" href="#" alt="Center" onclick="showText(event)">
-      <!-- Example other area -->
-      <area shape="rect" coords="50,40,200,160" href="page.html" alt="Other link">
-    </map>
-
-    <!-- Text overlay that appears over the image center -->
     <div id="imgOverlay" class="img-overlay" role="status" aria-hidden="true">
       dont touch
       <button aria-label="Close message" onclick="hideText()" title="Close">×</button>
     </div>
   </div>
 
-  <!-- Inline JS so the page works without external files -->
   <script>
-    function showText(e){
-      if(e && e.preventDefault) e.preventDefault();
-      const overlay = document.getElementById('imgOverlay');
-      overlay.style.display = 'block';
-      overlay.setAttribute('aria-hidden','false');
-      // move focus to the close button for accessibility
-      overlay.querySelector('button')?.focus();
-      // optional: hide automatically after a few seconds (comment out if you don't want this)
-      // setTimeout(hideText, 3500);
-    }
+    const img = document.getElementById('mainImage');
+    const overlay = document.getElementById('imgOverlay');
 
-    function hideText(){
-      const overlay = document.getElementById('imgOverlay');
-      overlay.style.display = 'none';
-      overlay.setAttribute('aria-hidden','true');
-      // return focus to the image
-      document.getElementById('mainImage')?.focus();
-    }
+    // If the image file fails to load, replace with a placeholder so you can test
+    img.addEventListener('error', function() {
+      console.error('Main image failed to load. Check path/filename:', this.src);
+      // Use a visible placeholder so you can confirm clicks still work
+      this.src = 'https://via.placeholder.com/800x400?text=Missing+Image';
+    });
 
-    // Close overlay with ESC key
-    document.addEventListener('keydown', function(e){
-      if(e.key === 'Escape'){
-        const overlay = document.getElementById('imgOverlay');
-        if(overlay && overlay.style.display !== 'none') hideText();
+    // Click handler: detect clicks near the image center
+    img.addEventListener('click', function(e){
+      const rect = img.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const dx = clickX - centerX;
+      const dy = clickY - centerY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+
+      // threshold radius in px (use % of smaller dimension so it scales)
+      const threshold = Math.min(rect.width, rect.height) * 0.18; // ~18% of smaller side
+
+      if(dist <= threshold){
+        showText();
+      } else {
+        // optional: do nothing or handle other regions
+        // console.log('clicked outside center region');
       }
     });
 
-    // If you also want clicking anywhere outside the overlay (but inside .img-wrap) to close:
-    document.querySelector('.img-wrap').addEventListener('click', function(e){
-      const overlay = document.getElementById('imgOverlay');
-      // if overlay is visible and click target is not inside the overlay, hide it
-      if(overlay && overlay.style.display !== 'none' && !overlay.contains(e.target) && e.target.tagName !== 'AREA'){
-        hideText();
+    // keyboard accessible: Enter/Space on focused image should trigger center test
+    img.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        // simulate a click at the center
+        const rect = img.getBoundingClientRect();
+        const fakeEvent = { clientX: rect.left + rect.width/2, clientY: rect.top + rect.height/2 };
+        img.dispatchEvent(new MouseEvent('click', {bubbles:true, clientX: fakeEvent.clientX, clientY: fakeEvent.clientY}));
       }
-    }, true);
+    });
+
+    function showText(){
+      overlay.style.display = 'block';
+      overlay.setAttribute('aria-hidden','false');
+      overlay.querySelector('button')?.focus();
+      // auto-hide after 3s if you'd like:
+      // setTimeout(hideText, 3000);
+    }
+
+    function hideText(){
+      overlay.style.display = 'none';
+      overlay.setAttribute('aria-hidden','true');
+      img.focus();
+    }
+
+    // Hide overlay with ESC
+    document.addEventListener('keydown', function(e){
+      if(e.key === 'Escape' && overlay.style.display !== 'none') hideText();
+    });
   </script>
 </body>
 </html>
