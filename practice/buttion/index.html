@@ -14,8 +14,7 @@
 
     html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
     .img-wrap{max-width:800px;margin:20px auto;text-align:center;position:relative}
-    #mainImage{max-width:100%;height:auto;display:block;margin:0 auto;cursor:pointer}
-
+    #mainImage{max-width:100%;height:auto;display:block;margin:0 auto}
     /* Centered overlay shown when fragment matches (#donttouch) */
     .overlay{
       display:none; /* hidden by default */
@@ -69,8 +68,8 @@
     <map name="pic">
       <!-- Clicking the center circle navigates to #donttouch and opens the overlay via :target -->
       <!-- coords are in the image's intrinsic pixels; adjust to fit your image -->
-      <area shape="circle" coords="300,150,50" href="#donttouch" alt="Center">
-      <area shape="rect" coords="50,40,200,160" href="page.html" alt="Other link">
+      <area shape="circle" coords="400,800,85" href="#donttouch"/>
+    <area shape="rect" coords="50,40,200,160" href="page.html" alt="Other link">
     </map>
 
     <div class="img-fallback-hint">If you only see the alt text ("Image Press"), check the image path/filename.</div>
