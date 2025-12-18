@@ -1,0 +1,109 @@
+<html>
+  <head>
+    <style>
+      body {
+        background: linear-gradient(135deg, #1a2980, #26d0ce);
+        height: 100vh;
+        margin: 0;
+      }
+      h1 {
+        text-align: center;
+        font-family: Tahoma, sans-serif;
+        color: white;
+        margin-top: 20px;
+      }
+      .container {
+        display: grid;
+        width: 80vw;
+        height: 80vh;
+        margin: auto;
+        grid-template-columns: repeat(6, 1fr);
+        grid-template-rows: repeat(6, 1fr);
+        background-color: Thistle;
+        padding: 10px;
+        border-radius: 20px;
+        border: 8px solid red;
+        gap: 5px;
+      }
+      .heart {
+        height: 10vh;
+        aspect-ratio: 1;
+        --_m: radial-gradient(#000 69%, #0000 70%) 84.5%/50%;
+        -webkit-mask-box-image: var(--_m);
+        mask-border: var(--_m);
+        clip-path: polygon(-41% 0, 50% 91%, 141% 0);
+        background-color: chocolate;
+        margin: auto;
+      }
+      @supports not (-webkit-mask-box-image: var(--_m)) {
+        .heart {
+          mask: radial-gradient(at 70% 31%, #000 29%, #0000 30%),
+            radial-gradient(at 30% 31%, #000 29%, #0000 30%),
+            conic-gradient(#000 0 0) bottom/100% 50% no-repeat;
+        }
+      }
+      .mnm {
+        width: 10vh;
+        height: 10vh;
+        background-color: red;
+        border-radius: 50%;
+        margin: auto;
+        display: grid;
+        place-items: center;
+        font-size: 2em;
+        color: black;
+        font-family: sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Here, I got you some chocolates &lt;3</h1>
+    <div class="container">
+      <!-- Generate 36 grid items in a chessboard pattern -->
+      <!-- Alternate between mnm and heart -->
+      <!-- Row 1 -->
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <!-- Row 2 -->
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <!-- Row 3 -->
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <!-- Row 4 -->
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <!-- Row 5 -->
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <!-- Row 6 -->
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+      <div class="heart"></div>
+      <div class="mnm">m</div>
+    </div>
+  </body>
+</html>
+
