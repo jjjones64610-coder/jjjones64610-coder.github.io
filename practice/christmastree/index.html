@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CSS Tree with Gradient Ornaments</title>
+  <style>
+    :root {
+      --bg: #0e1a2b;
+      --snow: rgba(255,255,255,0.08);
+      --tree-green: #0f6b3b;
+      --tree-green-2: #117a43;
+      --tree-green-3: #0c5a31;
+      --trunk: #6b3f22;
+      --garland: rgba(255,255,255,0.25);
+      --star: #ffd36b;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background:
+        radial-gradient(60vw 60vh at 20% 10%, #182b44 0%, var(--bg) 55%, #0a1523 100%);
+      overflow: hidden;
+    }
+
+    /* Scene container */
+    .scene {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    /* Gentle falling snow for ambience */
+    .scene::before,
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(2px 2px at 10% 20%, var(--snow) 95%, transparent),
+        radial-gradient(2px 2px at 30% 75%, var(--snow) 95%, transparent),
+        radial-gradient(2px 2px at 55% 40%, var(--snow) 95%, transparent),
+        radial-gradient(2px 2px at 80% 25%, var(--snow) 95%, transparent),
+        radial-gradient(2px 2px at 15% 60%, var(--snow) 95%, transparent),
+        radial-gradient(2px 2px at 65% 80%, var(--snow) 95%, transparent),
+        radial-gradient(2px 2px at 90% 55%, var(--snow) 95%, transparent);
+      pointer-events: none;
+    }
+    .scene::after {
+      animation: drift 14s linear infinite;
+      opacity: 0.7;
+    }
+    @keyframes drift {
+      0%   { transform: translateY(0); }
+      100% { transform: translateY(20px); }
+    }
+
+    /* Tree container */
+    .tree {
+      position: absolute;
+      left: 50%;
+      top: 52%;
+      transform: translate(-50%, -50%);
+      width: 360px;
+      height: 540px;
+    }
+
+    /* Star on top (CSS shape via clip-path) */
+    .star {
+      position: absolute;
+      left: 50%;
+      top: -30px;
+      transform: translateX(-50%);
+      width: 80px;
+      height: 80px;
+      background: radial-gradient(circle at 50% 40%, #fff8dc 0%, var(--star) 40%, #f5b83f 75%);
+      clip-path: polygon(
+        50% 0%,
+        61% 35%,
+        98% 35%,
+        68% 57%,
+        79% 91%,
+        50% 70%,
+        21% 91%,
+        32% 57%,
+        2% 35%,
+        39% 35%
+      );
+      filter: drop-shadow(0 6px 10px rgba(255,211,107,0.4));
+    }
+
+    /* Tree layers (three triangles using CSS borders) */
+    .layer {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 180px solid transparent;
+      border-right: 180px solid transparent;
+      filter: drop-shadow(0 10px 12px rgba(0,0,0,0.35));
+    }
+    .layer.top {
+      top: 30px;
+      border-bottom: 160px solid var(--tree-green);
+    }
+    .layer.mid {
+      top: 160px;
+      border-bottom: 200px solid var(--tree-green-2);
+    }
+    .layer.bot {
+      top: 320px;
+      border-bottom: 240px solid var(--tree-green-3);
+    }
+
+    /* Trunk */
+    .trunk {
+      position: absolute;
+      left: 50%;
+      bottom: -40px;
+      transform: translateX(-50%);
+      width: 90px;
+      height: 90px;
+      background:
+        linear-gradient(180deg, #845333 0%, var(--trunk) 55%, #4e2c19 100%);
+      border-radius: 8px;
+      filter: drop-shadow(0 8px 10px rgba(0,0,0,0.35));
+    }
+
+    /* Garland swirl (CSS shape with gradient stroke-like effect) */
+    .garland {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%) rotate(-3deg);
+      width: 300px;
+      height: 300px;
+      top: 140px;
+      border-radius: 50%;
+      background:
+        conic-gradient(from -60deg,
+          transparent 0 10%,
+          var(--garland) 10% 13%,
+          transparent 13% 27%,
+          var(--garland) 27% 30%,
+          transparent 30% 45%,
+          var(--garland) 45% 48%,
+          transparent 48% 63%,
+          var(--garland) 63% 66%,
+          transparent 66% 81%,
+          var(--garland) 81% 84%,
+          transparent 84% 100%
+        );
+      filter: drop-shadow(0 6px 10px rgba(255,255,255,0.15));
+      mask:
+        radial-gradient(closest-side, transparent 62%, black 63%);
+    }
+
+    /* Ornaments: each absolutely positioned, unique shape, unique gradient */
+    .ornament {
+      position: absolute;
+      width: 68px;
+      height: 68px;
+      display: grid;
+      place-items: center;
+      filter: drop-shadow(0 6px 8px rgba(0,0,0,0.35));
+    }
+    .hook {
+      position: absolute;
+      top: -12px;
+      width: 18px;
+      height: 18px;
+      border: 3px solid rgba(220,220,220,0.85);
+      border-bottom: none;
+      border-left: none;
+      border-radius: 6px;
+      transform: rotate(30deg);
+    }
+    .cap {
+      position: absolute;
+      top: -3px;
+      width: 22px;
+      height: 10px;
+      background: linear-gradient(180deg, #f6f6f6, #c9c9c9);
+      border-radius: 3px;
+    }
+
+    /* 1) Circle ornament with radial gradient */
+    .ornament.circle {
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 30% 30%, #fff 0%, #ff7abf 10%, #ff3a9a 45%, #a10058 100%);
+      left: calc(50% - 140px);
+      top: 220px;
+    }
+
+    /* 2) Diamond (square rotated) with linear gradient */
+    .ornament.diamond {
+      transform: rotate(45deg);
+      background:
+        linear-gradient(135deg, #b0f2ff 0%, #4bc2ff 40%, #007bd4 100%);
+      left: calc(50% + 90px);
+      top: 260px;
+    }
+
+    /* 3) Star ornament via clip-path with conic gradient */
+    .ornament.star {
+      width: 74px;
+      height: 74px;
+      clip-path: polygon(
+        50% 6%, 61% 38%, 95% 38%, 66% 58%, 76% 92%,
+        50% 72%, 24% 92%, 34% 58%, 5% 38%, 39% 38%
+      );
+      background:
+        conic-gradient(from 20deg, #fff3c6, #ffd86b, #ffb84a, #ff8a38, #ffd86b);
+      left: calc(50% - 20px);
+      top: 300px;
+    }
+
+    /* 4) Heart ornament via clip-path with radial gradient */
+    .ornament.heart {
+      width: 72px;
+      height: 64px;
+      clip-path: path("M36 64C15 50 0 40 0 24 0 11 10 0 24 0c7 0 12 3 12 7 0-4 5-7 12-7 14 0 24 11 24 24 0 16-15 26-36 40z");
+      background:
+        radial-gradient(circle at 30% 20%, #fff 0%, #ff9c9c 15%, #ff5252 55%, #a91515 100%);
+      left: calc(50% - 170px);
+      top: 340px;
+    }
+
+    /* 5) Hexagon ornament via polygon with angular gradient */
+    .ornament.hex {
+      clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+      background:
+        conic-gradient(from 90deg, #e3ffd6, #a9e573, #5bc34f, #1f8b36, #a9e573);
+      left: calc(50% + 130px);
+      top: 350px;
+    }
+
+    /* Optional: subtle highlight on ornaments */
+    .ornament::after {
+      content: "";
+      position: absolute;
+      top: 10px;
+      left: 12px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, transparent 70%);
+      opacity: 0.7;
+      transform: rotate(-10deg);
+      pointer-events: none;
+    }
+
+    /* Attach hooks and caps to each ornament */
+    .ornament > .hook,
+    .ornament > .cap { transform-origin: center; }
+    .diamond .hook, .diamond .cap { transform: rotate(-45deg); }
+    .star .hook, .star .cap { transform: none; }
+    .heart .hook, .heart .cap { transform: none; }
+    .hex .hook, .hex .cap { transform: none; }
+
+    /* Ground */
+    .ground {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 18vh;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.14)),
+        radial-gradient(80vw 40vh at 50% 30%, rgba(255,255,255,0.12), transparent 70%);
+      backdrop-filter: blur(1px);
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="tree">
+      <div class="star" aria-hidden="true"></div>
+
+      <div class="layer top"></div>
+      <div class="layer mid"></div>
+      <div class="layer bot"></div>
+
+      <div class="garland" aria-hidden="true"></div>
+      <div class="trunk"></div>
+
+      <!-- Ornaments: at least five, each unique shape & gradient, positioned absolutely -->
+      <div class="ornament circle" aria-label="Pink circle ornament">
+        <span class="hook"></span><span class="cap"></span>
+      </div>
+
+      <div class="ornament diamond" aria-label="Blue diamond ornament">
+        <span class="hook"></span><span class="cap"></span>
+      </div>
+
+      <div class="ornament star" aria-label="Golden star ornament">
+        <span class="hook"></span><span class="cap"></span>
+      </div>
+
+      <div class="ornament heart" aria-label="Red heart ornament">
+        <span class="hook"></span><span class="cap"></span>
+      </div>
+
+      <div class="ornament hex" aria-label="Green hexagon ornament">
+        <span class="hook"></span><span class="cap"></span>
+      </div>
+    </div>
+
+    <div class="ground" aria-hidden="true"></div>
+  </div>
+</body>
+</html>
+
