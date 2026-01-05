@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>The holy grail</title>
+  <style>
+    .grid {
+      display: grid;
+      height: 100vh;
+      grid: 
+      'head head head' 1fr
+      'menu main menu2' 3fr
+      'foot foot foot' 1fr
+      /1fr 3fr 1fr;
+    }
+
+    #header {
+      grid-area: head;
+      width: 100%;
+      height: 100px;
+      background-color: green;
+      text-align: center;
+      font-size: 24px;
+      color: white;
+    }
+  </style>
+</head>
+<body class="grid">
+  <!-- TODO: add more divs here -->
+  <div id="header">Header</div>
+</body>
+</html>
+
