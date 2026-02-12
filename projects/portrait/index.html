@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+	<body>
+<canvas id="c" width="600" height="400" style="border:1px solid black;"></canvas>
+<script>
+	var ctx = document.getElementById("c").getContext("2d");
+// WALL
+	ctx.fillStyle = "#dddddd";
+	ctx.fillRect(0, 0, 600, 400);
+	// PAPERS (rectangles)
+	ctx.fillStyle = "white";
+	ctx.fillRect(40, 40, 60, 40);
+	ctx.fillRect(110, 40, 60, 40);
+	ctx.fillRect(180, 40, 60, 40);
+	ctx.fillRect(250, 40, 60, 40);
+	ctx.fillRect(320, 40, 60, 40);
