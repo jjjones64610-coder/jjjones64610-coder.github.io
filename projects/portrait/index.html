@@ -1,17 +1,51 @@
 <!DOCTYPE html>
 <html>
 	<body>
-<canvas id="c" width="600" height="400" style="border:1px solid black;"></canvas>
+<canvas id="myCanvas" width="600" height="400" style="border:1px solid #000000;"></canvas>
 <script>
-	var ctx = document.getElementById("c").getContext("2d");
-// WALL
+	var canvas = document.getElementById("myCanvas");
+	var ctx = canvas.getContext("2d");
+	// BACKGROUND WALL
 	ctx.fillStyle = "#dddddd";
 	ctx.fillRect(0, 0, 600, 400);
-	// PAPERS (rectangles)
+	// WALL PAPERS
 	ctx.fillStyle = "white";
-	ctx.fillRect(40, 40, 60, 40);
-	ctx.fillRect(110, 40, 60, 40);
-	ctx.fillRect(180, 40, 60, 40);
-	ctx.fillRect(250, 40, 60, 40);
-	ctx.fillRect(320, 40, 60, 40);
-</script>
+	var startX = 40;
+	var startY = 40;
+	var w = 60;
+	var h = 40;
+	var gapX = 10;
+	var gapY = 10;
+	for (var row = 0; row < 3; row++) {
+		for (var col = 0; col < 5; col++) {
+			var x = startX + col * (w + gapX);
+	var y = startY + row * (h + gapY);
+			ctx.fillRect(x, y, w, h);
+			ctx.strokeStyle = "#999999";
+			ctx.strokeRect(x, y, w, h);
+	}
+}
+	//
+	ctx.fillStyle = "red";
+	ctx.fillRect(startX + 10, startY + 5, 10, 8);
+	ctx.fillStyle = "green";
+	ctx.fillRect(startX + (w + gapX) * 2 + 10, startY + 5, 10, 8);
+	ctx.fillStyle = "red";
+	ctx.fillRect(startX + (w + gapX) * 4 + 10, startY + (h + gapY) * 1 + 5, 10, 8);
+	// PERSON BODY
+	ctx.fillStyle = "#555555"; // dark hoodie body
+	ctx.fillRect(230, 200, 140, 140);
+	// HOOD (simple shape around head)
+	ctx.fillStyle = "#777777";
+	ctx.beginPath();
+	ctx.moveTo(220, 210);
+	ctx.lineTo(380, 210);
+	ctx.lineTo(360, 140);
+	ctx.lineTo(240, 140);
+	ctx.closePath();
+	ctx.fill();
+	// HEAD
+	ctx.fillStyle = "#f1c27d";
+	ctx.beginPath();
+	ctx.arc(300, 150, 40, 0, Math.PI * 2);
+	ctx.fill();
