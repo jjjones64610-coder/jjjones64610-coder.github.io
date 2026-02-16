@@ -1,71 +1,90 @@
 <!DOCTYPE html>
-i<html>
+<html>
+	<head>
+		<style>
+			body {
+				margin: 0;
+				padding: 0;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				min-height: 100vh;
+				background-color: #f5f5f5;
+			}
+			canvas {
+				border: 1px solid #ddd;
+				background-color: white;
+			}
+		</style>
+	</head>
 	<body>
-<canvas id="me" width="400" height="400"></canvas> <script>
+<canvas id="me" width="800" height="800"></canvas> <script>
 	const c = document.getElementById("me");
 	const ctx = c.getContext("2d");
+	// Scale factor for larger portrait
+	const scale = 2;
+	
 	// head (big circle)
 	ctx.fillStyle = "#f2c29b";
 	ctx.beginPath();
-	ctx.arc(200, 180, 90, 0, Math.PI * 2);
+	ctx.arc(200 * scale, 180 * scale, 90 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// left ear
 	ctx.beginPath();
-	ctx.arc(110, 180, 20, 0, Math.PI * 2);
+	ctx.arc(110 * scale, 180 * scale, 20 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// right ear
 	ctx.beginPath();
-	ctx.arc(290, 180, 20, 0, Math.PI * 2);
+	ctx.arc(290 * scale, 180 * scale, 20 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// hair
 	ctx.fillStyle = "#3b2b1a";
-	ctx.fillRect(130, 80, 20, 40);
-	ctx.fillRect(150, 75, 20, 45);
-	ctx.fillRect(170, 70, 20, 50);
-	ctx.fillRect(190, 70, 20, 50);
-	ctx.fillRect(210, 70, 20, 50);
-	ctx.fillRect(230, 75, 20, 45);
-	ctx.fillRect(250, 80, 20, 40);
+	ctx.fillRect(130 * scale, 80 * scale, 20 * scale, 40 * scale);
+	ctx.fillRect(150 * scale, 75 * scale, 20 * scale, 45 * scale);
+	ctx.fillRect(170 * scale, 70 * scale, 20 * scale, 50 * scale);
+	ctx.fillRect(190 * scale, 70 * scale, 20 * scale, 50 * scale);
+	ctx.fillRect(210 * scale, 70 * scale, 20 * scale, 50 * scale);
+	ctx.fillRect(230 * scale, 75 * scale, 20 * scale, 45 * scale);
+	ctx.fillRect(250 * scale, 80 * scale, 20 * scale, 40 * scale);
 // left eye white
 	ctx.fillStyle = "white";
 	ctx.beginPath();
-	ctx.arc(170, 170, 15, 0, Math.PI * 2);
+	ctx.arc(170 * scale, 170 * scale, 15 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// right eye white
 	ctx.beginPath();
-	ctx.arc(230, 170, 15, 0, Math.PI * 2);
+	ctx.arc(230 * scale, 170 * scale, 15 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// left pupil
 	ctx.fillStyle = "blue";
 	ctx.beginPath();
-	ctx.arc(170, 170, 6, 0, Math.PI * 2);
+	ctx.arc(170 * scale, 170 * scale, 6 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// right pupil
 	ctx.beginPath();
-	ctx.arc(230, 170, 6, 0, Math.PI * 2);
+	ctx.arc(230 * scale, 170 * scale, 6 * scale, 0, Math.PI * 2);
 	ctx.fill();
 	// eyebrows (rectangles)
 	ctx.fillStyle = "#3b2b1a"
-	ctx.fillRect(155, 150, 30, 5);
-	ctx.fillRect(215, 150, 30, 5);
+	ctx.fillRect(155 * scale, 150 * scale, 30 * scale, 5 * scale);
+	ctx.fillRect(215 * scale, 150 * scale, 30 * scale, 5 * scale);
 	// nose
 	ctx.strokeStyle = "#d19a75";
-	ctx.lineWidth = 3;
+	ctx.lineWidth = 3 * scale;
 	ctx.beginPath();
-	ctx.moveTo(200, 175);
-	ctx.lineTo(195, 200);
-	ctx.lineTo(205, 200);
+	ctx.moveTo(200 * scale, 175 * scale);
+	ctx.lineTo(195 * scale, 200 * scale);
+	ctx.lineTo(205 * scale, 200 * scale);
 	ctx.stroke();
 	// mouth
 	ctx.strokeStyle = "#b34b3c";
-	ctx.lineWidth = 4;
+	ctx.lineWidth = 4 * scale;
 	ctx.beginPath();
-	ctx.arc(200, 215, 25, 0, Math.PI);
+	ctx.arc(200 * scale, 215 * scale, 25 * scale, 0, Math.PI);
 	ctx.stroke();
 	// neck
 	ctx.fillStyle = "#f2c29b";
-	ctx.fillRect(180, 240, 40, 40);
+	ctx.fillRect(180 * scale, 240 * scale, 40 * scale, 40 * scale);
 	</script>
 </body>
 </html>
-
