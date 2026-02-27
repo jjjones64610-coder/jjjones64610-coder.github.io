@@ -22,3 +22,24 @@
         }
     </style>
 </head>
+<body>
+
+    <h2>A Small Story: The Parade</h2>
+    <p>Watch as the characters join the march at different times!</p>
+
+    <script>
+        // --- SETTING THE STAGE ---
+        function setup() {
+            createCanvas(600, 400);
+        }
+
+        function draw() {
+            // Background: Sky and Ground
+            background(135, 206, 235); // Blue Sky
+            noStroke();
+            fill(34, 139, 34); // Green Grass
+            rect(0, 300, 600, 100);
+
+            // Sun in the corner
+            fill(255, 255, 0);
+            circle(50, 50, 60);
