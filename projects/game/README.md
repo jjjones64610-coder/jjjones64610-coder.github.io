@@ -1,54 +1,40 @@
-# Chris Needs Coffee
+#Project 02: Escape from the Sunken Aquarium
+**A Beginner JavaScript Text Adventure**
 
-## Setting
+You are a diver trapped in a decaying underwater research facility. The glass is cracking under the pressure, and you have exactly 5 stages to find the surface hatch before the facility collapses.
 
-This game takes place at the Arlington Career Center. I tried to f
-faithfully recreate it, with the exception of moving the 
-library to the first floor.
+---
 
-## Map
+##Game World Map
+This flowchart shows the paths you can take to escape:
 
 ```mermaid
-graph TD;
-    bus(((Bus)))-->Commons;
-    Library-->Commons;
-    Box-->Cafeteria;
-    Cafeteria-->Commons;
-    Commons-->Outside;
-    Outside-->Portable;
-    Portable-->rm511;
-    Portable-->Bathroom;
-```
-
-The player starts on the bus, and then is directed into the Commons. T
-They can explore, but must eventually make their way to rm511.
-
-## Story
-
-When the user gets to rm511, they learn that the teacher is asleep.
-They must take the teacher's coffee mug to the library, get it 
-filled, and then bring it back to the teacher.
-
-The game starts 15 minutes before the morning class bell, and each
-move costs 1 minute. So this journey must be completed in 15 moves.
-Some moves (like reading a book in the library) cost extra time.
-
-## Global Variables
-
-The most important variables are
-`haveCup` and `cupIsFull`, both
-booleans that track progress in the
-story. Depending on these two variables,
-some rooms will display different things. For example, if you walk into the
-library without the cup, it will prompt you to
-read. If you walk in with the cup, it will show
-the librarian filling the cup with coffee.
-
-I also have numeric variables called `day` and `minute` which keep track of 
-time. `minute` starts at 0 and counts up
-with each move.
-
-I have a little HUD map, and use a bunch of 
-boolean variables to control which
-rooms the player has discovered. A map is only displayed after the user
-visits it.
+graph TD
+    %% Starting Areas
+    Oxygen[Oxygen Storage] --> Cafe[The Coral Cafe]
+    Cafe --> Central[The Central Hub]
+    
+    Archive[The Data Archive] --> Central
+    
+    Sub((The Escape Sub)) --> Central
+    
+    %% Middle Path
+    Central --> Tunnel[The Shark Tunnel]
+    Tunnel --> Shed[The Control Shed]
+    
+    %% Final Branches
+    Shed --> RM511[Hatch 511 - ESCAPE]
+    Shed --> Pump[The Pump Room - TRAPPED]
+    
+    %% DARK BLUE STYLES
+    style Oxygen fill:#001f3f,stroke:#0074D9,color:#fff
+    style Cafe fill:#001f3f,stroke:#0074D9,color:#fff
+    style Archive fill:#001f3f,stroke:#0074D9,color:#fff
+    style Sub fill:#001f3f,stroke:#0074D9,color:#fff
+    style Central fill:#001f3f,stroke:#0074D9,color:#fff
+    style Tunnel fill:#001f3f,stroke:#0074D9,color:#fff
+    style Shed fill:#001f3f,stroke:#0074D9,color:#fff
+    
+    %% Special Colors for Endings
+    style RM511 fill:#004080,stroke:#39CCCC,color:#fff
+    style Pump fill:#1a0000,stroke:#FF4136,color:#fff
