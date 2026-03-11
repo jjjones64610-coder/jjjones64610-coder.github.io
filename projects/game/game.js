@@ -3,17 +3,17 @@
 let currentRoom = "start";
 // This function runs every time you click a button.
 // 'choice' will be 1 if you click the left button, and 2 if you click the right.
-if (currentRoom === "start") {
-        if (choice === 1) {
+if (currentRoom == "start") {
+        if (choice == 1) {
 		currentRoom = "cafe";
 print("You leave Oxygen Storage and enter the Coral Cafe. It smells like salt. Go to the Central Hub?", "Go to Central Hub", "Stay Here");
-} else if (choice === 2) {
+} else if (choice == 2) {
             currentRoom = "archive";
             updateUI("You are in the Data Archive. It is dark and quiet. Swim toward the Central Hub?", "Swim to Central Hub", "Stay Here");
         }
     } 
-    else if (currentRoom === "cafe" || currentRoom === "archive") {
-        if (choice === 1) {
+    else if (currentRoom == "cafe" || currentRoom == "archive") {
+        if (choice == 1) {
             currentRoom = "central";
             print("You reached the Central Hub! A giant shark is circling above. Enter the Shark Tunnel?", "Enter Shark Tunnel", "Hide");
         } else {
