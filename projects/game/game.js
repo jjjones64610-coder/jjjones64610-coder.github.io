@@ -44,5 +44,21 @@ else if (currentRoom == "shed") {
 		}
     }
 }
+// changes the text
+function updateUI(storyText, btn1Text, btn2Text) {
+    document.getElementById("story-text").innerText = storyText;
+    document.getElementById("btn1").innerText = btn1Text;
+    document.getElementById("btn2").innerText = btn2Text;
+}
 
+// restart buttion
+function gameOver(message) {
+    document.getElementById("story-text").innerText = message;
+    document.getElementById("button-container").innerHTML = '<button onclick="location.reload()">Try Again</button>';
+}
+
+// winning
+function winGame(message) {
+    document.getElementById("story-text").innerText = message;
+    document.getElementById("button-container").innerHTML = '<button onclick="location.reload()">Play Again!</button>';
 
