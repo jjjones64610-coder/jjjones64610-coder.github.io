@@ -43,7 +43,6 @@ else if (currentRoom == "shed") {
 		gameOver("The Pump Room was a trap and it flooded instantly! Game Over!");
 		}
     }
-}
 // changes the text
 function updateUI(storyText, btn1Text, btn2Text) {
     document.getElementById("story-text").innerText = storyText;
@@ -61,4 +60,4 @@ function gameOver(message) {
 function winGame(message) {
     document.getElementById("story-text").innerText = message;
     document.getElementById("button-container").innerHTML = '<button onclick="location.reload()">Play Again!</button>';
-
+}
