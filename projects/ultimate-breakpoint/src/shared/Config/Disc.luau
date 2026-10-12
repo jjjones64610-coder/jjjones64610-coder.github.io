@@ -3,6 +3,12 @@
 -- Scale: 1 metre ~= 3 studs (a 5.3-stud avatar is ~1.77 m). The flight model
 -- uses real-world frisbee coefficients (Hummel 2003) converted to studs, then
 -- lightly tuned so throws read clearly on a Roblox field. See docs/DESIGN.md.
+--
+-- Field fit (Config/Modes.Fields): a full-power Perfect backhand flies
+-- ~160-170 studs aimed flat and ~185 at its best aim, so a Normal pull from
+-- the goal line lands around the receivers' brick, a Mini pull can reach the
+-- end zone, and light touches (~0.1-0.2 s holds) stay short. tests/disc_spec
+-- encodes this; tests/flight_table prints the numbers.
 
 local Disc = {
 	Physics = {
@@ -38,26 +44,42 @@ local Disc = {
 		OffBalancePowerCap = 0.75,
 		OffBalanceSpin = 0.8,
 		GroundThrowPowerCap = 0.6,
-		MovingSpinPenaltySpeed = 12, -- throwing while still moving faster than this costs spin
+		MovingSpinPenaltySpeed = 12, -- throwing on the run faster than this costs spin (no pivot yet)
 		MovingSpinPenalty = 0.85,
-		ThrowerVelocityCarry = 0.45,
+		ThrowerVelocityCarry = 0.45, -- share of the run-up added to the disc (no pivot yet)
+		SwingSpinPenalty = 0.9, -- releasing mid Quick Swing costs 10% spin (no power cap)
 		MinSpeed = 28,
-		MaxSpeed = 78,
+		MaxSpeed = 88, -- sized for the Normal field (see the header)
 		PowerCurve = 0.85,
 		BankRange = 35, -- degrees of player-controlled bank either side
 		BankSteps = 7, -- discrete bank positions for keyboard/gamepad (-3..3)
-		FakeCooldown = 0.3,
+		FakeCooldown = 0.45,
 		FakeDuration = 0.22,
 		MinPitch = -12,
 		MaxPitch = 60,
 		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
 		HandBlockCheckTime = 0.3, -- seconds of early flight checked against markers' hands
 		NoCatchTime = 0.15, -- nobody can catch in the first moments (hand blocks cover that)
+
+		-- Release from the pivot (ThrowModel.releasePosition with params.pivot):
+		-- P + step + right * (Side * PivotSideScale, +-LowReach for Low)
+		--   + forward * ReleaseForward + up * (height + hop).
+		PivotSideScale = 0.5, -- squared up: BH -0.3, FH +0.7 from the pivot
+		LowReach = 0.9, -- a Low release extends this much further to the throw's side
+		ReleaseForward = 0.8,
+		MaxHopLift = 3.2, -- cap on the hop height added to a pivot release (peak ~2.8)
+		-- Server check of the client's step (ThrowModel.resolveStep): accepted if
+		-- the server root is within Base + Ping * min(ping, MaxPing) of P + share * step.
+		StepCheckBase = 1.5,
+		StepCheckPing = 12,
+		StepCheckMaxPing = 0.35,
 	},
 
-	-- Per-throw definition. side/height are release offsets from the root part
-	-- (right-handed thrower; mirrored for left-handed). bank/alpha/pitch are
-	-- degrees. spin is the sign of rotation about the disc's top-face normal.
+	-- Per-throw definition. Side/LowSide are release offsets from the root part
+	-- when no pivot is planted (right-handed thrower; mirrored for left-handed);
+	-- from a pivot the release uses Side * Throw.PivotSideScale plus the step.
+	-- bank/alpha/pitch are degrees. spin is the sign of rotation about the
+	-- disc's top-face normal.
 	Types = {
 		Backhand = {
 			Display = "Backhand",
@@ -135,7 +157,8 @@ local Disc = {
 
 	TypeOrder = { "Backhand", "Forehand", "Hammer", "Scoober", "Blade" },
 
-	-- Release heights relative to the root part centre.
+	-- Release heights relative to the root part centre (from a pivot: relative
+	-- to P, plus the hop height). High without a pivot is the hop itself.
 	Heights = {
 		High = 2.6,
 		Mid = 0.5,
@@ -147,7 +170,9 @@ local Disc = {
 	Catch = {
 		ChestHeight = 1.0,
 		SecureRadius = 2.4, -- passive catch zone around the chest
-		CleanFraction = 0.6, -- inside this fraction of a zone radius = clean catch
+		CleanFraction = 0.8, -- min depth (over QualityWindow) inside this fraction = clean catch
+		QualityWindow = 0.1, -- a claim's quality is its minimum depth over this long after first contact
+		QualitySamples = 12, -- ... sampled every 1/120 s: first contact + this many steps
 		ReachLength = 3.6,
 		ReachRadius = 1.15,
 		ReachWindow = 0.28,
@@ -157,13 +182,27 @@ local Disc = {
 		SlideDrop = 1.4, -- slide lowers the secure zone this much
 		ShoulderHeight = 1.5,
 		ShoulderWidth = 1.0,
-		BobbleSpeed = 70, -- fingertip catch of a disc faster than this bobbles
-		ContestWindow = 0.06, -- claims this close in time are contested
-		ResolveDelay = 0.1, -- server waits this long to collect competing claims
+		BobbleSpeed = 95, -- fingertip catch of a disc faster than this bobbles (disc speed only)
+		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
+		ContestWindow = 0.04, -- claims this close in time are contested
+		ResolveDelay = 0.04, -- server waits this long to collect competing claims
 		MaxRewind = 0.3, -- max seconds a claim can be backdated (lag compensation)
+		ClaimThrottle = 0.03, -- client: min seconds between claims for one disc (a Denied clears it)
+		ClaimTrackTime = 0.08, -- client: keeps tracking after first contact up to this long before claiming
+		ClaimRateLimit = 0.02, -- server: min seconds between claims per actor (replies Denied)
+		-- Claim slack (CatchGeometry.slack): Base + ping * PingSlackPerSecond
+		-- + body speed * SpeedSlack, capped at MaxSlack.
 		BaseSlack = 1.0, -- positional tolerance for claims (studs)
 		PingSlackPerSecond = 26, -- extra tolerance per second of ping (≈ sprint speed)
-		MaxSlack = 3.5,
+		SpeedSlack = 0.06, -- extra tolerance per stud/s of body speed
+		MaxSlack = 5,
+		-- Client-sent body position (CatchGeometry.claimRoot): accepted within
+		-- Base + speed * SpeedTime + ping * speed of the server root (cap Max);
+		-- otherwise the server root is led by its velocity * Lead.
+		ClientRootBase = 2,
+		ClientRootSpeedTime = 0.25,
+		ClientRootMax = 8,
+		ClientRootLead = 0.08,
 		PickupRadius = 3.5,
 		BobbleUp = 16,
 		BobbleCarry = 0.25,
@@ -171,18 +210,30 @@ local Disc = {
 		BlockDown = -6,
 	},
 
-	-- Marker hand zones (for hand blocks on release).
+	-- Marker hand zones (for hand blocks on release). The box is centred on the
+	-- marker and faces the marker's facing blended FacingBlend toward the
+	-- thrower's pivot P, never more than MaxFacingOff degrees off P, so a
+	-- marker aims the hands but cannot turn them away from the thrower.
+	-- Distances (StallRange, DiscSpace) are measured from P, not the thrower's
+	-- root, so a lunge cannot cause a disc-space call.
 	Mark = {
-		StallRange = 9, -- studs: ~10 ft
-		DiscSpace = 2.6, -- defenders closer than this to the thrower trigger a disc-space call
-		LowY = { 0.6, 4.4 }, -- above the ground: low/wide stance, knees to chest
-		HighY = { 4.6, 8.6 }, -- hands up: shoulders to well above the head
-		LowHalfWidth = 3.2,
-		HighHalfWidth = 2.6,
-		JumpBonus = 5,
-		DepthMin = -1.0,
-		DepthMax = 2.2,
-		RelaxedRadius = 1.8, -- hands-down marker: small zone at the chest
+		StallRange = 9, -- studs from P: ~10 ft
+		DiscSpace = 2.4, -- a marker closer than this to P is a disc-space call
+		MarkDistance = 3.2, -- where a marker stands upfield of P ...
+		Shade = 1.6, -- ... shaded this far toward the break side
+		MirrorMax = 2.4, -- bots mirror the thrower's step by at most this much
+		FacingBlend = 0.5,
+		MaxFacingOff = 35, -- degrees
+		LowY = { 0.8, 4.6 }, -- above the ground: low/wide stance, knees to chest
+		HighY = { 4.4, 8.2 }, -- hands up: shoulders to well above the head
+		LowHalfWidth = 2.8,
+		HighHalfWidth = 2.2,
+		JumpBonus = 1, -- jumping lifts the box by the jump height plus up to this (arms stretch)
+		DepthMin = -0.8, -- along the box forward (toward the thrower)
+		DepthMax = 2.0,
+		RelaxedRadius = 1.6, -- hands-down marker: small zone at the chest
+		RewindBase = 0.05, -- hand blocks rewind markers by min(ping / 2 + RewindBase, RewindMax)
+		RewindMax = 0.25,
 	},
 }
 

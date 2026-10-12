@@ -276,14 +276,21 @@ function DiscPhysics.simulate(
 end
 
 -- Advances a state forward to absolute flight time `t` using fixed steps.
--- Returns false if the disc reached the ground first.
+-- Returns false if the disc reached the ground first; the state is then left
+-- at the interpolated contact point and time, exactly like simulate() and the
+-- server's flight stepping, so every machine shows the same landing spot.
 function DiscPhysics.advanceTo(s: State, t: number, wind: Wind?, groundY: number?): boolean
 	local dt = P.Dt
 	local ground = (groundY or 0) + P.GroundContact
 	while s.t + dt <= t + 1e-9 do
+		local ox, oy, oz = s.px, s.py, s.pz
 		DiscPhysics.step(s, dt, wind)
 		if s.py <= ground then
+			local f = if oy - s.py > 1e-9 then clamp((oy - ground) / (oy - s.py), 0, 1) else 1
+			s.px = ox + (s.px - ox) * f
+			s.pz = oz + (s.pz - oz) * f
 			s.py = ground
+			s.t = s.t - dt + dt * f
 			return false
 		end
 	end

@@ -24,9 +24,12 @@ local specs = {
 	misc = function()
 		return require("./misc_spec")
 	end,
+	modes = function()
+		return require("./modes_spec")
+	end,
 }
 
-local order = { "movement", "disc", "throw", "catch", "rules", "combo", "misc" }
+local order = { "movement", "disc", "throw", "catch", "rules", "combo", "misc", "modes" }
 local only = process.args[1]
 
 for _, name in order do

@@ -3,31 +3,72 @@
 	MovementSim — the movement-tech engine.
 
 	Pure simulation of one player's horizontal momentum, technique timing,
-	exertion and cooldowns. It knows nothing about Instances: the client
-	MovementController feeds it input + an environment snapshot (grounded,
-	time-to-land, nearby rebound wall, pivot offset) and applies the returned
-	velocity with a LinearVelocity constraint. Because it is pure, the same code
-	is fuzz-tested offline (tests/movement.spec.luau) to prove that no input
-	sequence can exceed the speed caps.
+	exertion, cooldowns, the disc holder's pivot and the marker's shuffle. It
+	knows nothing about Instances: a driver (the client MovementController for
+	the local player, BotService for bots) feeds it input + an environment
+	snapshot and applies the returned velocity. The Humanoid moves the body:
+	the driver sets WalkSpeed = |vel| and Move(vel.Unit), and on frames where
+	Output.impulse is true it also writes AssemblyLinearVelocity directly so
+	technique starts land on the frame they are pressed. Because it is pure, the
+	same code is fuzz-tested offline (tests/movement_spec.luau) to prove that no
+	input sequence can exceed the speed caps.
 
-	Inputs map to five actions. Every advanced technique is one of these
-	actions pressed in a particular context and at a particular time:
+	PRESS CONTRACT. press(s, action, input, env) returns (ok, reason). Every
+	press does something visible or gives a reason ("Cooldown", "Speed",
+	"Used", "Context"; "Exertion" is reserved and never produced, because a
+	tired technique still fires as Gassed). Refusals that deserve explaining
+	also queue a Feedback { kind = reason, value?, text } with ready-to-show
+	text ("NEED SPEED", "ONE PER JUMP", ...). Presses that are slightly early,
+	in a short cooldown or about to become valid are BUFFERED for
+	InputBuffer (0.15 s) and retried every step(); a buffered press returns
+	true. Pressing the same action again while it waits changes nothing (this
+	replaces the old anti-mash lockouts). Timing changes only the bonus.
 
-	  Cut   ground, input 25-115 deg off travel      -> Snap Cut
-	        ground, input >115 deg / no input        -> Momentum Cancel (plant)
-	        ground, input along travel / standing    -> Fake Commit (jab step)
-	        during a plant's restart window          -> restart cut (Perfect/Clean)
-	        in the air                               -> Air Redirect
-	        mid-slide                                -> Slide Cut
-	        in the dive recovery pop window          -> Recovery Chain
-	  Burst ground                                   -> Burst Step
-	        during a plant window                    -> Explosive restart (free)
-	  Slide ground, fast                             -> Slide
-	        airborne, <=0.15 s before touchdown      -> Precision Landing / Roll-out
-	  Dive  ground or air                            -> Layout dive
-	  Jump  ground / slide                           -> Jump / slide hop
-	        airborne beside a Rebound wall           -> Wall Rebound
-	        in the pop window                        -> Recovery Chain pop-up
+	Inputs map to five actions plus the holder's swing:
+
+	  Cut   ground, input 25-120 deg off the running line -> Snap Cut
+	        ground, input along the line                -> 0.1 s look-ahead:
+	              steer away inside it = Snap Cut, else Fake Commit (jab)
+	        ground, no input / input >120 deg, fast       -> Momentum Cancel (plant)
+	        ground, slower than SnapCut.MinSpeed          -> quick side step
+	        during a plant's restart window               -> restart (Perfect/Clean)
+	        in the air                                    -> Air Redirect
+	        mid-slide                                     -> Slide Cut
+	        dive recovery (DiveSlide/Recover)             -> Recovery Chain
+	  Burst ground or slide                               -> Burst Step
+	        during a plant window                         -> Explosive restart (free)
+	        just before touchdown                         -> buffered, fires on landing
+	  Slide ground, fast                                  -> Slide
+	        airborne, <=0.35 s before touchdown           -> Precision Landing / Roll-out
+	  Dive  ground, slide or once in the air              -> Layout dive
+	  Jump  ground / slide                                -> Jump / slide hop / plant jump
+	        airborne beside a Rebound wall                -> Wall Rebound
+	        dive recovery                                 -> Recovery Chain pop-up
+	        holding the disc                              -> hop (one per possession)
+
+	A Cut is judged against the RUNNING LINE: the direction you had been
+	committed to (CommitAngle), remembered for LineMemory after it breaks, so the
+	direction key a keyboard player must press before Q (the pre-steer) never
+	spoils the cut. A plant ends with an automatic restart if a direction is
+	held; pressing Q/F/Space inside its window upgrades it.
+
+	HOLDING THE DISC (positional step model). After the (predicted) catch the
+	holder slows down (Decel) and plants a pivot foot P once slower than
+	PlantSpeed or after DecelMaxTime; the plant is reported once in
+	Output.pivotPos so the driver can propose it to the server, and
+	setPivot() adopts the server's authoritative P (UBPivot). The free foot is
+	a step vector s in the throw frame (forward = env.aimYaw, so camera-relative
+	WASD == aim-relative): target R * input, forward <= 0.75R, back <= 0.9R,
+	length on a critically damped spring, direction turning through the front.
+	The root is driven toward P + BodyShare * s (velocity proportional to the
+	distance, capped, never overshooting). swing(side) is the Quick Swing,
+	fakeStep(side) the fake's lunge, Jump the one hop (horizontal zeroed, step
+	frozen). Output.step is the world step vector.
+
+	MARKING. setMarking(true) overlays the mark shuffle on the ground: tight
+	acceleration, no turn radius, no sprint drain. Cut/Dive/Burst fire their
+	technique and end the mark; Jump keeps it; Slide is left to the stance
+	toggle (refused here).
 ]]
 
 local Shared = script.Parent.Parent
@@ -39,6 +80,8 @@ local MovementSim = {}
 export type Mode = "Ground" | "Air" | "Slide" | "Dive" | "DiveSlide" | "Recover" | "Landing" | "Frozen"
 export type HoldPhase = "None" | "Air" | "Decel" | "Pivot"
 export type Action = "Jump" | "Cut" | "Slide" | "Dive" | "Burst"
+-- Why a press did nothing. "Exertion" is part of the contract but never produced.
+export type Reason = "Cooldown" | "Speed" | "Used" | "Context" | "Exertion"
 
 export type TechEvent = {
 	tech: string,
@@ -49,7 +92,7 @@ export type TechEvent = {
 	info: string?,
 }
 
-export type Feedback = { kind: string, value: number? }
+export type Feedback = { kind: string, value: number?, text: string? }
 
 export type Input = { move: Vector3, sprint: boolean }
 
@@ -60,8 +103,11 @@ export type Env = {
 	wallNormal: Vector3?,
 	wallDistance: number?,
 	wallId: string?,
-	pivotOffset: Vector3?,
 	facing: Vector3?,
+	pos: Vector3?, -- root position (needed while holding; estimated from velocity otherwise)
+	aimYaw: number?, -- camera / throw yaw (radians, CameraController.getYaw convention)
+	blocked: boolean?, -- a short horizontal ray along the sim velocity hit something solid
+	pivotOffset: Vector3?, -- deprecated and ignored: the pivot lives in the sim (setPivot)
 }
 
 export type Output = {
@@ -73,30 +119,64 @@ export type Output = {
 	pivotEstablished: boolean,
 	landed: boolean,
 	tookOff: boolean,
+	impulse: boolean, -- write AssemblyLinearVelocity this frame (technique start / velocity jump)
+	step: Vector3, -- world flat step vector s (zero when not holding)
+	pivotPos: Vector3?, -- set on the frame the sim plants its own pivot foot
 }
+
+type Buffered = { action: string, expires: number, side: number }
 
 export type State = {
 	mode: Mode,
 	now: number,
 	modeStart: number,
 	vel: Vector3,
+	pos: Vector3,
+	lastOutVel: Vector3,
+	lastMove: Vector3,
+	impulse: boolean,
 	exertion: number,
 	regenAt: number,
 	ready: { [string]: number },
 	lastTech: string?,
 	lastTechAt: number,
+	lastKeyTech: string?, -- last technique other than Jump (Perfect chain checks)
+	lastKeyAt: number,
 	lastCutAt: number,
+	blockedSince: number?,
+
+	-- running line
+	committed: boolean,
 	commitDir: Vector3,
 	commitSince: number,
-	blockedSince: number?,
+	lineSpeed: number,
+	prevLineDir: Vector3,
+	prevLineSince: number,
+	prevLineSpeed: number,
+	lineResetAt: number,
+
+	-- input buffer / Cut look-ahead
+	buffer: Buffered?,
+	retrying: boolean,
+	retryDeferred: boolean,
+	retryReason: string?,
+	retryText: string?,
+	retryValue: number?,
+	lookAheadUntil: number,
+	lookLine: Vector3,
+	lookSince: number,
+	lookSpeed: number,
 
 	plantAt: number,
 	plantEnd: number,
 	plantDecel: number,
 	plantGassed: boolean,
-	restartLockUntil: number,
+	plantResolved: boolean,
 
 	jabUntil: number,
+	sideStepUntil: number,
+	sideStepDir: Vector3,
+	sideStepSpeed: number,
 	soldUntil: number,
 	soldDir: Vector3,
 
@@ -118,13 +198,10 @@ export type State = {
 	landedFromDive: boolean,
 	landingVel: Vector3,
 	precisionArmedAt: number?,
-	precisionLockUntil: number,
 	lateLandingUntil: number,
 
 	recoverUntil: number,
 	popStart: number,
-	popEnd: number,
-	popLockUntil: number,
 
 	diveDir: Vector3,
 
@@ -132,6 +209,23 @@ export type State = {
 	holdPhase: HoldPhase,
 	holdStart: number,
 	holdHopped: boolean,
+	pivot: Vector3?,
+	pivotAdopted: boolean,
+	stalePivot: Vector3?, -- an adopted pivot we had to abandon (far away); ignored if passed again
+	step: Vector3,
+	stepLenVel: number,
+	swingUntil: number,
+	lastSwingSide: number,
+	fakeUntil: number,
+	fakeSide: number,
+	lastFakeAt: number,
+	restActive: boolean,
+	restX: number,
+	restY: number,
+	restInputDir: Vector3,
+	restInputMag: number,
+
+	marking: boolean,
 
 	frozen: boolean,
 
@@ -140,6 +234,7 @@ export type State = {
 	pendingEvents: { TechEvent },
 	pendingFeedback: { Feedback },
 	pendingPivot: boolean,
+	pendingPivotPos: Vector3?,
 }
 
 local Q = Config.Quality
@@ -157,8 +252,39 @@ local AR = Config.AirRedirect
 local PL = Config.PrecisionLanding
 local WR = Config.WallRebound
 local HD = Config.Holding
+local MK = Config.Marking
 
 local FORWARD = Vector3.new(0, 0, -1)
+local BUFFER = Config.InputBuffer
+local NO_INPUT: Input = { move = Vector3.zero, sprint = false }
+
+-- Short names for cooldown feedback.
+local SHORT: { [string]: string } = {
+	BurstStep = "BURST",
+	Dive = "LAYOUT",
+	MomentumCancel = "PLANT",
+	Slide = "SLIDE",
+	FakeCommit = "FAKE",
+	PivotSwing = "SWING",
+}
+
+-- Techniques whose follow-up Burst / Layout counts as a Perfect chain.
+local BURST_CHAIN: { [string]: boolean } = {
+	SnapCut = true,
+	SlideCut = true,
+	RecoveryChain = true,
+	MomentumCancel = true,
+}
+local DIVE_CHAIN: { [string]: boolean } = {
+	SnapCut = true,
+	BurstStep = true,
+	SlideCut = true,
+	AirRedirect = true,
+	RecoveryChain = true,
+	MomentumCancel = true,
+	PrecisionLanding = true,
+	Slide = true,
+}
 
 ---------------------------------------------------------------------------
 -- construction
@@ -171,23 +297,50 @@ function MovementSim.new(now: number?): State
 		now = t,
 		modeStart = t,
 		vel = Vector3.zero,
+		pos = Vector3.zero,
+		lastOutVel = Vector3.zero,
+		lastMove = Vector3.zero,
+		impulse = false,
 		exertion = Config.ExertionMax,
 		regenAt = t,
 		ready = {},
 		lastTech = nil,
 		lastTechAt = -math.huge,
+		lastKeyTech = nil,
+		lastKeyAt = -math.huge,
 		lastCutAt = -math.huge,
+		blockedSince = nil,
+
+		committed = false,
 		commitDir = FORWARD,
 		commitSince = t,
-		blockedSince = nil,
+		lineSpeed = 0,
+		prevLineDir = FORWARD,
+		prevLineSince = t,
+		prevLineSpeed = 0,
+		lineResetAt = -math.huge,
+
+		buffer = nil,
+		retrying = false,
+		retryDeferred = false,
+		retryReason = nil,
+		retryText = nil,
+		retryValue = nil,
+		lookAheadUntil = 0,
+		lookLine = FORWARD,
+		lookSince = t,
+		lookSpeed = 0,
 
 		plantAt = 0,
 		plantEnd = 0,
 		plantDecel = MC.BrakeDecel,
 		plantGassed = false,
-		restartLockUntil = 0,
+		plantResolved = true,
 
 		jabUntil = 0,
+		sideStepUntil = 0,
+		sideStepDir = FORWARD,
+		sideStepSpeed = 0,
 		soldUntil = 0,
 		soldDir = FORWARD,
 
@@ -209,13 +362,10 @@ function MovementSim.new(now: number?): State
 		landedFromDive = false,
 		landingVel = Vector3.zero,
 		precisionArmedAt = nil,
-		precisionLockUntil = 0,
 		lateLandingUntil = 0,
 
 		recoverUntil = 0,
 		popStart = 0,
-		popEnd = 0,
-		popLockUntil = 0,
 
 		diveDir = FORWARD,
 
@@ -223,6 +373,23 @@ function MovementSim.new(now: number?): State
 		holdPhase = "None",
 		holdStart = 0,
 		holdHopped = false,
+		pivot = nil,
+		pivotAdopted = false,
+		stalePivot = nil,
+		step = Vector3.zero,
+		stepLenVel = 0,
+		swingUntil = 0,
+		lastSwingSide = -1,
+		fakeUntil = -math.huge,
+		fakeSide = 0,
+		lastFakeAt = -math.huge,
+		restActive = false,
+		restX = 0,
+		restY = 0,
+		restInputDir = Vector3.zero,
+		restInputMag = 0,
+
+		marking = false,
 
 		frozen = false,
 
@@ -231,22 +398,39 @@ function MovementSim.new(now: number?): State
 		pendingEvents = {},
 		pendingFeedback = {},
 		pendingPivot = false,
+		pendingPivotPos = nil,
 	}
 end
 
--- Clears momentum and transient technique state (respawn / teleport).
+-- Clears momentum and transient technique state (respawn / teleport). Keeps
+-- exertion, cooldowns, frozen, the possession (holding, hold phase, the one
+-- hop) and the pivot foot; the step restarts squared up.
 function MovementSim.reset(s: State)
-	local now = s.now
-	local exertion = s.exertion
-	local holding: boolean = s.holding
-	local holdPhase: HoldPhase = s.holdPhase
-	local fresh = MovementSim.new(now)
+	local keep = {
+		now = s.now,
+		pos = s.pos,
+		exertion = s.exertion,
+		ready = s.ready,
+		frozen = s.frozen,
+		holding = s.holding,
+		holdPhase = s.holdPhase,
+		holdStart = s.holdStart,
+		holdHopped = s.holdHopped,
+		pivot = s.pivot,
+		pivotAdopted = s.pivotAdopted,
+		stalePivot = s.stalePivot,
+		lastSwingSide = s.lastSwingSide,
+	}
+	local fresh = MovementSim.new(s.now)
 	for k, v in fresh :: any do
 		(s :: any)[k] = v
 	end
-	s.exertion = exertion
-	s.holding = holding
-	s.holdPhase = holdPhase
+	for k, v in keep :: any do
+		(s :: any)[k] = v
+	end
+	if s.frozen then
+		s.mode = "Frozen"
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -258,8 +442,8 @@ local function setMode(s: State, m: Mode)
 	s.modeStart = s.now
 end
 
-local function isReady(s: State, tech: string): boolean
-	return (s.ready[tech] or -math.huge) <= s.now
+local function cooldownLeft(s: State, tech: string): number
+	return math.max(0, (s.ready[tech] or -math.huge) - s.now)
 end
 
 local function setCooldown(s: State, tech: string)
@@ -270,6 +454,10 @@ end
 local function spend(s: State, cost: number)
 	s.exertion = math.max(0, s.exertion - cost)
 	s.regenAt = s.now + Config.ExertionRegenDelay
+end
+
+local function isGassed(s: State, cost: number): boolean
+	return s.exertion < cost * Config.GassedFraction
 end
 
 local function emit(s: State, tech: string, quality: string, dir: Vector3, info: string?)
@@ -284,10 +472,50 @@ local function emit(s: State, tech: string, quality: string, dir: Vector3, info:
 	})
 	s.lastTech = tech
 	s.lastTechAt = s.now
+	if tech ~= "Jump" then
+		s.lastKeyTech = tech
+		s.lastKeyAt = s.now
+	end
+	if tech ~= "AerialReach" then
+		s.impulse = true
+	end
 end
 
-local function feedback(s: State, kind: string, value: number?)
-	table.insert(s.pendingFeedback, { kind = kind, value = value })
+local function feedback(s: State, kind: string, value: number?, text: string?)
+	table.insert(s.pendingFeedback, { kind = kind, value = value, text = text })
+end
+
+-- A press that cannot fire. Shows `text` (if any) and returns the reason.
+local function refuse(s: State, reason: string, text: string?, value: number?): (boolean, string?)
+	if text then
+		feedback(s, reason, value, text)
+	end
+	return false, reason
+end
+
+-- A press that will (probably) become valid within the buffer time: keep it and
+-- retry every step. While retrying, only record why it is still waiting.
+local function defer(
+	s: State,
+	action: string,
+	side: number,
+	reason: string,
+	text: string?,
+	value: number?
+): (boolean, string?)
+	if s.retrying then
+		s.retryDeferred = true
+		s.retryReason = reason
+		s.retryText = text
+		s.retryValue = value
+		return false, reason
+	end
+	s.buffer = { action = action, expires = s.now + BUFFER, side = side }
+	return true, nil
+end
+
+local function cooldownText(tech: string, left: number): string
+	return string.format("%s READY IN %.1fs", SHORT[tech] or string.upper(tech), left)
 end
 
 local function queueJump(s: State, vy: number)
@@ -299,20 +527,28 @@ local function queueVertical(s: State, vy: number)
 	s.pendingVertical = vy
 end
 
-local function cancelTransients(s: State)
-	s.burstUntil = 0
+local function clearPlant(s: State)
 	s.plantAt = 0
 	s.plantEnd = 0
+	s.plantResolved = true
+end
+
+local function cancelTransients(s: State)
+	s.burstUntil = 0
 	s.jabUntil = 0
+	s.sideStepUntil = 0
+	s.lookAheadUntil = 0
+	clearPlant(s)
 end
 
 local function enterAir(s: State)
 	setMode(s, "Air")
 	s.airStart = s.now
 	s.takeoffSpeed = s.vel.Magnitude
-	s.plantAt = 0
-	s.plantEnd = 0
 	s.jabUntil = 0
+	s.sideStepUntil = 0
+	s.lookAheadUntil = 0
+	clearPlant(s)
 	s.groundLostAt = nil
 end
 
@@ -320,7 +556,6 @@ local function enterRecover(s: State, duration: number)
 	setMode(s, "Recover")
 	s.recoverUntil = s.now + duration
 	s.popStart = s.now
-	s.popEnd = s.now + RC.PopWindow
 end
 
 local function velDirOr(s: State, fallback: Vector3): Vector3
@@ -341,14 +576,24 @@ local function facingOr(env: Env): Vector3
 	return FORWARD
 end
 
+-- Throw frame: forward from the aim yaw (falls back to facing), right = forward x up.
+local function aimBasis(env: Env): (Vector3, Vector3)
+	local fwd = if env.aimYaw ~= nil then VecMath.fromYaw(env.aimYaw) else facingOr(env)
+	return fwd, Vector3.new(-fwd.Z, 0, fwd.X)
+end
+
+local function isGrounded(s: State): boolean
+	return s.mode == "Ground" or s.mode == "Landing"
+end
+
 local function topSpeed(s: State, sprint: boolean): number
 	if not sprint then
 		return Config.JogSpeed
 	end
-	if s.exertion >= 15 then
+	if s.exertion >= Config.ExhaustedBelow then
 		return Config.SprintSpeed
 	end
-	local t = s.exertion / 15
+	local t = s.exertion / Config.ExhaustedBelow
 	return Config.ExhaustedSprintSpeed + (Config.SprintSpeed - Config.ExhaustedSprintSpeed) * t
 end
 
@@ -368,14 +613,76 @@ local function plantTooEarly(s: State): boolean
 	return since >= 0 and since < MC.WindowOpen
 end
 
+local function plantQuality(s: State): string
+	return if (s.now - s.plantAt) <= MC.PerfectUntil and not s.plantGassed then Q.Perfect else Q.Clean
+end
+
+---------------------------------------------------------------------------
+-- running line (what Snap Cuts and Plants are judged against)
+---------------------------------------------------------------------------
+
+-- Commits to a new line (after a technique sets a direction).
+local function setLine(s: State, dir: Vector3, speed: number)
+	s.committed = true
+	s.commitDir = dir
+	s.commitSince = s.now
+	s.lineSpeed = speed
+	s.lineResetAt = -math.huge
+end
+
+-- The line broke (turn or slow-down). Remember the established line, but only
+-- on the first break of a turn: a pre-steer breaks it several times.
+local function breakLine(s: State)
+	if s.committed and s.now - s.lineResetAt > Config.LineMemory then
+		s.prevLineDir = s.commitDir
+		s.prevLineSince = s.commitSince
+		s.prevLineSpeed = s.lineSpeed
+		s.lineResetAt = s.now
+	end
+end
+
+local function trackLine(s: State, dt: number)
+	local speed = s.vel.Magnitude
+	if speed > Config.CommitMinSpeed then
+		local d = s.vel / speed
+		if not s.committed or s.commitDir:Dot(d) < math.cos(math.rad(Config.CommitAngle)) then
+			breakLine(s)
+			s.committed = true
+			s.commitDir = d
+			s.commitSince = s.now
+			s.lineSpeed = speed
+		else
+			s.lineSpeed = math.max(speed, s.lineSpeed - Config.LineSpeedDecay * dt)
+		end
+	else
+		breakLine(s)
+		s.committed = false
+		s.commitSince = s.now
+	end
+end
+
+-- Returns the line direction, when it was established, and the speed to grade
+-- against (never below the current speed).
+local function runningLine(s: State, env: Env): (Vector3, number, number)
+	local speed = s.vel.Magnitude
+	if s.now - s.lineResetAt <= Config.LineMemory then
+		return s.prevLineDir, s.prevLineSince, math.max(speed, s.prevLineSpeed)
+	end
+	if s.committed then
+		return s.commitDir, s.commitSince, math.max(speed, s.lineSpeed)
+	end
+	return velDirOr(s, facingOr(env)), s.now, speed
+end
+
 ---------------------------------------------------------------------------
 -- steering models
 ---------------------------------------------------------------------------
 
 -- Ground steering: acceleration split into along-velocity (accelerate/brake)
--- and perpendicular (turning) components with separate limits. This is what
--- makes sprinting a commitment: at 26 studs/s the turn radius is ~7 studs, so
--- sharp changes of direction require a technique.
+-- and perpendicular (turning) components with separate limits. Sideways
+-- acceleration falls from LateralAccelLow at jog to LateralAccel at sprint, so
+-- jogging is nimble and full sprint is a commitment (turn radius ~6 studs)
+-- that sharp changes of direction need a technique to beat.
 function MovementSim.steerGround(v: Vector3, wish: Vector3, top: number, dt: number, lateralMult: number): Vector3
 	local wishMag = math.min(wish.Magnitude, 1)
 	local target = if wishMag > 0.05 then VecMath.flatUnit(wish) * (top * wishMag) else Vector3.zero
@@ -396,8 +703,10 @@ function MovementSim.steerGround(v: Vector3, wish: Vector3, top: number, dt: num
 		end
 		newPar = math.max(tPar, speed - decel * dt)
 	end
+	local k = math.clamp((speed - Config.JogSpeed) / (Config.SprintSpeed - Config.JogSpeed), 0, 1)
+	local lateral = Config.LateralAccelLow + (Config.LateralAccel - Config.LateralAccelLow) * k
 	local perpMag = tPerp.Magnitude
-	local maxPerp = Config.LateralAccel * lateralMult * dt
+	local maxPerp = lateral * lateralMult * dt
 	local newPerp = if perpMag > maxPerp then tPerp * (maxPerp / perpMag) else tPerp
 	return fwd * newPar + newPerp
 end
@@ -415,7 +724,110 @@ local function steerAir(s: State, wish: Vector3, dt: number): Vector3
 	return VecMath.clampMagnitude(nv, ceiling)
 end
 
-local function updateHolding(s: State, wish: Vector3, env: Env, dt: number)
+-- Mark shuffle: tight, no turn radius (velocity moves straight to the target).
+local function steerShuffle(v: Vector3, wish: Vector3, dt: number): Vector3
+	local wishMag = math.min(wish.Magnitude, 1)
+	local target = if wishMag > 0.05 then VecMath.flatUnit(wish) * (MK.ShuffleSpeed * wishMag) else Vector3.zero
+	local dv = target - v
+	local rate = if dv:Dot(v) < 0 then MK.Brake else MK.Accel
+	return VecMath.moveToward(v, target, rate * dt)
+end
+
+---------------------------------------------------------------------------
+-- holding the disc: pivot foot + step
+---------------------------------------------------------------------------
+
+local function plantPivot(s: State)
+	s.pivot = s.pos
+	s.pivotAdopted = false
+	s.holdPhase = "Pivot"
+	s.step = Vector3.zero
+	s.stepLenVel = 0
+	s.vel = Vector3.zero
+	s.pendingPivot = true
+	s.pendingPivotPos = s.pos
+end
+
+-- Advances the step vector toward its target: length on a critically damped
+-- spring, direction rotating at a capped rate through the front arc (through
+-- the back only while the input points backward).
+local function updateStep(s: State, input: Input, env: Env, dt: number)
+	local now = s.now
+	local R = HD.StepRadius
+	local fwd, right = aimBasis(env)
+	local fast = now < s.swingUntil or now < s.fakeUntil + HD.FakeStepBack
+
+	local m = VecMath.flat(input.move)
+	local mag = m.Magnitude
+	if mag > 1 then
+		m /= mag
+		mag = 1
+	end
+	local hasDir = mag > 0.2
+	local mDir = if hasDir then m / mag else Vector3.zero
+
+	-- A swing's end position holds until a NEW direction is pressed (keeping
+	-- the key you already held does not pull you back).
+	if s.restActive then
+		if hasDir and (s.restInputMag <= 0.2 or VecMath.flatAngle(s.restInputDir, mDir) > 30) then
+			s.restActive = false
+		elseif not hasDir then
+			s.restInputMag = 0
+		end
+	end
+
+	local tx, ty = 0, 0
+	if s.restActive then
+		tx, ty = s.restX, s.restY
+	elseif hasDir then
+		tx, ty = m:Dot(right) * R, m:Dot(fwd) * R
+	end
+	if now < s.fakeUntil then
+		-- the fake lunges the free foot further toward its side
+		tx = math.clamp(tx + s.fakeSide * HD.FakeStep * R, -R, R)
+	end
+	ty = math.clamp(ty, -HD.BackMax * R, HD.ForwardMax * R)
+
+	local cx, cy = s.step:Dot(right), s.step:Dot(fwd)
+	local len = math.sqrt(cx * cx + cy * cy)
+	local lenT = math.sqrt(tx * tx + ty * ty)
+
+	-- length: exact critically damped spring step (stable for any dt)
+	local omega = if fast then HD.SwingSpring else HD.StepSpring
+	local x0 = len - lenT
+	local v0 = s.stepLenVel
+	local e = math.exp(-omega * dt)
+	local newLen = lenT + (x0 + (v0 + omega * x0) * dt) * e
+	s.stepLenVel = (v0 - omega * (v0 + omega * x0) * dt) * e
+	if newLen <= 0 then
+		newLen = 0
+		s.stepLenVel = 0
+	elseif newLen > R then
+		newLen = R
+		s.stepLenVel = 0
+	end
+
+	-- direction: angle from the aim forward, positive to the right
+	local phi = if len > 1e-3 then math.atan2(cx, cy) else math.atan2(tx, ty)
+	if lenT > 1e-3 then
+		local phiT = math.atan2(tx, ty)
+		if len < 0.05 * R then
+			phi = phiT
+		else
+			local diff = phiT - phi -- unwrapped: never crosses straight back
+			if m:Dot(fwd) < -0.2 then
+				diff = (diff + math.pi) % (2 * math.pi) - math.pi
+			end
+			local maxTurn = math.rad(if fast then HD.SwingAngular else HD.StepAngular) * dt
+			phi += math.clamp(diff, -maxTurn, maxTurn)
+		end
+	end
+	local nx = newLen * math.sin(phi)
+	local ny = math.clamp(newLen * math.cos(phi), -HD.BackMax * R, HD.ForwardMax * R)
+	s.step = right * nx + fwd * ny
+end
+
+local function updateHolding(s: State, input: Input, env: Env, dt: number)
 	if s.holdPhase == "Air" then
 		s.holdPhase = "Decel"
 		s.holdStart = s.now
@@ -424,38 +836,48 @@ local function updateHolding(s: State, wish: Vector3, env: Env, dt: number)
 		local speed = s.vel.Magnitude
 		local newSpeed = math.max(0, speed - HD.DecelRate * dt)
 		s.vel = if speed > 1e-3 then s.vel * (newSpeed / speed) else Vector3.zero
-		if newSpeed <= HD.StopSpeed or s.now - s.holdStart >= HD.DecelMaxTime then
-			s.vel = Vector3.zero
-			s.holdPhase = "Pivot"
-			s.pendingPivot = true
+		if newSpeed < HD.PlantSpeed or s.now - s.holdStart >= HD.DecelMaxTime then
+			plantPivot(s)
 		end
-	elseif s.holdPhase == "Pivot" then
-		local wishMag = math.min(wish.Magnitude, 1)
-		local target = if wishMag > 0.05 then VecMath.flatUnit(wish) * (HD.PivotSpeed * wishMag) else Vector3.zero
-		local off = env.pivotOffset
-		if off then
-			local flatOff = VecMath.flat(off)
-			local r = flatOff.Magnitude
-			if r > 1e-3 then
-				local outward = flatOff / r
-				if r >= HD.PivotRadius - 0.05 then
-					local o = target:Dot(outward)
-					if o > 0 then
-						target -= outward * o
-					end
-				end
-				if r > HD.PivotRadius then
-					target -= outward * ((r - HD.PivotRadius) * 12)
-				end
-			end
+		return
+	end
+	if s.holdPhase ~= "Pivot" then
+		return
+	end
+	local p = s.pivot
+	-- No pivot (cleared) or the body is far away from it (teleported without a
+	-- new UBPivot): plant a fresh one where we stand.
+	if p == nil then
+		plantPivot(s)
+	elseif VecMath.flat(s.pos - p).Magnitude > HD.StepRadius * HD.BodyShare + 4 then
+		if s.pivotAdopted then
+			s.stalePivot = p
 		end
-		s.vel = VecMath.moveToward(s.vel, target, HD.PivotAccel * dt)
+		plantPivot(s)
+	end
+	updateStep(s, input, env, dt)
+	local target = (s.pivot :: Vector3) + s.step * HD.BodyShare
+	local d = VecMath.flat(target - s.pos)
+	local dist = d.Magnitude
+	if dist < 1e-3 then
+		s.vel = Vector3.zero
+	else
+		local sp = math.min(dist * HD.DriveGain, HD.DriveMax, dist / math.max(dt, 1e-3))
+		s.vel = d * (sp / dist)
 	end
 end
 
 ---------------------------------------------------------------------------
 -- landing
 ---------------------------------------------------------------------------
+
+local function landingText(offset: number): string
+	return string.format(
+		"PRECISION LANDING  %s%d ms",
+		if offset >= 0 then "-" else "+",
+		math.floor(math.abs(offset) * 1000 + 0.5)
+	)
+end
 
 local function land(s: State)
 	local now = s.now
@@ -471,25 +893,34 @@ local function land(s: State)
 	s.groundLostAt = nil
 
 	if s.holding and s.holdHopped then
-		feedback(s, "HopLanded")
+		feedback(s, "HopLanded", nil, "TRAVEL — RELEASE BEFORE YOU LAND")
 	end
 
 	local armed = s.precisionArmedAt
 	s.precisionArmedAt = nil
-	if armed ~= nil and now - armed <= PL.EarlyWindow + 0.035 then
+	if armed ~= nil then
 		local offset = now - armed
-		local q = if offset <= PL.PerfectWindow then Q.Perfect else Q.Clean
-		if fromDive then
-			s.vel = s.vel * (RO.Retention :: any)[q]
-			enterRecover(s, RO.RecoverTime)
-			emit(s, "PrecisionLanding", q, velDirOr(s, s.diveDir), "RollOut")
-		else
-			s.vel = s.vel * (PL.Retention :: any)[q]
+		if offset <= PL.CleanWindow + 1e-6 then
+			local q = if offset <= PL.PerfectWindow + 1e-6 then Q.Perfect else Q.Clean
+			if fromDive then
+				s.vel = s.vel * (RO.Retention :: any)[q]
+				enterRecover(s, RO.RecoverTime)
+				emit(s, "PrecisionLanding", q, velDirOr(s, s.diveDir), "RollOut")
+			else
+				s.vel = s.vel * (PL.Retention :: any)[q]
+				setMode(s, "Ground")
+				emit(s, "PrecisionLanding", q, velDirOr(s, FORWARD), nil)
+			end
+			feedback(s, "LandingOffset", offset, landingText(offset))
+			return
+		elseif offset <= PL.ArmWindow + 0.1 and not fromDive then
+			-- armed early: an unlabelled soft landing (no steering penalty)
+			s.lateLandingUntil = 0
+			s.vel = s.vel * PL.Retention.Soft
 			setMode(s, "Ground")
-			emit(s, "PrecisionLanding", q, velDirOr(s, FORWARD), nil)
+			feedback(s, "LandingOffset", offset, "SOFT LANDING — PRESS CLOSER TO TOUCHDOWN")
+			return
 		end
-		feedback(s, "LandingOffset", offset)
-		return
 	end
 
 	s.lateLandingUntil = now + PL.LateWindow
@@ -506,21 +937,29 @@ end
 -- techniques
 ---------------------------------------------------------------------------
 
-local function pressSnapCut(s: State, dir: Vector3, speed: number, angle: number, sold: boolean): boolean
+local function pressSnapCut(
+	s: State,
+	dir: Vector3,
+	angle: number,
+	since: number,
+	gradeSpeed: number,
+	sold: boolean
+): (boolean, string?)
 	local now = s.now
-	if now - s.lastCutAt < SC.MinInterval then
-		return false
+	local sinceCut = now - s.lastCutAt
+	if sinceCut < SC.MinInterval then
+		return defer(s, "Cut", 0, "Cooldown")
 	end
 	local q: string
-	if s.exertion < SC.Cost then
+	if isGassed(s, SC.Cost) then
 		q = Q.Gassed
 	elseif sold then
 		q = Q.Perfect
-	elseif now - s.lastCutAt < SC.SpamWindow then
+	elseif sinceCut < SC.SpamWindow then
 		q = Q.Sloppy
 	else
-		local commit = now - s.commitSince
-		if commit >= SC.CommitPerfect and speed >= Config.SprintSpeed * SC.PerfectSpeedFraction then
+		local commit = now - since
+		if commit >= SC.CommitPerfect and gradeSpeed >= Config.SprintSpeed * SC.PerfectSpeedFraction then
 			q = Q.Perfect
 		elseif commit >= SC.CommitClean then
 			q = Q.Clean
@@ -530,9 +969,14 @@ local function pressSnapCut(s: State, dir: Vector3, speed: number, angle: number
 	end
 	local over = math.clamp((angle - 45) / (SC.MaxAngle - 45), 0, 1)
 	local retention = (SC.Retention :: any)[q] * (1 - SC.AnglePenalty * over)
-	local newSpeed = speed * retention
+	local newSpeed = gradeSpeed * retention
 	if q == Q.Perfect then
-		newSpeed = math.min(newSpeed + SC.PerfectBoost, Config.SprintSpeed)
+		newSpeed = math.min(newSpeed + SC.PerfectBoost, math.max(Config.SprintSpeed, gradeSpeed))
+	end
+	if q ~= Q.Gassed then
+		-- a cut is never worse than plain steering
+		newSpeed =
+			math.max(newSpeed, math.min(Config.SprintSpeed * SC.ExitFloor, math.max(gradeSpeed, Config.JogSpeed)))
 	end
 	if sold then
 		newSpeed = math.max(newSpeed, Config.SprintSpeed * SC.SoldMinSpeedFraction)
@@ -540,25 +984,27 @@ local function pressSnapCut(s: State, dir: Vector3, speed: number, angle: number
 	spend(s, SC.Cost)
 	s.vel = dir * newSpeed
 	s.lastCutAt = now
-	s.commitDir = dir
-	s.commitSince = now
+	setLine(s, dir, newSpeed)
 	s.soldUntil = 0
 	s.burstUntil = 0
 	s.jabUntil = 0
+	s.sideStepUntil = 0
 	emit(s, "SnapCut", q, dir, if sold then "Sold" else nil)
-	return true
+	return true, nil
 end
 
-local function pressMomentumCancel(s: State, velDir: Vector3): boolean
-	if not isReady(s, "MomentumCancel") then
-		feedback(s, "Cooldown", (s.ready.MomentumCancel or 0) - s.now)
-		return false
+local function pressPlant(s: State, lineDir: Vector3, gradeSpeed: number): (boolean, string?)
+	local left = cooldownLeft(s, "MomentumCancel")
+	if left > 0 then
+		if left <= BUFFER then
+			return defer(s, "Cut", 0, "Cooldown", cooldownText("MomentumCancel", left), left)
+		end
+		return refuse(s, "Cooldown", cooldownText("MomentumCancel", left), left)
 	end
-	local speed = s.vel.Magnitude
 	local q: string
-	if s.exertion < MC.Cost then
+	if isGassed(s, MC.Cost) then
 		q = Q.Gassed
-	elseif speed >= 18 then
+	elseif gradeSpeed >= Config.JogSpeed then
 		q = Q.Clean
 	else
 		q = Q.Sloppy
@@ -567,57 +1013,92 @@ local function pressMomentumCancel(s: State, velDir: Vector3): boolean
 	setCooldown(s, "MomentumCancel")
 	s.burstUntil = 0
 	s.jabUntil = 0
+	s.sideStepUntil = 0
 	s.plantAt = s.now
 	s.plantEnd = s.now + MC.PlantTime
 	s.plantGassed = q == Q.Gassed
 	s.plantDecel = if q == Q.Gassed then MC.BrakeDecel * 0.5 else MC.BrakeDecel
-	s.restartLockUntil = 0
-	emit(s, "MomentumCancel", q, velDir, nil)
-	return true
+	s.plantResolved = false
+	emit(s, "MomentumCancel", q, lineDir, nil)
+	return true, nil
 end
 
-local function pressFakeCommit(s: State, dir: Vector3, speed: number): boolean
-	if not isReady(s, "FakeCommit") then
-		return false
+-- Fake Commit: a jab along the line (sells a cut) or, when slow, a quick side
+-- step toward the input. Either opens the "sold" window for a Perfect cut away.
+local function pressFakeCommit(s: State, dir: Vector3, lineDir: Vector3, sideStep: boolean): (boolean, string?)
+	local left = cooldownLeft(s, "FakeCommit")
+	if left > 0 then
+		if left <= BUFFER then
+			return defer(s, "Cut", 0, "Cooldown", cooldownText("FakeCommit", left), left)
+		end
+		return refuse(s, "Cooldown", cooldownText("FakeCommit", left), left)
 	end
-	local q = if s.exertion < FC.Cost then Q.Gassed else Q.Clean
+	local q = if isGassed(s, FC.Cost) then Q.Gassed else Q.Clean
 	spend(s, FC.Cost)
 	setCooldown(s, "FakeCommit")
-	if speed < SC.MinSpeed then
-		s.vel = dir * (FC.JabSpeed * (if q == Q.Gassed then 0.6 else 1))
+	local info: string? = nil
+	local busy: number
+	if sideStep then
+		s.sideStepDir = dir
+		s.sideStepSpeed = FC.SideStepSpeed * (if q == Q.Gassed then 0.7 else 1)
+		s.sideStepUntil = s.now + FC.SideStepTime
+		s.vel = dir * s.sideStepSpeed
 		s.soldDir = dir
+		busy = FC.SideStepTime
+		info = "SideStep"
 	else
 		s.vel = s.vel * FC.JabSlow
-		s.soldDir = velDirOr(s, dir)
+		s.soldDir = lineDir
+		s.jabUntil = s.now + FC.JabTime
+		busy = FC.JabTime
 	end
-	s.jabUntil = s.now + FC.JabTime
-	s.soldUntil = s.now + FC.JabTime + FC.SoldWindow
-	emit(s, "FakeCommit", q, s.soldDir, nil)
-	return true
+	s.soldUntil = s.now + busy + FC.SoldWindow
+	emit(s, "FakeCommit", q, s.soldDir, info)
+	return true, nil
 end
 
-local function restartFromPlant(s: State, dir: Vector3): boolean
-	local since = s.now - s.plantAt
-	local q = if since <= MC.PerfectUntil and not s.plantGassed then Q.Perfect else Q.Clean
-	s.vel = dir * (Config.SprintSpeed * (MC.RestartRetention :: any)[q])
-	s.plantAt = 0
-	s.plantEnd = 0
+-- Judges a directional Cut against the running line: Sold cut, Snap Cut, or
+-- Plant when it points backward.
+local function cutAgainstLine(
+	s: State,
+	dir: Vector3,
+	angle: number,
+	lineDir: Vector3,
+	since: number,
+	gradeSpeed: number
+): (boolean, string?)
+	if s.now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+		return pressSnapCut(s, dir, angle, since, math.max(gradeSpeed, SC.MinSpeed), true)
+	end
+	if angle <= SC.MaxAngle then
+		return pressSnapCut(s, dir, angle, since, gradeSpeed, false)
+	end
+	if gradeSpeed >= MC.MinSpeed then
+		return pressPlant(s, lineDir, gradeSpeed)
+	end
+	return pressSnapCut(s, dir, angle, since, gradeSpeed, false)
+end
+
+local function restartFromPlant(s: State, dir: Vector3): (boolean, string?)
+	local q = plantQuality(s)
+	local out = Config.SprintSpeed * (MC.RestartRetention :: any)[q]
+	s.vel = dir * math.max(out, s.vel:Dot(dir))
+	clearPlant(s)
 	s.lastCutAt = s.now
-	s.commitDir = dir
-	s.commitSince = s.now
+	setLine(s, dir, s.vel.Magnitude)
 	emit(s, "SnapCut", q, dir, "Restart")
-	return true
+	return true, nil
 end
 
-local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: string?): boolean
+local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: string?): (boolean, string?)
 	local now = s.now
 	local speed = s.vel.Magnitude
 	local q: string
 	if forcedQuality then
 		q = forcedQuality
-	elseif s.exertion < BS.Cost then
+	elseif isGassed(s, BS.Cost) then
 		q = Q.Gassed
-	elseif s.lastTech == "SnapCut" and now - s.lastCutAt <= BS.CutChainWindow then
+	elseif s.lastKeyTech ~= nil and BURST_CHAIN[s.lastKeyTech :: string] and now - s.lastKeyAt <= BS.CutChainWindow then
 		q = Q.Perfect
 	else
 		q = Q.Clean
@@ -637,32 +1118,26 @@ local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: str
 	s.burstSpeed = bs
 	s.burstUntil = now + BS.Duration
 	s.vel = dir * bs
-	s.plantAt = 0
-	s.plantEnd = 0
+	clearPlant(s)
 	s.jabUntil = 0
-	s.commitDir = dir
-	s.commitSince = now
+	s.sideStepUntil = 0
+	setLine(s, dir, bs)
 	emit(s, "BurstStep", q, dir, if free then "Explosive" else nil)
-	return true
+	return true, nil
 end
 
-local function tryPop(s: State, action: Action, dir: Vector3, hasDir: boolean, env: Env): boolean
+-- Recovery Chain: Jump / Cut / Burst during the dive recovery.
+local function tryPop(s: State, action: Action, dir: Vector3, hasDir: boolean, env: Env): (boolean, string?)
 	local now = s.now
-	if s.mode == "DiveSlide" then
-		s.popLockUntil = now + RC.EarlyLockout
-		feedback(s, "PopEarly")
-		return false
+	if s.mode == "DiveSlide" and now - s.landedAt < RC.PopFrom then
+		if RC.PopFrom - (now - s.landedAt) <= BUFFER then
+			return defer(s, action, 0, "Context", "TOO EARLY")
+		end
+		return refuse(s, "Context", "TOO EARLY")
 	end
-	if now < s.popLockUntil then
-		return false
-	end
-	if now > s.popEnd then
-		feedback(s, "PopLate", now - s.popEnd)
-		return false
-	end
-	local q = if now - s.popStart <= RC.PopPerfect then Q.Perfect else Q.Clean
+	local q = if s.mode == "Recover" and now - s.popStart <= RC.PopPerfect then Q.Perfect else Q.Clean
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
-	local out = Config.SprintSpeed * (RC.Retention :: any)[q]
+	local out = math.max(Config.SprintSpeed * (RC.Retention :: any)[q], s.vel.Magnitude)
 	setMode(s, "Ground")
 	s.recoverUntil = 0
 	emit(s, "RecoveryChain", q, d, action)
@@ -673,59 +1148,84 @@ local function tryPop(s: State, action: Action, dir: Vector3, hasDir: boolean, e
 	elseif action == "Cut" then
 		s.vel = d * out
 		s.lastCutAt = now
-		s.commitDir = d
-		s.commitSince = now
+		setLine(s, d, out)
 	elseif action == "Burst" then
 		s.vel = d * out
-		if isReady(s, "BurstStep") then
+		if cooldownLeft(s, "BurstStep") <= 0 then
 			doBurst(s, d, false, nil)
 		end
 	end
-	return true
+	return true, nil
 end
 
-local function pressJump(s: State, dir: Vector3, hasDir: boolean, env: Env): boolean
+-- One hop per possession: straight up, step frozen.
+local function pressHop(s: State): (boolean, string?)
+	if s.holdHopped then
+		return refuse(s, "Used", "ONE HOP PER POSSESSION")
+	end
+	if not isGrounded(s) then
+		return refuse(s, "Context")
+	end
+	if s.holdPhase ~= "Pivot" then
+		plantPivot(s)
+	end
+	s.holdHopped = true
+	s.vel = Vector3.zero
+	enterAir(s)
+	queueJump(s, HD.HopVertical)
+	s.impulse = true
+	return true, nil
+end
+
+local function pressJump(s: State, dir: Vector3, hasDir: boolean, env: Env): (boolean, string?)
 	if s.holding then
-		local grounded = s.mode == "Ground" or s.mode == "Landing"
-		if s.holdPhase == "Pivot" and not s.holdHopped and grounded then
-			s.holdHopped = true
-			enterAir(s)
-			queueJump(s, HD.HopVertical)
-			return true
-		end
-		return false
+		return pressHop(s)
 	end
 	if s.mode == "Recover" or s.mode == "DiveSlide" then
 		return tryPop(s, "Jump", dir, hasDir, env)
 	end
-	if s.mode == "Ground" or s.mode == "Landing" or s.mode == "Slide" then
+	if isGrounded(s) or s.mode == "Slide" then
+		if plantTooEarly(s) then
+			return defer(s, "Jump", 0, "Context")
+		end
+		local fromSlide = s.mode == "Slide"
+		local info: string? = nil
+		local q = Q.Clean
+		if inPlantWindow(s) then
+			-- jumping out of a plant keeps the restart speed
+			info = "PlantJump"
+			q = plantQuality(s)
+			if hasDir then
+				s.vel = dir * math.max(Config.SprintSpeed * (MC.RestartRetention :: any)[q], s.vel:Dot(dir))
+			end
+		elseif fromSlide then
+			info = "SlideHop"
+		end
 		local speed = s.vel.Magnitude
 		local vy = Config.JumpVelocity + Config.JumpSpeedBonus * math.clamp(speed / Config.SprintSpeed, 0, 1)
-		local fromSlide = s.mode == "Slide"
-		local fromPlant = inPlantWindow(s)
 		enterAir(s)
 		queueJump(s, vy)
-		local info: string? = nil
-		if fromSlide then
-			info = "SlideHop"
-		elseif fromPlant then
-			info = "PlantJump"
-		end
-		emit(s, "Jump", Q.Clean, velDirOr(s, facingOr(env)), info)
-		return true
+		emit(s, "Jump", q, velDirOr(s, facingOr(env)), info)
+		return true, nil
 	end
 	if s.mode == "Air" or s.mode == "Dive" then
 		local wall = env.wallNormal
-		if wall and s.rebounds < WR.MaxPerAir and env.wallId ~= s.lastWall then
+		if wall then
 			local n = VecMath.flatUnit(wall)
 			if n.Magnitude < 0.5 then
-				return false
+				return refuse(s, "Context")
+			end
+			if s.rebounds >= WR.MaxPerAir then
+				return refuse(s, "Used", "TWO REBOUNDS PER JUMP")
+			end
+			if env.wallId ~= nil and env.wallId == s.lastWall then
+				return refuse(s, "Used", "FIND ANOTHER WALL")
 			end
 			local v = s.vel
 			local into = v:Dot(n)
 			local reflected = if into < 0 then VecMath.reflect(v, n) else v
 			local q: string
-			if s.exertion < WR.Cost then
+			if isGassed(s, WR.Cost) then
 				q = Q.Gassed
 			elseif (env.wallDistance or math.huge) <= WR.PerfectDistance then
 				q = Q.Perfect
@@ -742,20 +1242,33 @@ local function pressJump(s: State, dir: Vector3, hasDir: boolean, env: Env): boo
 			enterAir(s)
 			queueJump(s, WR.Vertical)
 			emit(s, "WallRebound", q, velDirOr(s, n), nil)
-			return true
+			return true, nil
 		end
+		-- jump pressed just before touchdown: jump on landing
+		local ttl = env.timeToLand
+		if s.mode == "Air" and ttl ~= nil and ttl <= BUFFER then
+			return defer(s, "Jump", 0, "Context")
+		end
+		return refuse(s, "Context")
 	end
-	return false
+	return refuse(s, "Context")
 end
 
-local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: Env): boolean
-	if s.airRedirectUsed or not hasDir then
-		return false
+local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: Env): (boolean, string?)
+	if s.airRedirectUsed then
+		return refuse(s, "Used", "ONE PER JUMP")
+	end
+	if not hasDir then
+		return refuse(s, "Context", "STEER TO REDIRECT")
 	end
 	local speed = s.vel.Magnitude
+	if speed >= AR.MinSpeed and VecMath.flatAngle(s.vel / speed, dir) < AR.MinAngle then
+		-- already going that way: nothing to redirect, keep it for later
+		return refuse(s, "Context", "STEER TO REDIRECT")
+	end
 	local vy = env.actualVel.Y
 	local q: string
-	if s.exertion < AR.Cost then
+	if isGassed(s, AR.Cost) then
 		q = Q.Gassed
 	elseif math.abs(vy) < AR.ApexWindow then
 		q = Q.Perfect
@@ -779,21 +1292,24 @@ local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: En
 		queueVertical(s, AR.MinVertical)
 	end
 	emit(s, "AirRedirect", q, velDirOr(s, dir), nil)
-	return true
+	return true, nil
 end
 
-local function pressSlideCut(s: State, dir: Vector3, hasDir: boolean): boolean
+local function pressSlideCut(s: State, dir: Vector3, hasDir: boolean): (boolean, string?)
+	if not hasDir then
+		return refuse(s, "Context", "HOLD A DIRECTION")
+	end
 	local t = s.now - s.modeStart
-	if t < SLC.MinSlideTime or not hasDir then
-		return false
+	if t < SLC.MinSlideTime then
+		return defer(s, "Cut", 0, "Context")
 	end
 	local speed = s.vel.Magnitude
 	local velDir = velDirOr(s, dir)
 	if VecMath.flatAngle(velDir, dir) > SLC.MaxAngle then
-		return false
+		return refuse(s, "Context", "TOO SHARP")
 	end
 	local q: string
-	if s.exertion < SLC.Cost then
+	if isGassed(s, SLC.Cost) then
 		q = Q.Gassed
 	elseif t >= SLC.PerfectFrom and t <= SLC.PerfectTo then
 		q = Q.Perfect
@@ -801,18 +1317,18 @@ local function pressSlideCut(s: State, dir: Vector3, hasDir: boolean): boolean
 		q = Q.Clean
 	end
 	spend(s, SLC.Cost)
-	s.vel = dir * (speed * (SLC.Retention :: any)[q])
+	local newSpeed = speed * (SLC.Retention :: any)[q]
+	s.vel = dir * newSpeed
 	setMode(s, "Ground")
 	s.lastCutAt = s.now
-	s.commitDir = dir
-	s.commitSince = s.now
+	setLine(s, dir, newSpeed)
 	emit(s, "SlideCut", q, dir, nil)
-	return true
+	return true, nil
 end
 
-local function pressCut(s: State, dir: Vector3, hasDir: boolean, env: Env): boolean
+local function pressCut(s: State, dir: Vector3, hasDir: boolean, env: Env): (boolean, string?)
 	if s.holding then
-		return false
+		return refuse(s, "Context")
 	end
 	local now = s.now
 	if s.mode == "Air" or s.mode == "Dive" then
@@ -824,139 +1340,145 @@ local function pressCut(s: State, dir: Vector3, hasDir: boolean, env: Env): bool
 	if s.mode == "Recover" or s.mode == "DiveSlide" then
 		return tryPop(s, "Cut", dir, hasDir, env)
 	end
-	if s.mode ~= "Ground" and s.mode ~= "Landing" then
-		return false
+	if not isGrounded(s) then
+		return refuse(s, "Context")
 	end
 
 	-- Restart out of a Momentum Cancel plant.
 	if s.plantAt > 0 and now - s.plantAt <= MC.WindowClose then
-		if now < s.restartLockUntil then
-			return false
-		end
 		if plantTooEarly(s) then
-			s.restartLockUntil = now + MC.EarlyLockout
-			feedback(s, "PlantEarly", MC.WindowOpen - (now - s.plantAt))
-			return false
+			return defer(s, "Cut", 0, "Context")
 		end
-		if hasDir then
-			return restartFromPlant(s, dir)
+		if not hasDir then
+			return refuse(s, "Context", "HOLD A DIRECTION")
 		end
-		return false
+		return restartFromPlant(s, dir)
 	end
 
-	local speed = s.vel.Magnitude
-	local velDir = velDirOr(s, facingOr(env))
-
-	-- A cut out of a Fake Commit's sold window is always allowed.
-	if hasDir and now <= s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
-		return pressSnapCut(s, dir, math.max(speed, SC.MinSpeed), VecMath.flatAngle(velDir, dir), true)
+	-- A look-ahead already pending is this same intent.
+	if s.lookAheadUntil > 0 then
+		return true, nil
 	end
 
+	local lineDir, since, gradeSpeed = runningLine(s, env)
 	if not hasDir then
-		if speed >= MC.MinSpeed then
-			return pressMomentumCancel(s, velDir)
+		if gradeSpeed >= MC.MinSpeed then
+			return pressPlant(s, lineDir, gradeSpeed)
 		end
-		return false
+		return refuse(s, "Speed", "NEED SPEED", MC.MinSpeed)
 	end
-	if speed < SC.MinSpeed then
-		return pressFakeCommit(s, dir, speed)
+	local angle = VecMath.flatAngle(lineDir, dir)
+	-- A cut out of a Fake Commit's sold window is always allowed.
+	if now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+		return pressSnapCut(s, dir, angle, since, math.max(gradeSpeed, SC.MinSpeed), true)
 	end
-	local angle = VecMath.flatAngle(velDir, dir)
+	if gradeSpeed < SC.MinSpeed then
+		return pressFakeCommit(s, dir, lineDir, true)
+	end
 	if angle < FC.MaxAngle then
-		return pressFakeCommit(s, dir, speed)
+		-- Along the line: wait a moment for the steer that makes it a cut.
+		s.lookAheadUntil = now + FC.LookAhead
+		s.lookLine = lineDir
+		s.lookSince = since
+		s.lookSpeed = gradeSpeed
+		return true, nil
 	end
-	if angle <= SC.MaxAngle then
-		return pressSnapCut(s, dir, speed, angle, false)
-	end
-	if speed >= MC.MinSpeed then
-		return pressMomentumCancel(s, velDir)
-	end
-	return pressSnapCut(s, dir, speed, angle, false)
+	return cutAgainstLine(s, dir, angle, lineDir, since, gradeSpeed)
 end
 
-local function pressBurst(s: State, dir: Vector3, hasDir: boolean, env: Env): boolean
+local function pressBurst(s: State, dir: Vector3, hasDir: boolean, env: Env): (boolean, string?)
 	if s.holding then
-		return false
+		return refuse(s, "Context")
 	end
 	if s.mode == "Recover" or s.mode == "DiveSlide" then
 		return tryPop(s, "Burst", dir, hasDir, env)
 	end
-	if s.mode ~= "Ground" and s.mode ~= "Landing" then
-		return false
+	if s.mode == "Air" then
+		local ttl = env.timeToLand
+		if ttl ~= nil and ttl <= BUFFER then
+			return defer(s, "Burst", 0, "Context", "LAND FIRST")
+		end
+		return refuse(s, "Context", "LAND FIRST")
 	end
-	local now = s.now
-	if now < s.restartLockUntil then
-		return false
+	if not isGrounded(s) and s.mode ~= "Slide" then
+		return refuse(s, "Context")
 	end
 	if plantTooEarly(s) then
-		s.restartLockUntil = now + MC.EarlyLockout
-		feedback(s, "PlantEarly", MC.WindowOpen - (now - s.plantAt))
-		return false
+		return defer(s, "Burst", 0, "Context")
 	end
-	if not isReady(s, "BurstStep") then
-		feedback(s, "Cooldown", (s.ready.BurstStep or 0) - now)
-		return false
+	local left = cooldownLeft(s, "BurstStep")
+	if left > 0 then
+		if left <= BUFFER then
+			return defer(s, "Burst", 0, "Cooldown", cooldownText("BurstStep", left), left)
+		end
+		return refuse(s, "Cooldown", cooldownText("BurstStep", left), left)
 	end
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
+	if s.mode == "Slide" then
+		setMode(s, "Ground")
+	end
 	if inPlantWindow(s) then
-		local q = if (now - s.plantAt) <= MC.PerfectUntil and not s.plantGassed then Q.Perfect else Q.Clean
-		return doBurst(s, d, true, q)
+		return doBurst(s, d, true, plantQuality(s))
 	end
 	return doBurst(s, d, false, nil)
 end
 
-local function armPrecision(s: State, env: Env): boolean
-	local now = s.now
-	if now < s.precisionLockUntil or s.precisionArmedAt ~= nil then
-		return false
+local function armPrecision(s: State, env: Env): (boolean, string?)
+	if s.precisionArmedAt ~= nil then
+		return refuse(s, "Used", "LANDING ARMED")
 	end
 	local ttl = env.timeToLand
-	if ttl ~= nil and ttl <= PL.EarlyWindow then
-		s.precisionArmedAt = now
-		return true
+	if ttl ~= nil and ttl <= PL.ArmWindow then
+		s.precisionArmedAt = s.now
+		return true, nil
 	end
-	s.precisionLockUntil = now + PL.Lockout
-	feedback(s, "LandingEarly", ttl or -1)
-	return false
+	if ttl ~= nil and ttl <= PL.ArmWindow + BUFFER then
+		return defer(s, "Slide", 0, "Context", "TOO EARLY")
+	end
+	return refuse(s, "Context", "TOO EARLY")
 end
 
-local function pressSlide(s: State, env: Env): boolean
+local function pressSlide(s: State, env: Env): (boolean, string?)
 	if s.holding then
-		return false
+		return refuse(s, "Context")
 	end
 	local now = s.now
 	if s.mode == "Air" or s.mode == "Dive" then
 		return armPrecision(s, env)
 	end
 	-- Late Precision Landing (pressed just after touchdown).
-	if now <= s.lateLandingUntil then
-		if s.mode == "Landing" and not s.landedFromDive then
+	if now < s.lateLandingUntil then
+		if isGrounded(s) and not s.landedFromDive then
 			s.vel = s.landingVel * PL.Retention.Clean
 			setMode(s, "Ground")
 			s.lateLandingUntil = 0
 			emit(s, "PrecisionLanding", Q.Clean, velDirOr(s, FORWARD), "Late")
-			feedback(s, "LandingOffset", -(now - s.landedAt))
-			return true
+			feedback(s, "LandingOffset", -(now - s.landedAt), landingText(-(now - s.landedAt)))
+			return true, nil
 		elseif s.mode == "DiveSlide" and s.landedFromDive then
 			s.vel = s.landingVel * RO.Retention.Clean
 			s.lateLandingUntil = 0
 			enterRecover(s, RO.RecoverTime)
 			emit(s, "PrecisionLanding", Q.Clean, velDirOr(s, s.diveDir), "RollOut")
-			feedback(s, "LandingOffset", -(now - s.landedAt))
-			return true
+			feedback(s, "LandingOffset", -(now - s.landedAt), landingText(-(now - s.landedAt)))
+			return true, nil
 		end
 	end
-	if s.mode ~= "Ground" and s.mode ~= "Landing" then
-		return false
+	if not isGrounded(s) then
+		return refuse(s, "Context")
 	end
-	if not isReady(s, "Slide") then
-		return false
+	local left = cooldownLeft(s, "Slide")
+	if left > 0 then
+		if left <= BUFFER then
+			return defer(s, "Slide", 0, "Cooldown", cooldownText("Slide", left), left)
+		end
+		return refuse(s, "Cooldown", cooldownText("Slide", left), left)
 	end
 	local speed = s.vel.Magnitude
 	if speed < SL.MinSpeed then
-		return false
+		return refuse(s, "Speed", "NEED SPEED", SL.MinSpeed)
 	end
-	local q = if s.exertion < SL.Cost then Q.Gassed else Q.Clean
+	local q = if isGassed(s, SL.Cost) then Q.Gassed else Q.Clean
 	local newSpeed = speed
 	if q ~= Q.Gassed and speed < SL.BoostCeiling then
 		newSpeed = math.min(speed + SL.Boost, SL.BoostCeiling)
@@ -967,34 +1489,44 @@ local function pressSlide(s: State, env: Env): boolean
 	cancelTransients(s)
 	setMode(s, "Slide")
 	emit(s, "Slide", q, s.vel / newSpeed, nil)
-	return true
+	return true, nil
 end
 
-local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): boolean
+local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (boolean, string?)
 	if s.holding then
-		return false
+		return refuse(s, "Context")
 	end
 	local now = s.now
-	local groundish = s.mode == "Ground" or s.mode == "Landing" or s.mode == "Slide"
+	if s.mode == "Recover" then
+		if s.recoverUntil - now <= BUFFER then
+			return defer(s, "Dive", 0, "Context", "GET UP FIRST")
+		end
+		return refuse(s, "Context", "GET UP FIRST")
+	end
+	if s.mode == "DiveSlide" then
+		return refuse(s, "Context", "GET UP FIRST")
+	end
+	if s.mode == "Dive" or (s.mode == "Air" and s.airDiveUsed) then
+		return refuse(s, "Used", "ONE PER JUMP")
+	end
+	local groundish = isGrounded(s) or s.mode == "Slide"
 	local air = s.mode == "Air"
 	if not groundish and not air then
-		return false
+		return refuse(s, "Context")
 	end
-	if air and s.airDiveUsed then
-		return false
-	end
-	if not isReady(s, "Dive") then
-		feedback(s, "Cooldown", (s.ready.Dive or 0) - now)
-		return false
+	local left = cooldownLeft(s, "Dive")
+	if left > 0 then
+		if left <= BUFFER then
+			return defer(s, "Dive", 0, "Cooldown", cooldownText("Dive", left), left)
+		end
+		return refuse(s, "Cooldown", cooldownText("Dive", left), left)
 	end
 	local speed = s.vel.Magnitude
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
-	local last = s.lastTech
-	local chained = last ~= nil
-		and (last == "SnapCut" or last == "BurstStep" or last == "SlideCut" or last == "AirRedirect" or last == "RecoveryChain")
-		and now - s.lastTechAt <= DV.ChainWindow
+	local key = s.lastKeyTech
+	local chained = key ~= nil and DIVE_CHAIN[key :: string] == true and now - s.lastKeyAt <= DV.ChainWindow
 	local q: string
-	if s.exertion < DV.Cost then
+	if isGassed(s, DV.Cost) then
 		q = Q.Gassed
 	elseif chained then
 		q = Q.Perfect
@@ -1026,16 +1558,67 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): boo
 	s.takeoffSpeed = s.vel.Magnitude
 	s.diveDir = velDirOr(s, d)
 	emit(s, "Dive", q, s.diveDir, if air then "Air" else nil)
-	return true
+	return true, nil
 end
 
----------------------------------------------------------------------------
--- public API
----------------------------------------------------------------------------
+-- Quick Swing while holding: the step swings through the front to the given
+-- side (-1 screen-left, +1 screen-right, 0 = mirror of the current step).
+local function doSwing(s: State, side: number, env: Env): (boolean, string?)
+	if not s.holding then
+		return refuse(s, "Context")
+	end
+	if not isGrounded(s) then
+		local ttl = env.timeToLand
+		if s.mode == "Air" and not s.holdHopped and ttl ~= nil and ttl <= BUFFER then
+			return defer(s, "Swing", side, "Context")
+		end
+		return refuse(s, "Context")
+	end
+	local left = cooldownLeft(s, "PivotSwing")
+	if left > 0 then
+		if left <= BUFFER then
+			return defer(s, "Swing", side, "Cooldown", cooldownText("PivotSwing", left), left)
+		end
+		return refuse(s, "Cooldown", cooldownText("PivotSwing", left), left)
+	end
+	if s.holdPhase ~= "Pivot" then
+		plantPivot(s)
+	end
+	local now = s.now
+	local fwd, right = aimBasis(env)
+	if side == 0 then
+		local lateral = s.step:Dot(right)
+		side = if lateral > 0.1 then -1 elseif lateral < -0.1 then 1 else -s.lastSwingSide
+	end
+	side = if side < 0 then -1 else 1
+	local q: string
+	if isGassed(s, HD.SwingCost) then
+		q = Q.Gassed
+	elseif now - s.lastFakeAt <= HD.SwingSoldWindow then
+		q = Q.Perfect
+	else
+		q = Q.Clean
+	end
+	spend(s, HD.SwingCost)
+	setCooldown(s, "PivotSwing")
+	local R = HD.StepRadius
+	s.swingUntil = now + HD.SwingTime
+	s.fakeUntil = -math.huge
+	s.lastSwingSide = side
+	s.restActive = true
+	s.restX = side * HD.SwingLateral * R
+	s.restY = HD.SwingForward * R
+	local held = VecMath.flat(s.lastMove)
+	s.restInputMag = math.min(held.Magnitude, 1)
+	s.restInputDir = VecMath.flatUnit(held)
+	local dir = VecMath.flatUnit(right * s.restX + fwd * s.restY)
+	emit(s, "PivotSwing", q, dir, if q == Q.Perfect then "Sold" else nil)
+	return true, nil
+end
 
-function MovementSim.press(s: State, action: Action, input: Input, env: Env): boolean
-	if s.frozen or s.mode == "Frozen" then
-		return false
+local function runAction(s: State, action: string, input: Input, env: Env, side: number): (boolean, string?)
+	if action == "Swing" then
+		return doSwing(s, side, env)
 	end
 	local wishMag = input.move.Magnitude
 	local hasDir = wishMag > 0.2
@@ -1051,7 +1634,134 @@ function MovementSim.press(s: State, action: Action, input: Input, env: Env): bo
 	elseif action == "Dive" then
 		return pressDive(s, dir, hasDir, env)
 	end
-	return false
+	return false, "Context"
+end
+
+local function dispatch(s: State, action: string, input: Input, env: Env, side: number): (boolean, string?)
+	if s.frozen or s.mode == "Frozen" then
+		return false, "Context"
+	end
+	if s.marking and not s.holding then
+		if action == "Slide" then
+			-- C toggles the mark stance; the driver handles it.
+			return false, "Context"
+		end
+		if action == "Cut" or action == "Dive" or action == "Burst" then
+			local ok, reason = runAction(s, action, input, env, side)
+			if ok then
+				s.marking = false
+			end
+			return ok, reason
+		end
+	end
+	return runAction(s, action, input, env, side)
+end
+
+-- Retries the buffered press; keeps it while it is still worth waiting for.
+local function retryBuffer(s: State, input: Input, env: Env)
+	local b = s.buffer
+	if b == nil then
+		return
+	end
+	s.buffer = nil
+	s.retrying = true
+	s.retryDeferred = false
+	s.retryReason = nil
+	s.retryText = nil
+	s.retryValue = nil
+	local ok = dispatch(s, b.action, input, env, b.side)
+	s.retrying = false
+	if ok or not s.retryDeferred then
+		return -- fired, or a final refusal (which queued its own feedback)
+	end
+	if s.now < b.expires then
+		s.buffer = b
+	elseif s.retryText then
+		feedback(s, s.retryReason or "Context", s.retryValue, s.retryText)
+	end
+end
+
+-- Resolves a pending Cut look-ahead: a steer away from the line inside it
+-- makes the press a Snap Cut (or a Plant if backward); otherwise a Fake Commit.
+local function resolveLookAhead(s: State, input: Input)
+	if s.lookAheadUntil <= 0 then
+		return
+	end
+	if s.holding or s.frozen or not isGrounded(s) then
+		s.lookAheadUntil = 0
+		return
+	end
+	local m = input.move
+	local hasDir = m.Magnitude > 0.2
+	if hasDir then
+		local dir = VecMath.flatUnit(m)
+		local angle = VecMath.flatAngle(s.lookLine, dir)
+		if angle >= FC.MaxAngle then
+			s.lookAheadUntil = 0
+			cutAgainstLine(s, dir, angle, s.lookLine, s.lookSince, s.lookSpeed)
+			return
+		end
+	end
+	if s.now >= s.lookAheadUntil then
+		s.lookAheadUntil = 0
+		local dir = if hasDir then VecMath.flatUnit(m) else s.lookLine
+		pressFakeCommit(s, dir, s.lookLine, false)
+	end
+end
+
+---------------------------------------------------------------------------
+-- public API
+---------------------------------------------------------------------------
+
+-- Presses a movement action. Returns true when it fired or was buffered
+-- (and will fire within InputBuffer if it becomes valid), else false + reason.
+function MovementSim.press(s: State, action: Action, input: Input, env: Env): (boolean, string?)
+	if s.frozen or s.mode == "Frozen" then
+		return false, "Context"
+	end
+	local b = s.buffer
+	if b and b.action == action then
+		return true, nil
+	end
+	s.buffer = nil
+	return dispatch(s, action, input, env, 0)
+end
+
+-- Quick Swing while holding. side: -1 screen-left, +1 screen-right,
+-- 0 = mirror of the current step (gamepad). Same contract as press().
+function MovementSim.swing(s: State, side: number, env: Env): (boolean, string?)
+	if s.frozen or s.mode == "Frozen" then
+		return false, "Context"
+	end
+	local b = s.buffer
+	if b and b.action == "Swing" then
+		return true, nil
+	end
+	s.buffer = nil
+	return dispatch(s, "Swing", NO_INPUT, env, side)
+end
+
+-- The fake's lunge while holding: the free foot reaches 0.6R further toward
+-- `side` (-1/+1, clamped to R) for FakeStepOut, then springs back. side 0 = no
+-- lunge. Always starts the window in which a swing counts as Sold.
+function MovementSim.fakeStep(s: State, side: number)
+	if not s.holding then
+		return
+	end
+	s.lastFakeAt = s.now
+	if side ~= 0 and s.holdPhase == "Pivot" and isGrounded(s) then
+		s.fakeSide = if side < 0 then -1 else 1
+		s.fakeUntil = s.now + HD.FakeStepOut
+	end
+end
+
+-- Mark shuffle overlay (ignored while holding).
+function MovementSim.setMarking(s: State, on: boolean)
+	s.marking = on and not s.holding
+end
+
+function MovementSim.isMarking(s: State): boolean
+	return s.marking
 end
 
 -- Called by the catch controller when the player reaches while airborne.
@@ -1069,28 +1779,110 @@ function MovementSim.setFrozen(s: State, frozen: boolean)
 	if frozen then
 		s.vel = Vector3.zero
 		cancelTransients(s)
+		s.buffer = nil
 		setMode(s, "Frozen")
 	elseif s.mode == "Frozen" then
 		setMode(s, "Ground")
 	end
 end
 
+-- Starts (or ends) a possession. Starting begins the slow-down (or waits for
+-- the landing when caught in the air); calling it again while already holding
+-- changes nothing, so a predicted catch confirmed by the server is seamless.
 function MovementSim.setHolding(s: State, holding: boolean, grounded: boolean)
 	if holding then
+		if s.holding then
+			return
+		end
 		s.holding = true
 		s.holdHopped = false
 		s.holdStart = s.now
 		s.holdPhase = if grounded and s.mode ~= "Air" and s.mode ~= "Dive" then "Decel" else "Air"
-		s.burstUntil = 0
-		s.plantAt = 0
-		s.plantEnd = 0
-		s.jabUntil = 0
+		s.pivot = nil
+		s.pivotAdopted = false
+		s.stalePivot = nil
+		s.step = Vector3.zero
+		s.stepLenVel = 0
+		s.swingUntil = 0
+		s.fakeUntil = -math.huge
+		s.lastFakeAt = -math.huge
+		s.restActive = false
+		s.marking = false
+		s.buffer = nil
 		s.soldUntil = 0
+		cancelTransients(s)
 	else
+		if not s.holding then
+			return
+		end
 		s.holding = false
 		s.holdPhase = "None"
 		s.holdHopped = false
+		s.pivot = nil
+		s.pivotAdopted = false
+		s.stalePivot = nil
+		s.step = Vector3.zero
+		s.stepLenVel = 0
+		s.swingUntil = 0
+		s.fakeUntil = -math.huge
+		s.restActive = false
+		s.buffer = nil
 	end
+end
+
+-- Adopts the authoritative pivot foot (UBPivot). nil clears a previously
+-- adopted pivot (the sim then plants its own where it stands); it never clears
+-- the sim's own plant, so passing the attribute every frame is harmless.
+function MovementSim.setPivot(s: State, p: Vector3?)
+	if p == nil then
+		if s.pivotAdopted then
+			s.pivot = nil
+			s.pivotAdopted = false
+		end
+		return
+	end
+	if s.stalePivot ~= nil and p == s.stalePivot then
+		return -- the same far-away pivot we already abandoned
+	end
+	s.stalePivot = nil
+	s.pivot = p
+	s.pivotAdopted = true
+	if s.holding and s.holdPhase ~= "Pivot" then
+		s.holdPhase = "Pivot"
+		s.step = Vector3.zero
+		s.stepLenVel = 0
+	end
+end
+
+-- The planted pivot foot P (nil before it is planted / when not holding).
+function MovementSim.getPivot(s: State): Vector3?
+	if s.holding then
+		return s.pivot
+	end
+	return nil
+end
+
+-- Where the root is being driven while pivoting: P + BodyShare * step.
+function MovementSim.rootTarget(s: State): Vector3?
+	local p = s.pivot
+	if s.holding and s.holdPhase == "Pivot" and p ~= nil then
+		return p + s.step * HD.BodyShare
+	end
+	return nil
+end
+
+-- The mode to replicate for poses (character attribute MS): the sim mode, or
+-- "Pivot" while the holder pivots on the ground, "Mark" while mark-shuffling.
+function MovementSim.poseMode(s: State): string
+	if s.mode == "Ground" or s.mode == "Landing" then
+		if s.holding and s.holdPhase == "Pivot" then
+			return "Pivot"
+		end
+		if s.marking then
+			return "Mark"
+		end
+	end
+	return s.mode
 end
 
 function MovementSim.isAirborne(s: State): boolean
@@ -1107,10 +1899,122 @@ function MovementSim.readiness(s: State, tech: string): number
 	return math.clamp(1 - (readyAt - s.now) / cd, 0, 1)
 end
 
+local function cutHint(s: State, input: Input, env: Env): string?
+	local m = input.move
+	local hasDir = m.Magnitude > 0.2
+	local dir = if hasDir then VecMath.flatUnit(m) else Vector3.zero
+	if s.plantAt > 0 and s.now - s.plantAt <= MC.WindowClose then
+		return if hasDir then "RESTART" else nil
+	end
+	local lineDir, _, gradeSpeed = runningLine(s, env)
+	if not hasDir then
+		return if gradeSpeed >= MC.MinSpeed then "PLANT" else nil
+	end
+	if s.now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+		return "SOLD CUT"
+	end
+	if gradeSpeed < SC.MinSpeed then
+		return "SIDE STEP"
+	end
+	local angle = VecMath.flatAngle(lineDir, dir)
+	if angle < FC.MaxAngle then
+		return "FAKE COMMIT"
+	end
+	if angle > SC.MaxAngle and gradeSpeed >= MC.MinSpeed then
+		return "PLANT"
+	end
+	return "SNAP CUT"
+end
+
+-- What each action would do right now, for the HUD context line, e.g.
+-- { Cut = "SNAP CUT", Jump = "POP UP", Slide = "PRECISION LANDING" }.
+-- Actions that would do nothing are left out. Pure: changes no state.
+function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: string }
+	local hint: { [string]: string } = {}
+	if s.frozen or s.mode == "Frozen" then
+		return hint
+	end
+	local mode = s.mode
+	local ttl = env.timeToLand
+	if s.holding then
+		if isGrounded(s) then
+			hint.Cut = "SWING LEFT"
+			hint.Dive = "SWING RIGHT"
+			if not s.holdHopped then
+				hint.Jump = "HOP"
+			end
+		end
+		return hint
+	end
+	if mode == "Air" or mode == "Dive" then
+		if not s.airRedirectUsed then
+			hint.Cut = "AIR REDIRECT"
+		end
+		if env.wallNormal and s.rebounds < WR.MaxPerAir and (env.wallId == nil or env.wallId ~= s.lastWall) then
+			hint.Jump = "WALL REBOUND"
+		end
+		if ttl ~= nil and ttl <= PL.ArmWindow and s.precisionArmedAt == nil then
+			hint.Slide = if mode == "Dive" then "ROLL OUT" else "PRECISION LANDING"
+		end
+		if mode == "Air" and not s.airDiveUsed then
+			hint.Dive = "AIR LAYOUT"
+		end
+		return hint
+	end
+	if mode == "Slide" then
+		hint.Cut = "SLIDE CUT"
+		hint.Jump = "SLIDE HOP"
+		hint.Dive = "LAYOUT"
+		if cooldownLeft(s, "BurstStep") <= 0 then
+			hint.Burst = "BURST"
+		end
+		return hint
+	end
+	if mode == "DiveSlide" or mode == "Recover" then
+		hint.Jump = "POP UP"
+		hint.Cut = "POP UP"
+		hint.Burst = "POP UP"
+		if mode == "DiveSlide" and s.now < s.lateLandingUntil then
+			hint.Slide = "ROLL OUT"
+		end
+		return hint
+	end
+	-- Ground / Landing
+	local plantWindow = s.plantAt > 0 and s.now - s.plantAt <= MC.WindowClose
+	local cut = cutHint(s, input, env)
+	if cut then
+		hint.Cut = cut
+	end
+	hint.Jump = if plantWindow then "PLANT JUMP" else "JUMP"
+	if plantWindow then
+		hint.Burst = "EXPLOSIVE RESTART"
+	elseif cooldownLeft(s, "BurstStep") <= 0 then
+		hint.Burst = "BURST"
+	end
+	if cooldownLeft(s, "Dive") <= 0 then
+		hint.Dive = "LAYOUT"
+	end
+	if s.marking then
+		hint.Slide = "STANCE"
+	elseif s.now < s.lateLandingUntil and not s.landedFromDive then
+		hint.Slide = "PRECISION LANDING"
+	elseif s.vel.Magnitude >= SL.MinSpeed then
+		hint.Slide = "SLIDE"
+	end
+	return hint
+end
+
 function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 	s.now += dt
 	local now = s.now
 	local landed, tookOff = false, false
+	-- body position: the real root when the driver gives it, else our estimate
+	if env.pos then
+		s.pos = env.pos
+	else
+		s.pos += s.lastOutVel * dt
+	end
+	s.lastMove = input.move
 
 	-- 1. ground / air transitions -------------------------------------------
 	if s.mode == "Air" or s.mode == "Dive" then
@@ -1132,18 +2036,21 @@ function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 		end
 	end
 
-	-- 2. collision reconciliation: if something solid holds us back for a
-	-- moment, stop accumulating phantom speed against it.
+	-- 2. collision reconciliation: only when something solid really holds us
+	-- back (the driver's ray says blocked) for a moment, stop accumulating
+	-- phantom speed against it. Otherwise the sim is trusted.
 	local simSpeed = s.vel.Magnitude
-	if simSpeed > 6 and s.mode ~= "Frozen" then
+	local pivoting = s.holding and s.holdPhase == "Pivot"
+	if simSpeed > 6 and s.mode ~= "Frozen" and env.blocked == true and not pivoting then
 		local along = VecMath.flat(env.actualVel):Dot(s.vel / simSpeed)
-		if along < simSpeed * 0.5 - 2 then
+		if along < simSpeed * Config.ReconcileFraction then
 			if s.blockedSince == nil then
 				s.blockedSince = now
-			elseif now - (s.blockedSince :: number) > 0.12 then
+			elseif now - (s.blockedSince :: number) > Config.ReconcileTime then
 				s.vel = VecMath.flat(env.actualVel)
 				s.blockedSince = nil
 				s.burstUntil = 0
+				s.sideStepUntil = 0
 			end
 		else
 			s.blockedSince = nil
@@ -1152,7 +2059,11 @@ function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 		s.blockedSince = nil
 	end
 
-	-- 3. per-mode velocity ------------------------------------------------------
+	-- 3. buffered press and Cut look-ahead ----------------------------------
+	retryBuffer(s, input, env)
+	resolveLookAhead(s, input)
+
+	-- 4. per-mode velocity ------------------------------------------------------
 	local wish = VecMath.flat(input.move)
 	local wishMag = math.min(wish.Magnitude, 1)
 	local top = topSpeed(s, input.sprint)
@@ -1161,25 +2072,43 @@ function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 	if s.frozen or mode == "Frozen" then
 		s.vel = Vector3.zero
 	elseif s.holding and (mode == "Ground" or mode == "Landing") then
-		updateHolding(s, wish, env, dt)
+		updateHolding(s, input, env, dt)
 		if mode == "Landing" and now >= s.landingUntil then
 			setMode(s, "Ground")
 		end
 	elseif mode == "Ground" or mode == "Landing" then
-		if now < s.burstUntil then
+		if s.marking then
+			s.vel = steerShuffle(s.vel, wish, dt)
+		elseif now < s.burstUntil then
 			s.vel = s.burstDir * s.burstSpeed
+		elseif now < s.sideStepUntil then
+			s.vel = s.sideStepDir * s.sideStepSpeed
 		elseif now < s.plantEnd then
 			s.vel = VecMath.moveToward(s.vel, Vector3.zero, s.plantDecel * dt)
-		elseif now >= s.jabUntil then
-			-- (during a jab step the player is committed: no steering)
+		elseif s.plantAt > 0 and not s.plantResolved then
+			-- the plant ends: holding a direction restarts automatically
+			s.plantResolved = true
+			if wishMag > 0.2 then
+				local d = VecMath.flatUnit(wish)
+				local out = Config.SprintSpeed * MC.AutoRestart
+				s.vel = d * math.max(out, s.vel:Dot(d))
+				setLine(s, d, s.vel.Magnitude)
+				s.impulse = true
+			else
+				s.vel = MovementSim.steerGround(s.vel, wish, top, dt, 1)
+			end
+		else
 			local lat = if mode == "Landing" then Config.LandingSteer else 1
+			if now < s.jabUntil then
+				lat = math.min(lat, FC.JabSteer)
+			end
 			s.vel = MovementSim.steerGround(s.vel, wish, top, dt, lat)
 		end
 		if mode == "Landing" and now >= s.landingUntil then
 			setMode(s, "Ground")
 		end
 		if s.plantAt > 0 and now - s.plantAt > MC.WindowClose then
-			s.plantAt = 0
+			clearPlant(s)
 		end
 	elseif mode == "Air" then
 		if not s.holding then
@@ -1188,7 +2117,8 @@ function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 	-- (Dive: a commitment, no steering; Air Redirect is the only adjustment)
 	elseif mode == "Slide" then
 		local speed = s.vel.Magnitude
-		local newSpeed = math.max(0, speed - SL.Friction * dt)
+		local friction = if s.holding then math.max(SL.Friction, HD.DecelRate) else SL.Friction
+		local newSpeed = math.max(0, speed - friction * dt)
 		local d = velDirOr(s, s.diveDir)
 		if not s.holding and wishMag > 0.05 then
 			d = VecMath.rotateToward(d, VecMath.flatUnit(wish), SL.SteerRate * dt)
@@ -1199,47 +2129,51 @@ function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 		end
 	elseif mode == "DiveSlide" then
 		local speed = s.vel.Magnitude
-		local newSpeed = math.max(0, speed - DS.Friction * dt)
+		local friction = if s.holding then math.max(DS.Friction, HD.DecelRate) else DS.Friction
+		local newSpeed = math.max(0, speed - friction * dt)
 		s.vel = velDirOr(s, s.diveDir) * newSpeed
 		if newSpeed < DS.StopSpeed or now - s.modeStart > DS.MaxTime then
 			enterRecover(s, RC.Time)
 		end
 	elseif mode == "Recover" then
-		s.vel = VecMath.moveToward(s.vel, Vector3.zero, RC.Decel * dt)
+		if s.holding then
+			s.vel = VecMath.moveToward(s.vel, Vector3.zero, HD.DecelRate * dt)
+		else
+			s.vel = MovementSim.steerGround(s.vel, wish, top, dt, RC.Steer)
+		end
 		if now >= s.recoverUntil then
 			setMode(s, "Ground")
 		end
 	end
 
-	-- 4. exertion ---------------------------------------------------------------
+	-- 5. exertion ---------------------------------------------------------------
 	local speedNow = s.vel.Magnitude
 	local sprinting = input.sprint
 		and wishMag > 0.05
 		and speedNow > Config.JogSpeed + 0.5
-		and (s.mode == "Ground" or s.mode == "Landing")
+		and isGrounded(s)
+		and not s.marking
+		and not s.holding
+	local regenOk = now >= s.regenAt
 	if sprinting then
-		s.exertion = math.max(0, s.exertion - Config.SprintDrain * dt)
-		s.regenAt = math.max(s.regenAt, now + Config.ExertionRegenDelay * 0.5)
-	elseif now >= s.regenAt then
-		s.exertion = math.min(Config.ExertionMax, s.exertion + Config.ExertionRegen * dt)
-	end
-
-	-- 5. running-line commitment (feeds Snap Cut quality) -------------------
-	if s.mode == "Ground" and not s.holding then
-		if speedNow > 10 then
-			local d = s.vel / speedNow
-			if s.commitDir:Dot(d) < math.cos(math.rad(Config.CommitAngle)) then
-				s.commitDir = d
-				s.commitSince = now
-			end
-		else
-			s.commitSince = now
+		s.exertion -= Config.SprintDrain * dt
+		if regenOk then
+			s.exertion += Config.SprintRegen * dt
 		end
+	elseif regenOk then
+		s.exertion += Config.ExertionRegen * dt
+	end
+	s.exertion = math.clamp(s.exertion, 0, Config.ExertionMax)
+
+	-- 6. running line (grades Snap Cuts and Plants) ---------------------------
+	if isGrounded(s) and not s.holding then
+		trackLine(s, dt)
 	end
 
-	-- 6. hard safety cap ----------------------------------------------------------
+	-- 7. hard safety cap ----------------------------------------------------------
 	s.vel = VecMath.clampMagnitude(VecMath.flat(s.vel), Config.HardCap)
 
+	local impulse = s.impulse or s.pendingJump or (s.vel - s.lastOutVel).Magnitude > Config.ImpulseThreshold
 	local out: Output = {
 		vel = s.vel,
 		setVertical = s.pendingVertical,
@@ -1249,12 +2183,18 @@ function MovementSim.step(s: State, input: Input, env: Env, dt: number): Output
 		pivotEstablished = s.pendingPivot,
 		landed = landed,
 		tookOff = tookOff,
+		impulse = impulse,
+		step = if s.holding then s.step else Vector3.zero,
+		pivotPos = s.pendingPivotPos,
 	}
+	s.lastOutVel = s.vel
+	s.impulse = false
 	s.pendingVertical = nil
 	s.pendingJump = false
 	s.pendingEvents = {}
 	s.pendingFeedback = {}
 	s.pendingPivot = false
+	s.pendingPivotPos = nil
 	return out
 end
 
