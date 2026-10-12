@@ -11,7 +11,8 @@ local character = script.Parent :: Model
 local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 local root = character:WaitForChild("HumanoidRootPart") :: BasePart
 
-local Locomotion = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Animation"):WaitForChild("Locomotion"))
+local Locomotion =
+	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Animation"):WaitForChild("Locomotion"))
 
 local controller = Locomotion.new(humanoid)
 

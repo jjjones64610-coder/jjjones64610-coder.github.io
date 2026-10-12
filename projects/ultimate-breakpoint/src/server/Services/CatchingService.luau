@@ -46,7 +46,13 @@ local function facingOf(root: BasePart): Vector3
 	return VecMath.flatUnit(root.CFrame.LookVector)
 end
 
-local function bodyFor(actorId: number, root: BasePart, kind: string?, reachDir: Vector3?, t: number): CatchGeometry.BodyState
+local function bodyFor(
+	actorId: number,
+	root: BasePart,
+	kind: string?,
+	reachDir: Vector3?,
+	t: number
+): CatchGeometry.BodyState
 	local reach = reaches[actorId]
 	local reaching = false
 	local dir: Vector3? = nil
@@ -95,7 +101,14 @@ local function claimable(d: any, t: number): boolean
 	return d.mode == "Landed" and t <= d.landAt + 0.02
 end
 
-local function addClaim(d: any, actorId: number, team: string, t: number, ev: CatchGeometry.Evaluation, actorVel: Vector3)
+local function addClaim(
+	d: any,
+	actorId: number,
+	team: string,
+	t: number,
+	ev: CatchGeometry.Evaluation,
+	actorVel: Vector3
+)
 	local rel = (services.DiscService.velocity(d) - actorVel).Magnitude
 	for _, c in d.claims do
 		if c.id == actorId then
@@ -185,7 +198,8 @@ local function notifyClaimers(d: any, winnerId: number?, result: string)
 	for _, c in d.claims do
 		local player = services.Actors.playerOf(c.id)
 		if player then
-			Net.event("CatchResult"):FireClient(player, d.id, c.id == winnerId and result == "Catch", result, d.flightId)
+			Net.event("CatchResult")
+				:FireClient(player, d.id, c.id == winnerId and result == "Catch", result, d.flightId)
 		end
 	end
 end
@@ -260,7 +274,10 @@ function CatchingService.resolve(d: any)
 	local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
 	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12)
 	Net.event("Effect"):FireAllClients(outcome, discPos, w.id, w.quality, w.zone)
-	d.handler.onTouched(d, { id = w.id, team = w.team, kind = outcome, pos = discPos, zone = w.zone, reason = resolution.reason })
+	d.handler.onTouched(
+		d,
+		{ id = w.id, team = w.team, kind = outcome, pos = discPos, zone = w.zone, reason = resolution.reason }
+	)
 end
 
 function CatchingService.reachState(actorId: number): ReachState?

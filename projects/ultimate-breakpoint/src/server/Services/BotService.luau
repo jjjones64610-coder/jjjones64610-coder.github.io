@@ -79,10 +79,26 @@ local nextId = Actors.BotIdBase
 local seedCounter = 0
 
 local NAMES = {
-	"Huck Norris", "Flick Jagger", "Layla Out", "Hammer Time", "Scoober Doo",
-	"Stall Ten", "Pivot Pete", "Blade Runner", "Callahan Kid", "Greatest Gwen",
-	"Bricky", "Swing Lowe", "Dump Truck", "Deep Dana", "Break Mark",
-	"Zone Defense", "Spin Doctor", "Pancake", "Hospital Hal", "Sky Walker",
+	"Huck Norris",
+	"Flick Jagger",
+	"Layla Out",
+	"Hammer Time",
+	"Scoober Doo",
+	"Stall Ten",
+	"Pivot Pete",
+	"Blade Runner",
+	"Callahan Kid",
+	"Greatest Gwen",
+	"Bricky",
+	"Swing Lowe",
+	"Dump Truck",
+	"Deep Dana",
+	"Break Mark",
+	"Zone Defense",
+	"Spin Doctor",
+	"Pancake",
+	"Hospital Hal",
+	"Sky Walker",
 }
 
 local SKIN = {
@@ -152,6 +168,16 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		services.PlayerService.setTeam(actor, team, role)
 	end
 	humanoid.AutoRotate = true
+	for _, st in
+		{
+			Enum.HumanoidStateType.Climbing,
+			Enum.HumanoidStateType.Seated,
+			Enum.HumanoidStateType.Ragdoll,
+			Enum.HumanoidStateType.FallingDown,
+		}
+	do
+		humanoid:SetStateEnabled(st, false)
+	end
 	humanoid.UseJumpPower = true
 	humanoid.JumpPower = MovementConfig.JumpVelocity
 	humanoid.WalkSpeed = JOG
@@ -493,7 +519,9 @@ local function thinkHolder(b: Brain, e: RulesEngine.State)
 		wind = services.ArenaService.wind(),
 		coarse = true,
 	})
-	if not sol then
+	if not sol or (sol.miss > 3.5 and stall < stallMax - 2) then
+		-- no catchable pass to that receiver right now; look again shortly
+		b.holdUntil = t + 0.3
 		return
 	end
 	local params = sol.params

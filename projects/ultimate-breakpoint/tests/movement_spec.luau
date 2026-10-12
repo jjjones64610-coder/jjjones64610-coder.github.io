@@ -91,7 +91,10 @@ test("sprinting turns are wide (turn radius ~ v^2 / lateral accel)", function()
 	run(s, body, { move = RIGHT, sprint = true }, 0.1)
 	local turned = math.deg(math.abs(VecMath.yaw(s.vel) - yaw0))
 	local expected = math.deg(Config.LateralAccel / Config.SprintSpeed * 0.1)
-	expect(turned < expected * 1.6 and turned > expected * 0.5, string.format("turned %.1f deg in 0.1 s (model %.1f)", turned, expected))
+	expect(
+		turned < expected * 1.6 and turned > expected * 0.5,
+		string.format("turned %.1f deg in 0.1 s (model %.1f)", turned, expected)
+	)
 end)
 
 test("a plain reversal is slow; Momentum Cancel + Perfect restart is fast", function()
@@ -268,7 +271,10 @@ test("holding the disc: decelerate, then pivot within radius", function()
 		end
 	end
 	expect(established, "pivot established")
-	expect((body.pos - pivot).Magnitude <= Config.Holding.PivotRadius + 0.3, "stayed inside pivot radius: " .. (body.pos - pivot).Magnitude)
+	expect(
+		(body.pos - pivot).Magnitude <= Config.Holding.PivotRadius + 0.3,
+		"stayed inside pivot radius: " .. (body.pos - pivot).Magnitude
+	)
 	expect(not press(s, body, "Burst", { move = FWD, sprint = true }), "no techniques while holding")
 end)
 

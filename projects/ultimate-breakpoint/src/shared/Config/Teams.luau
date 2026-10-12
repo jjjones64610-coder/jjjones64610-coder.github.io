@@ -16,7 +16,7 @@ local Teams = {
 		BrickColor = BrickColor.new("Neon orange"),
 	},
 	Neutral = {
-		Name = "TRAINING",
+		Name = "SIDELINE",
 		Color = Color3.fromRGB(200, 200, 210),
 		BrickColor = BrickColor.new("Medium stone grey"),
 	},

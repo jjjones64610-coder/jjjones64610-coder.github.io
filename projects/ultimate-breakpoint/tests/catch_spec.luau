@@ -67,7 +67,8 @@ test("fingertip under pressure bobbles; clean catches never bobble", function()
 		{ id = 2, team = "B", t = 1.02, depth = 0.9, quality = "Fingertip", relativeSpeed = 30 },
 	})
 	expect(r.bobble, "contested fingertip bobbles")
-	local fast = CatchGeometry.resolve({ { id = 1, team = "A", t = 1, depth = 0.8, quality = "Fingertip", relativeSpeed = 90 } })
+	local fast =
+		CatchGeometry.resolve({ { id = 1, team = "A", t = 1, depth = 0.8, quality = "Fingertip", relativeSpeed = 90 } })
 	expect(fast.bobble, "fast fingertip bobbles")
 	local clean = CatchGeometry.resolve({
 		{ id = 1, team = "A", t = 1.00, depth = 0.3, quality = "Clean", relativeSpeed = 90 },
@@ -86,7 +87,43 @@ test("mark zones: low hands stop low releases, high hands stop high ones", funct
 	expect(CatchGeometry.inMarkZone(marker, 0, toward, "High", 0, highDisc), "high stance blocks high")
 	expect(not CatchGeometry.inMarkZone(marker, 0, toward, "High", 0, lowDisc), "high stance misses low")
 	expect(CatchGeometry.inMarkZone(marker, 0, toward, "Low", 4.5, highDisc), "jumping lifts the low zone")
-	expect(not CatchGeometry.inMarkZone(marker, 0, toward, "Low", 0, Vector3.new(6, 2, -2.5)), "wide step-out beats the hands")
+	expect(
+		not CatchGeometry.inMarkZone(marker, 0, toward, "Low", 0, Vector3.new(6, 2, -2.5)),
+		"wide step-out beats the hands"
+	)
+end)
+
+test("integration: mark counterplay (what beats a low mark, what beats a high mark)", function()
+	local ThrowModel = H.require("Disc/ThrowModel")
+	local DiscPhysics = H.require("Disc/DiscPhysics")
+	local root = Vector3.new(0, 3, 0)
+	local marker = Vector3.new(0, 3, -3.4)
+	local toward = root - marker
+	local function blocked(params, stance, jumpH, pivot)
+		local s = ThrowModel.launch(params, root + (pivot or Vector3.zero), Vector3.zero).state
+		while s.t < 0.3 do
+			DiscPhysics.step(s, 1 / 120)
+			if CatchGeometry.inMarkZone(marker, 0, toward, stance, jumpH or 0, Vector3.new(s.px, s.py, s.pz)) then
+				return true
+			end
+		end
+		return false
+	end
+	local function p(t, height, yaw)
+		return { throwType = t, yaw = yaw or 0, pitch = 0, holdTime = 0.4, bank = 0, height = height }
+	end
+	expect(blocked(p("Backhand", "Mid"), "Low"), "mid backhand into a low mark is blocked")
+	expect(blocked(p("Forehand", "Low", -0.35), "Low"), "a step-out alone does not beat a squared-up low mark")
+	expect(
+		not blocked(p("Forehand", "Low", -0.35), "Low", 0, Vector3.new(2.5, 0, 0)),
+		"pivot + low forehand step-out gets around a low mark"
+	)
+	expect(not blocked(p("Hammer", "Mid"), "Low"), "hammer goes over a low mark")
+	expect(blocked(p("Hammer", "Mid"), "High"), "a high mark stops the hammer")
+	expect(not blocked(p("Backhand", "Mid", 0.35), "High"), "a breaking backhand beats a high mark")
+	expect(blocked(p("Hammer", "Mid"), "Low", 4.5), "jumping lifts a low mark into the hammer")
+	expect(blocked(p("Backhand", "Mid"), "Relaxed"), "a throw straight into a hands-down marker's body is stopped")
+	expect(not blocked(p("Backhand", "Mid", 0.35), "Relaxed"), "but a hands-down marker cannot stop a break")
 end)
 
 return nil

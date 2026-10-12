@@ -209,11 +209,7 @@ function CatchGeometry.inMarkZone(
 	local height = p.Y - groundY - math.max(jumpHeight, 0)
 	local band = if stance == "High" then M.HighY else M.LowY
 	local halfW = if stance == "High" then M.HighHalfWidth else M.LowHalfWidth
-	return depth >= M.DepthMin
-		and depth <= M.DepthMax
-		and lateral <= halfW
-		and height >= band[1]
-		and height <= band[2]
+	return depth >= M.DepthMin and depth <= M.DepthMax and lateral <= halfW and height >= band[1] and height <= band[2]
 end
 
 return CatchGeometry

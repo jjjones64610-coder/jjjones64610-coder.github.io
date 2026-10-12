@@ -237,7 +237,14 @@ local function scoreGoal(e: State, team: Team, scorer: number, assist: number?, 
 	return outcomes
 end
 
-local function checkGoal(e: State, id: number, team: Team, pos: Vector3, interception: boolean, assist: number?): { Outcome }
+local function checkGoal(
+	e: State,
+	id: number,
+	team: Team,
+	pos: Vector3,
+	interception: boolean,
+	assist: number?
+): { Outcome }
 	local f = e.field
 	if interception and e.throwerTeam and FieldGeometry.inEndZone(f, pos, e.attack[e.throwerTeam :: Team]) then
 		return scoreGoal(e, team, id, nil, true)
@@ -300,7 +307,14 @@ end
 
 -- A player secured the disc. `grounded` = feet on the ground at the catch;
 -- `jumpOrigin` = where an airborne catcher last left the ground.
-function RulesEngine.catch(e: State, id: number, team: Team, pos: Vector3, grounded: boolean, jumpOrigin: Vector3?): { Outcome }
+function RulesEngine.catch(
+	e: State,
+	id: number,
+	team: Team,
+	pos: Vector3,
+	grounded: boolean,
+	jumpOrigin: Vector3?
+): { Outcome }
 	if e.disc ~= "Flight" or e.phase ~= "Live" then
 		return {}
 	end

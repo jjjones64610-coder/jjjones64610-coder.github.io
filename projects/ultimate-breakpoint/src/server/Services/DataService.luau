@@ -216,8 +216,14 @@ function DataService.Init(_services: any)
 		persistentAvailable = probeOk
 	end
 	if not persistentAvailable then
-		warn("[DataService] DataStores unavailable — profiles will not be saved this session."
-			.. (if RunService:IsStudio() then " (Enable 'Studio Access to API Services' in Game Settings > Security.)" else ""))
+		warn(
+			"[DataService] DataStores unavailable — profiles will not be saved this session."
+				.. (
+					if RunService:IsStudio()
+						then " (Enable 'Studio Access to API Services' in Game Settings > Security.)"
+						else ""
+				)
+		)
 	end
 end
 

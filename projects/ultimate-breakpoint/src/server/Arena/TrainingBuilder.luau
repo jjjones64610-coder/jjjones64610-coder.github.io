@@ -111,17 +111,57 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 	})
 	-- floor grid
 	for x = -W + 20, W - 20, 20 do
-		Build.part(model, { Name = "Grid", Size = Vector3.new(0.2, 0.04, Z1 - Z0), CFrame = CFrame.new(at(x, (Z0 + Z1) / 2, 0.02)), Color = Color3.fromRGB(60, 70, 88) })
+		Build.part(model, {
+			Name = "Grid",
+			Size = Vector3.new(0.2, 0.04, Z1 - Z0),
+			CFrame = CFrame.new(at(x, (Z0 + Z1) / 2, 0.02)),
+			Color = Color3.fromRGB(60, 70, 88),
+		})
 	end
 	for z = Z0 + 20, Z1 - 20, 20 do
-		Build.part(model, { Name = "Grid", Size = Vector3.new(2 * W, 0.04, 0.2), CFrame = CFrame.new(at(0, z, 0.02)), Color = Color3.fromRGB(60, 70, 88) })
+		Build.part(model, {
+			Name = "Grid",
+			Size = Vector3.new(2 * W, 0.04, 0.2),
+			CFrame = CFrame.new(at(0, z, 0.02)),
+			Color = Color3.fromRGB(60, 70, 88),
+		})
 	end
 	local wallColor = Color3.fromRGB(28, 32, 42)
-	Build.part(model, { Name = "Wall", Size = Vector3.new(2, H, Z1 - Z0), CFrame = CFrame.new(at(-W, (Z0 + Z1) / 2, H / 2)), Color = wallColor, solid = true })
-	Build.part(model, { Name = "Wall", Size = Vector3.new(2, H, Z1 - Z0), CFrame = CFrame.new(at(W, (Z0 + Z1) / 2, H / 2)), Color = wallColor, solid = true })
-	Build.part(model, { Name = "Wall", Size = Vector3.new(2 * W, H, 2), CFrame = CFrame.new(at(0, Z0, H / 2)), Color = wallColor, solid = true })
-	Build.part(model, { Name = "Wall", Size = Vector3.new(2 * W, H, 2), CFrame = CFrame.new(at(0, Z1, H / 2)), Color = wallColor, solid = true })
-	Build.part(model, { Name = "Roof", Size = Vector3.new(2 * W, 2, Z1 - Z0), CFrame = CFrame.new(at(0, (Z0 + Z1) / 2, H + 1)), Color = wallColor, solid = true })
+	Build.part(model, {
+		Name = "Wall",
+		Size = Vector3.new(2, H, Z1 - Z0),
+		CFrame = CFrame.new(at(-W, (Z0 + Z1) / 2, H / 2)),
+		Color = wallColor,
+		solid = true,
+	})
+	Build.part(model, {
+		Name = "Wall",
+		Size = Vector3.new(2, H, Z1 - Z0),
+		CFrame = CFrame.new(at(W, (Z0 + Z1) / 2, H / 2)),
+		Color = wallColor,
+		solid = true,
+	})
+	Build.part(model, {
+		Name = "Wall",
+		Size = Vector3.new(2 * W, H, 2),
+		CFrame = CFrame.new(at(0, Z0, H / 2)),
+		Color = wallColor,
+		solid = true,
+	})
+	Build.part(model, {
+		Name = "Wall",
+		Size = Vector3.new(2 * W, H, 2),
+		CFrame = CFrame.new(at(0, Z1, H / 2)),
+		Color = wallColor,
+		solid = true,
+	})
+	Build.part(model, {
+		Name = "Roof",
+		Size = Vector3.new(2 * W, 2, Z1 - Z0),
+		CFrame = CFrame.new(at(0, (Z0 + Z1) / 2, H + 1)),
+		Color = wallColor,
+		solid = true,
+	})
 	for x = -W + 40, W - 40, 60 do
 		for z = Z0 + 40, Z1 - 40, 60 do
 			local panel = Build.part(model, {
@@ -131,11 +171,21 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 				Color = Color3.fromRGB(235, 245, 255),
 				Material = Enum.Material.Neon,
 			})
-			Build.light(panel, "SurfaceLight", { Face = Enum.NormalId.Bottom, Range = 60, Angle = 120, Brightness = 2.5, Shadows = false })
+			Build.light(
+				panel,
+				"SurfaceLight",
+				{ Face = Enum.NormalId.Bottom, Range = 60, Angle = 120, Brightness = 2.5, Shadows = false }
+			)
 		end
 	end
 	for _, z in { Z0 + 0.8, Z1 - 0.8 } do
-		Build.part(model, { Name = "Strip", Size = Vector3.new(2 * W, 0.8, 0.4), CFrame = CFrame.new(at(0, z, 10)), Color = LINE, Material = Enum.Material.Neon })
+		Build.part(model, {
+			Name = "Strip",
+			Size = Vector3.new(2 * W, 0.8, 0.4),
+			CFrame = CFrame.new(at(0, z, 10)),
+			Color = LINE,
+			Material = Enum.Material.Neon,
+		})
 	end
 
 	local entry = CFrame.lookAt(at(0, -125, 3.5), at(0, 0, 3.5))
@@ -157,7 +207,14 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 	end
 
 	-- Movement School
-	station("Tutorial", "MOVEMENT SCHOOL", "Learn every technique, step by step", at(-120, -118), at(-110, -90), Vector3.new(0, 0, 1))
+	station(
+		"Tutorial",
+		"MOVEMENT SCHOOL",
+		"Learn every technique, step by step",
+		at(-120, -118),
+		at(-110, -90),
+		Vector3.new(0, 0, 1)
+	)
 	-- Cutting course: zig-zag gates
 	local gates = {}
 	local courseFolder = Build.folder(model, "CuttingCourse")
@@ -169,7 +226,14 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 		cone(courseFolder, b, if i == 1 or i == #gx then Color3.fromRGB(80, 255, 140) else nil)
 		table.insert(gates, { a = a, b = b })
 	end
-	station("Cutting", "CUTTING COURSE", "Slalom through every gate. Keep your speed.", at(-30, -126), at(0, -124), Vector3.new(0, 0, 1))
+	station(
+		"Cutting",
+		"CUTTING COURSE",
+		"Slalom through every gate. Keep your speed.",
+		at(-30, -126),
+		at(0, -124),
+		Vector3.new(0, 0, 1)
+	)
 
 	-- Momentum shuttle
 	local shuttleFolder = Build.folder(model, "Shuttle")
@@ -183,11 +247,24 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 			Material = Enum.Material.Neon,
 		})
 	end
-	station("Shuttle", "MOMENTUM SHUTTLE", "A-B-A-B-A. Reverse fast without losing it.", at(146, -126), at(110, -126), Vector3.new(0, 0, 1))
+	station(
+		"Shuttle",
+		"MOMENTUM SHUTTLE",
+		"A-B-A-B-A. Reverse fast without losing it.",
+		at(146, -126),
+		at(110, -126),
+		Vector3.new(0, 0, 1)
+	)
 
 	-- Aerial catch: launcher at the north end of the west side
 	local launcher = at(-100, 128, 4)
-	Build.part(model, { Name = "LauncherBase", Size = Vector3.new(6, 6, 6), CFrame = CFrame.new(launcher - Vector3.new(0, 1, 0)), Color = Color3.fromRGB(50, 56, 70), solid = true })
+	Build.part(model, {
+		Name = "LauncherBase",
+		Size = Vector3.new(6, 6, 6),
+		CFrame = CFrame.new(launcher - Vector3.new(0, 1, 0)),
+		Color = Color3.fromRGB(50, 56, 70),
+		solid = true,
+	})
 	Build.part(model, {
 		Name = "LauncherBarrel",
 		Shape = Enum.PartType.Cylinder,
@@ -205,8 +282,22 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 		Color = Color3.fromRGB(255, 200, 60),
 		Material = Enum.Material.Neon,
 	})
-	station("Aerial", "AERIAL CATCH", "10 launches: floaters, skimmers, layouts", at(-150, 20), catchMark + Vector3.new(0, 3, 0), Vector3.new(0, 0, 1))
-	station("Launcher", "FREE LAUNCHER", "Custom launches (opens the launcher panel)", at(-150, 60), catchMark + Vector3.new(0, 3, 0), Vector3.new(0, 0, 1))
+	station(
+		"Aerial",
+		"AERIAL CATCH",
+		"10 launches: floaters, skimmers, layouts",
+		at(-150, 20),
+		catchMark + Vector3.new(0, 3, 0),
+		Vector3.new(0, 0, 1)
+	)
+	station(
+		"Launcher",
+		"FREE LAUNCHER",
+		"Custom launches (opens the launcher panel)",
+		at(-150, 60),
+		catchMark + Vector3.new(0, 3, 0),
+		Vector3.new(0, 0, 1)
+	)
 
 	-- Throwing range (east): throw north from the mark
 	local throwMark = at(70, 20)
@@ -230,7 +321,12 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 			Material = Enum.Material.Neon,
 			Transparency = 0.55,
 		})
-		Build.part(model, { Name = "TargetPole", Size = Vector3.new(0.4, y - radius, 0.4), CFrame = CFrame.new(at(x, z, (y - radius) / 2)), Color = Color3.fromRGB(200, 200, 210) })
+		Build.part(model, {
+			Name = "TargetPole",
+			Size = Vector3.new(0.4, y - radius, 0.4),
+			CFrame = CFrame.new(at(x, z, (y - radius) / 2)),
+			Color = Color3.fromRGB(200, 200, 210),
+		})
 		Build.sign(ring, name, points .. " pts", Color3.fromRGB(255, 80, 120))
 		CollectionService:AddTag(ring, "UBTarget")
 		table.insert(targets, { pos = pos, radius = radius, points = points, name = name })
@@ -254,8 +350,20 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 	moverPart:SetAttribute("Period", mover.period)
 	moverPart:SetAttribute("Center", moverCenter)
 	CollectionService:AddTag(moverPart, "UBMover")
-	Build.part(model, { Name = "Rail", Size = Vector3.new(mover.amplitude * 2 + 10, 0.4, 0.6), CFrame = CFrame.new(moverCenter - Vector3.new(0, 5, 0)), Color = Color3.fromRGB(90, 96, 110) })
-	station("Range", "THROWING RANGE", "10 throws at the rings (and the mover)", at(100, 8), throwMark + Vector3.new(0, 3, 0), Vector3.new(0, 0, 1))
+	Build.part(model, {
+		Name = "Rail",
+		Size = Vector3.new(mover.amplitude * 2 + 10, 0.4, 0.6),
+		CFrame = CFrame.new(moverCenter - Vector3.new(0, 5, 0)),
+		Color = Color3.fromRGB(90, 96, 110),
+	})
+	station(
+		"Range",
+		"THROWING RANGE",
+		"10 throws at the rings (and the mover)",
+		at(100, 8),
+		throwMark + Vector3.new(0, 3, 0),
+		Vector3.new(0, 0, 1)
+	)
 
 	-- Interception drill (north-west)
 	local interception = {
@@ -271,7 +379,14 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 		Material = Enum.Material.Neon,
 		Transparency = 0.9,
 	})
-	station("Interception", "INTERCEPTION DRILL", "Read the throw. Get the D.", at(-150, 145), interception.playerStart, Vector3.new(0, 0, 1))
+	station(
+		"Interception",
+		"INTERCEPTION DRILL",
+		"Read the throw. Get the D.",
+		at(-150, 145),
+		interception.playerStart,
+		Vector3.new(0, 0, 1)
+	)
 
 	-- Combo lab with rebound walls
 	local lab = Build.folder(model, "ComboLab")
@@ -287,7 +402,14 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 		})
 		CollectionService:AddTag(wall, "Rebound")
 	end
-	station("Combo", "COMBO LAB", "Chain challenges. Rebound walls inside.", at(-16, 10), at(-16, 30, 3), Vector3.new(0, 0, 1))
+	station(
+		"Combo",
+		"COMBO LAB",
+		"Chain challenges. Rebound walls inside.",
+		at(-16, 10),
+		at(-16, 30, 3),
+		Vector3.new(0, 0, 1)
+	)
 
 	model.Parent = parent
 	return {

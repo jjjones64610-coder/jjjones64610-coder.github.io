@@ -101,7 +101,11 @@ test("crosswind pushes the disc downwind, consistently", function()
 end)
 
 test("advanceTo matches manual fixed stepping", function()
-	local launch = ThrowModel.launch({ throwType = "Forehand", yaw = 0.3, pitch = 0.05, holdTime = 0.4, bank = -0.4, height = "Mid" }, ROOT, Vector3.zero)
+	local launch = ThrowModel.launch(
+		{ throwType = "Forehand", yaw = 0.3, pitch = 0.05, holdTime = 0.4, bank = -0.4, height = "Mid" },
+		ROOT,
+		Vector3.zero
+	)
 	local a = DiscPhysics.copy(launch.state)
 	DiscPhysics.advanceTo(a, 1.0, nil, -1000)
 	local b = DiscPhysics.copy(launch.state)

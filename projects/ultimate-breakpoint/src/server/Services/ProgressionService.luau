@@ -60,7 +60,9 @@ end
 
 function ProgressionService.equipped(player: Player, slot: string): string
 	local d = data(player)
-	local fallback = ({ disc = "Classic", trail = "None", celebration = "Point", banner = "Slate", title = "Rookie" } :: any)[slot] or ""
+	local fallback = (
+		{ disc = "Classic", trail = "None", celebration = "Point", banner = "Slate", title = "Rookie" } :: any
+	)[slot] or ""
 	if not d then
 		return fallback
 	end
@@ -258,7 +260,13 @@ local function onTech(actorId: number, tech: string, quality: string)
 end
 
 -- Called once per finished match. Returns rating changes for the summary.
-function ProgressionService.matchEnded(winner: string?, stats: { [number]: any }, rows: { any }, ranked: boolean, margin: number): { [string]: any }
+function ProgressionService.matchEnded(
+	winner: string?,
+	stats: { [number]: any },
+	rows: { any },
+	ranked: boolean,
+	margin: number
+): { [string]: any }
 	local changes = {}
 	local teamRatings: { [string]: { number } } = { A = {}, B = {} }
 	if ranked then
@@ -306,7 +314,12 @@ function ProgressionService.matchEnded(winner: string?, stats: { [number]: any }
 	return changes
 end
 
-function ProgressionService.recordPersonalBest(player: Player, drill: string, value: number, lowerIsBetter: boolean): boolean
+function ProgressionService.recordPersonalBest(
+	player: Player,
+	drill: string,
+	value: number,
+	lowerIsBetter: boolean
+): boolean
 	local d = data(player)
 	if not d then
 		return false
@@ -371,7 +384,12 @@ local function sanitizeSettings(raw: any): any
 end
 
 function ProgressionService.action(player: Player, kind: string, payload: any)
-	if kind == "Equip" and type(payload) == "table" and type(payload.slot) == "string" and type(payload.id) == "string" then
+	if
+		kind == "Equip"
+		and type(payload) == "table"
+		and type(payload.slot) == "string"
+		and type(payload.id) == "string"
+	then
 		local d = data(player)
 		if d and isUnlocked(d, payload.slot, payload.id) then
 			services.DataService.update(player, function(dd: { [string]: any })

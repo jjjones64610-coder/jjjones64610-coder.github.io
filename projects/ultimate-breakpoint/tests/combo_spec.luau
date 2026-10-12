@@ -38,7 +38,12 @@ test("chains expire after the window", function()
 end)
 
 test("only converted chains pay out (x2) and tier up", function()
-	local tr, t = chain({ { "FakeCommit", "Perfect" }, { "SnapCut", "Perfect" }, { "BurstStep", "Perfect" }, { "Dive", "Perfect" } })
+	local tr, t = chain({
+		{ "FakeCommit", "Perfect" },
+		{ "SnapCut", "Perfect" },
+		{ "BurstStep", "Perfect" },
+		{ "Dive", "Perfect" },
+	})
 	local raw = ComboEvaluator.total(tr.chain)
 	local s = ComboEvaluator.convert(tr, t + 0.4, "Layout Catch")
 	expect(s and s.converted and s.score == raw * 2 and s.payoff == "Layout Catch", "conversion")

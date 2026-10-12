@@ -26,7 +26,10 @@ function TeamService.counts(): (number, number)
 	return #services.PlayerService.onTeam("A"), #services.PlayerService.onTeam("B")
 end
 
-local function fillBots()
+local filling = false
+local refill = false
+
+local function fillOnce()
 	local mode = currentMode
 	if not mode then
 		return
@@ -60,6 +63,26 @@ local function fillBots()
 			end
 		end
 	end
+end
+
+-- Bot spawning yields, so fills are serialised: a request that arrives while
+-- one is running simply schedules another pass with fresh counts.
+local function fillBots()
+	if filling then
+		refill = true
+		return
+	end
+	filling = true
+	repeat
+		refill = false
+		local ok, err = pcall(function()
+			fillOnce()
+		end)
+		if not ok then
+			warn("[TeamService] " .. tostring(err))
+		end
+	until not refill
+	filling = false
 end
 
 -- Splits every non-training human into teams for a new match.

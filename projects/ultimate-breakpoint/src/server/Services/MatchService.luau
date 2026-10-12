@@ -394,6 +394,14 @@ local function goal(o: any)
 	publishScore()
 	services.DefenseService.stopStall()
 	setHolderAttr(nil)
+	-- the point is over: the disc rests at the scorer's feet during the celebration
+	local scorerRoot = services.Actors.rootOf(o.scorer)
+	if S.disc then
+		services.DiscService.placeOnGround(
+			S.disc,
+			if scorerRoot then scorerRoot.Position - Vector3.new(0, 3, 0) else Vector3.zero
+		)
+	end
 	MatchService.stat(o.scorer, "goals")
 	if o.callahan then
 		MatchService.stat(o.scorer, "callahans")
@@ -590,7 +598,14 @@ local function autoPull()
 	})
 	local params = if sol
 		then sol.params
-		else { throwType = "Backhand", yaw = math.atan2(-d.X, -d.Z), pitch = math.rad(18), holdTime = 0.6, bank = 0, height = "Mid" }
+		else {
+			throwType = "Backhand",
+			yaw = math.atan2(-d.X, -d.Z),
+			pitch = math.rad(18),
+			holdTime = 0.6,
+			bank = 0,
+			height = "Mid",
+		}
 	return services.ThrowService.throw(pullerId, params, true) ~= nil
 end
 
@@ -634,8 +649,12 @@ local function summary()
 	for _, a in services.PlayerService.all() do
 		if a.team == "A" or a.team == "B" then
 			local st: Stats = S.stats[a.id] or {}
-			local score = (st.goals or 0) * 3 + (st.assists or 0) * 3 + (st.blocks or 0) * 2 + (st.interceptions or 0) * 2
-				+ (st.catches or 0) * 0.5 + (st.highlights or 0)
+			local score = (st.goals or 0) * 3
+				+ (st.assists or 0) * 3
+				+ (st.blocks or 0) * 2
+				+ (st.interceptions or 0) * 2
+				+ (st.catches or 0) * 0.5
+				+ (st.highlights or 0)
 			table.insert(rows, {
 				id = a.id,
 				name = a.name,
@@ -682,11 +701,21 @@ local function endMatch()
 		end
 		rankedValid = a >= 2 and b >= 2
 	end
-	local ratingChanges = services.ProgressionService.matchEnded(e.winner, S.stats, sum.rows, rankedValid, math.abs(e.score.A - e.score.B))
+	local ratingChanges = services.ProgressionService.matchEnded(
+		e.winner,
+		S.stats,
+		sum.rows,
+		rankedValid,
+		math.abs(e.score.A - e.score.B)
+	)
 	sum.ratingChanges = ratingChanges
 	sum.ranked = rankedValid
 	Net.event("Summary"):FireAllClients(sum)
-	notifyAll("Banner", (if e.winner then teamName(e.winner) else "") .. " WIN", { sub = string.format("%d - %d", e.score.A, e.score.B) })
+	notifyAll(
+		"Banner",
+		(if e.winner then teamName(e.winner) else "") .. " WIN",
+		{ sub = string.format("%d - %d", e.score.A, e.score.B) }
+	)
 	services.DefenseService.stopStall()
 	services.PlayerService.setAllFrozen(false)
 	setPhase("MatchOver", 12)
@@ -819,7 +848,8 @@ local function startMatch()
 	S.stats = {}
 	S.lastCatchAt = {}
 	S.rotation = { A = 0, B = 0 }
-	local engine = RulesEngine.new(services.ArenaService.field(), { pointsToWin = mode.PointsToWin, usePull = mode.UsePull })
+	local engine =
+		RulesEngine.new(services.ArenaService.field(), { pointsToWin = mode.PointsToWin, usePull = mode.UsePull })
 	local first = if S.matchCount % 2 == 0 then "A" else "B"
 	RulesEngine.startMatch(engine, first, "East")
 	engine.universe = mode.StartUniverse
@@ -867,7 +897,11 @@ local function pickupCheck(d: any, allowTeam: string?)
 		if #outcomes == 0 then
 			return
 		end
-		services.PlayerService.teleport(best, CFrame.new(Vector3.new(spot.X, spot.Y + 3, spot.Z)) * (services.PlayerService.root(best) :: BasePart).CFrame.Rotation)
+		services.PlayerService.teleport(
+			best,
+			CFrame.new(Vector3.new(spot.X, spot.Y + 3, spot.Z))
+				* (services.PlayerService.root(best) :: BasePart).CFrame.Rotation
+		)
 		services.DiscService.giveTo(d, best.id)
 		services.MovementService.setPivot(best.id, Vector3.new(spot.X, spot.Y + 3, spot.Z))
 		applySkin(d, best.id)
@@ -890,15 +924,33 @@ local function step()
 			setPhase("Intermission", nil)
 		end
 		if t >= S.phaseEnd then
-			startMatch()
+			-- startMatch yields (arena rebuild, bot spawning); mark the phase
+			-- first so later Heartbeats cannot start a second match
+			setPhase("Starting")
+			task.spawn(function()
+				local ok, err = pcall(function()
+					startMatch()
+				end)
+				if not ok then
+					warn("[MatchService] startMatch failed: " .. tostring(err))
+					startIntermission()
+				end
+			end)
 		end
+		return
+	end
+	if phase == "Starting" then
 		return
 	end
 	local e = S.engine
 	if not e then
 		return
 	end
-	if t >= S.matchEnd and not e.capReached and (phase == "Live" or phase == "Pull" or phase == "PointSetup" or phase == "PointOver") then
+	if
+		t >= S.matchEnd
+		and not e.capReached
+		and (phase == "Live" or phase == "Pull" or phase == "PointSetup" or phase == "PointOver")
+	then
 		applyOutcomes(RulesEngine.reachCap(e))
 	end
 	if phase == "PointSetup" then

@@ -52,7 +52,10 @@ test("setup lines teams up in the end zones they defend", function()
 	local e = RulesEngine.new(field, { pointsToWin = 5, usePull = true })
 	RulesEngine.startMatch(e, "A", "East")
 	local s = RulesEngine.setupPoint(e)
-	expect(s.offense == "A" and s.offenseLine == "West" and s.defenseLine == "East", kinds({ s }) .. " " .. s.offenseLine)
+	expect(
+		s.offense == "A" and s.offenseLine == "West" and s.defenseLine == "East",
+		kinds({ s }) .. " " .. s.offenseLine
+	)
 end)
 
 test("completion, then a grounded catch in the attacking end zone scores", function()
@@ -64,7 +67,10 @@ test("completion, then a grounded catch in the attacking end zone scores", funct
 	local g = RulesEngine.catch(e, 3, "A", EAST_EZ, true)
 	local goal = has(g, "Goal")
 	expect(goal and goal.team == "A" and goal.assist == 2 and goal.scorer == 3, kinds(g))
-	expect(e.offense == "B" and e.attack.A == "West" and e.attack.B == "East", "teams switch direction, scored-on team receives")
+	expect(
+		e.offense == "B" and e.attack.A == "West" and e.attack.B == "East",
+		"teams switch direction, scored-on team receives"
+	)
 end)
 
 test("you cannot score by catching outside and running in (catch counts where you land)", function()

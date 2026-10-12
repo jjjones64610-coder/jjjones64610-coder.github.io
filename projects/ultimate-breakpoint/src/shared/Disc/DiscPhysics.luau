@@ -224,7 +224,13 @@ export type Result = {
 
 -- Simulates from `start` (not modified) until ground contact or maxTime,
 -- recording a sample every `sampleEvery` steps.
-function DiscPhysics.simulate(start: State, maxTime: number?, wind: Wind?, groundY: number?, sampleEvery: number?): Result
+function DiscPhysics.simulate(
+	start: State,
+	maxTime: number?,
+	wind: Wind?,
+	groundY: number?,
+	sampleEvery: number?
+): Result
 	local s = DiscPhysics.copy(start)
 	local dt = P.Dt
 	local limit = maxTime or P.MaxFlightTime

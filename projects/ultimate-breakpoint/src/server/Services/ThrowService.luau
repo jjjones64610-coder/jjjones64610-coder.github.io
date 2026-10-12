@@ -126,13 +126,8 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	local blockT: number? = nil
 	local blockPos: Vector3? = nil
 	if d.context == "Match" and not d.pull then
-		blocker, blockT, blockPos = services.DefenseService.checkHandBlock(
-			launch.state,
-			actorId,
-			actor.team,
-			d.groundY,
-			d.wind
-		)
+		blocker, blockT, blockPos =
+			services.DefenseService.checkHandBlock(launch.state, actorId, actor.team, d.groundY, d.wind)
 	end
 
 	local pull = d.meta.pullPending == true

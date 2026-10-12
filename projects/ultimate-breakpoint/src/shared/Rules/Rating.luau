@@ -24,7 +24,14 @@ end
 -- New rating for one player after a match. `won` is true/false.
 -- A modest margin factor (1.0 .. 1.25) rewards decisive wins without making
 -- blowouts the only way to climb.
-function Rating.update(rating: number, gamesPlayed: number, myTeam: number, theirTeam: number, won: boolean, margin: number): number
+function Rating.update(
+	rating: number,
+	gamesPlayed: number,
+	myTeam: number,
+	theirTeam: number,
+	won: boolean,
+	margin: number
+): number
 	local k = if gamesPlayed < Progression.Rating.PlacementGames then Progression.Rating.KNew else Progression.Rating.K
 	local e = Rating.expected(myTeam, theirTeam)
 	local s = if won then 1 else 0

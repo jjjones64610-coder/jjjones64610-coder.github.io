@@ -140,7 +140,14 @@ local function discFor(s: Session): any
 	return d
 end
 
-local function launchAt(s: Session, origin: Vector3, target: Vector3, throwType: string, bank: number?, floaty: boolean?): any
+local function launchAt(
+	s: Session,
+	origin: Vector3,
+	target: Vector3,
+	throwType: string,
+	bank: number?,
+	floaty: boolean?
+): any
 	local d = discFor(s)
 	local sol = Solver.solve({
 		rootPos = origin,
@@ -158,7 +165,14 @@ local function launchAt(s: Session, origin: Vector3, target: Vector3, throwType:
 	return sol
 end
 
-local function finish(s: Session, title: string, lines: { string }, pbKey: string?, value: number?, lowerIsBetter: boolean?)
+local function finish(
+	s: Session,
+	title: string,
+	lines: { string },
+	pbKey: string?,
+	value: number?,
+	lowerIsBetter: boolean?
+)
 	if s.ended then
 		return
 	end
@@ -172,7 +186,10 @@ local function finish(s: Session, title: string, lines: { string }, pbKey: strin
 		end
 		isPB = services.ProgressionService.recordPersonalBest(s.player, pbKey, value, lowerIsBetter == true)
 		if prev ~= nil then
-			table.insert(lines, if isPB then "NEW PERSONAL BEST!" else string.format("Personal best: %s", tostring(prev)))
+			table.insert(
+				lines,
+				if isPB then "NEW PERSONAL BEST!" else string.format("Personal best: %s", tostring(prev))
+			)
 		else
 			table.insert(lines, "First completion recorded.")
 		end
@@ -189,9 +206,17 @@ local TUTORIAL: { any } = {
 	{ text = "Hold SHIFT and run (WASD) to sprint.", kind = "speed" },
 	{ text = "SNAP CUT: while sprinting press Q and steer 45-90 degrees to the side.", tech = "SnapCut" },
 	{ text = "MOMENTUM CANCEL: sprint, then press Q while steering BACKWARD to plant.", tech = "MomentumCancel" },
-	{ text = "RESTART: plant again, then press Q with a direction 0.1-0.3 s later.", tech = "SnapCut", info = "Restart" },
+	{
+		text = "RESTART: plant again, then press Q with a direction 0.1-0.3 s later.",
+		tech = "SnapCut",
+		info = "Restart",
+	},
 	{ text = "BURST STEP: press F to explode into space (it has a cooldown).", tech = "BurstStep" },
-	{ text = "FAKE COMMIT: press Q while running straight (jab), then Q again to cut away.", tech = "SnapCut", info = "Sold" },
+	{
+		text = "FAKE COMMIT: press Q while running straight (jab), then Q again to cut away.",
+		tech = "SnapCut",
+		info = "Sold",
+	},
 	{ text = "SLIDE: sprint and press CTRL (or C).", tech = "Slide" },
 	{ text = "SLIDE CUT: during a slide, press Q with a new direction.", tech = "SlideCut" },
 	{ text = "AIR REDIRECT: jump (SPACE), then press Q with a direction in the air.", tech = "AirRedirect" },
@@ -204,7 +229,12 @@ local TUTORIAL: { any } = {
 
 local function tutorialShow(s: Session)
 	local step = TUTORIAL[s.data.step]
-	hud(s, string.format("MOVEMENT SCHOOL  %d/%d", s.data.step, #TUTORIAL), step.text, { progress = (s.data.step - 1) / #TUTORIAL })
+	hud(
+		s,
+		string.format("MOVEMENT SCHOOL  %d/%d", s.data.step, #TUTORIAL),
+		step.text,
+		{ progress = (s.data.step - 1) / #TUTORIAL }
+	)
 	if step.kind == "catch" then
 		local r = root(s)
 		if r then
@@ -337,7 +367,10 @@ DRILLS.Cutting = {
 			if s.data.gate == 1 then
 				s.data.startAt = now()
 			else
-				table.insert(s.data.splits, { gate = s.data.gate, t = now() - s.data.startAt, speed = flat(r.AssemblyLinearVelocity).Magnitude })
+				table.insert(
+					s.data.splits,
+					{ gate = s.data.gate, t = now() - s.data.startAt, speed = flat(r.AssemblyLinearVelocity).Magnitude }
+				)
 			end
 			s.data.gate += 1
 			hud(s, "CUTTING COURSE", string.format("Gate %d / %d", math.min(s.data.gate, #gates), #gates), {
@@ -355,11 +388,20 @@ DRILLS.Cutting = {
 					end
 				end
 				if worstGate > 0 then
-					table.insert(lines, string.format("Slowest section: before gate %d (dropped to %.0f studs/s).", worstGate, worst))
+					table.insert(
+						lines,
+						string.format("Slowest section: before gate %d (dropped to %.0f studs/s).", worstGate, worst)
+					)
 					if worst < 12 then
-						table.insert(lines, "Tip: cut earlier and cleaner — a committed line before a Snap Cut keeps up to 96% of your speed.")
+						table.insert(
+							lines,
+							"Tip: cut earlier and cleaner — a committed line before a Snap Cut keeps up to 96% of your speed."
+						)
 					elseif worst < 18 then
-						table.insert(lines, "Tip: chain Snap Cut -> Burst Step within 0.15 s for a Perfect burst out of the turn.")
+						table.insert(
+							lines,
+							"Tip: chain Snap Cut -> Burst Step within 0.15 s for a Perfect burst out of the turn."
+						)
 					else
 						table.insert(lines, "You held speed all the way. Try Slide Cuts on the tight gates.")
 					end
@@ -486,7 +528,12 @@ local function aerialNext(s: Session)
 	s.data.closestRel = Vector3.zero
 	s.data.closestAt = 0
 	s.data.inFlight = false
-	hud(s, string.format("AERIAL CATCH  %d/%d", s.data.index, #AERIAL), p.label, { progress = (s.data.index - 1) / #AERIAL })
+	hud(
+		s,
+		string.format("AERIAL CATCH  %d/%d", s.data.index, #AERIAL),
+		p.label,
+		{ progress = (s.data.index - 1) / #AERIAL }
+	)
 	task.delay(1.4, function()
 		if sessions[s.actor.id] ~= s then
 			return
@@ -603,7 +650,8 @@ DRILLS.Launcher = {
 			throwType = payload.throwType,
 			yaw = 0,
 			pitch = math.rad(if type(payload.pitch) == "number" then payload.pitch else 8),
-			holdTime = (if type(payload.power) == "number" then math.clamp(payload.power, 0.05, 1) else 0.5) * DiscConfig.Throw.ChargeTime,
+			holdTime = (if type(payload.power) == "number" then math.clamp(payload.power, 0.05, 1) else 0.5)
+				* DiscConfig.Throw.ChargeTime,
 			bank = payload.bank,
 			height = "Mid",
 		})
@@ -612,7 +660,8 @@ DRILLS.Launcher = {
 		end
 		local p = params :: ThrowModel.Params
 		local d = flat(r.Position - layout.launcher)
-		p.yaw = math.atan2(-d.X, -d.Z) + math.rad(if type(payload.offset) == "number" then math.clamp(payload.offset, -30, 30) else 0)
+		p.yaw = math.atan2(-d.X, -d.Z)
+			+ math.rad(if type(payload.offset) == "number" then math.clamp(payload.offset, -30, 30) else 0)
 		services.ThrowService.launchFrom(discFor(s), p, layout.launcher, { noCatch = 0.1 })
 	end,
 	onCaught = function(s: Session, _d: any, info: any)
@@ -642,9 +691,14 @@ local function rangeGive(s: Session)
 	end
 	teleport(s, layout.throwMark + Vector3.new(0, 3, 0), Vector3.new(0, 0, 1))
 	services.DiscService.giveTo(discFor(s), s.actor.id)
-	hud(s, string.format("THROWING RANGE  %d/%d", s.data.throws + 1, RANGE_THROWS), "Hit the rings. The yellow one moves.", {
-		progress = s.data.throws / RANGE_THROWS,
-	})
+	hud(
+		s,
+		string.format("THROWING RANGE  %d/%d", s.data.throws + 1, RANGE_THROWS),
+		"Hit the rings. The yellow one moves.",
+		{
+			progress = s.data.throws / RANGE_THROWS,
+		}
+	)
 end
 
 local function rangeResult(s: Session)
@@ -669,10 +723,16 @@ local function rangeResult(s: Session)
 			local long = miss:Dot(forward)
 			table.insert(lines, string.format("Missed %s by %.1f studs.", near.name, near.dist))
 			if math.abs(lateral) > 2 then
-				table.insert(lines, string.format("%.0f studs %s: aim %s or bank %s.", math.abs(lateral),
-					if lateral > 0 then "right" else "left",
-					if lateral > 0 then "left" else "right",
-					if lateral > 0 then "left (Q)" else "right (E)"))
+				table.insert(
+					lines,
+					string.format(
+						"%.0f studs %s: aim %s or bank %s.",
+						math.abs(lateral),
+						if lateral > 0 then "right" else "left",
+						if lateral > 0 then "left" else "right",
+						if lateral > 0 then "left (Q)" else "right (E)"
+					)
+				)
 			end
 			if miss.Y < -2.5 or long < -3 then
 				table.insert(lines, "Short / low: hold longer or raise your aim.")
@@ -681,8 +741,16 @@ local function rangeResult(s: Session)
 			end
 		end
 	end
-	table.insert(lines, string.format("Release: %s  power %d%%  spin %d%%  bank %+d deg", launch.quality,
-		math.floor(launch.power * 100), math.floor(launch.spinFactor * 100), math.floor(launch.bankDeg)))
+	table.insert(
+		lines,
+		string.format(
+			"Release: %s  power %d%%  spin %d%%  bank %+d deg",
+			launch.quality,
+			math.floor(launch.power * 100),
+			math.floor(launch.spinFactor * 100),
+			math.floor(launch.bankDeg)
+		)
+	)
 	if launch.quality == "Over" then
 		table.insert(lines, "Overcharged: low spin makes the disc roll (turn/fade) more. Release at the peak.")
 	end
@@ -690,7 +758,10 @@ local function rangeResult(s: Session)
 	s.data.throws += 1
 	if s.data.throws >= RANGE_THROWS then
 		task.delay(1.0, function()
-			finish(s, "THROWING RANGE", { string.format("Score: %d", s.data.score), string.format("Rings hit: %d / %d", s.data.hits, RANGE_THROWS) }, "Range", s.data.score, false)
+			finish(s, "THROWING RANGE", {
+				string.format("Score: %d", s.data.score),
+				string.format("Rings hit: %d / %d", s.data.hits, RANGE_THROWS),
+			}, "Range", s.data.score, false)
 		end)
 	else
 		task.delay(1.2, function()
@@ -726,7 +797,10 @@ DRILLS.Range = {
 		for _, tg in layout.targets do
 			table.insert(candidates, { name = tg.name, pos = tg.pos, radius = tg.radius, points = tg.points })
 		end
-		table.insert(candidates, { name = "MOVER", pos = moverPos(t), radius = layout.mover.radius, points = layout.mover.points })
+		table.insert(
+			candidates,
+			{ name = "MOVER", pos = moverPos(t), radius = layout.mover.radius, points = layout.mover.points }
+		)
 		for _, c in candidates do
 			local dist = (p - c.pos).Magnitude
 			if dist <= c.radius + 0.6 then
@@ -772,7 +846,12 @@ local function interceptionRep(s: Session)
 	if s.data.rep > #ROUTES then
 		finish(s, "INTERCEPTION DRILL", {
 			string.format("Score: %d", s.data.score),
-			string.format("Interceptions %d  Blocks %d  Completions allowed %d", s.data.ints, s.data.blocks, s.data.allowed),
+			string.format(
+				"Interceptions %d  Blocks %d  Completions allowed %d",
+				s.data.ints,
+				s.data.blocks,
+				s.data.allowed
+			),
 		}, "Interception", s.data.score, false)
 		return
 	end
@@ -790,9 +869,14 @@ local function interceptionRep(s: Session)
 	s.data.route = ROUTES[s.data.rep]
 	s.data.leg = 0
 	s.data.resolved = false
-	hud(s, string.format("INTERCEPTION  %d/%d", s.data.rep, #ROUTES), "The receiver cuts, the thrower leads them. Get the D.", {
-		progress = (s.data.rep - 1) / #ROUTES,
-	})
+	hud(
+		s,
+		string.format("INTERCEPTION  %d/%d", s.data.rep, #ROUTES),
+		"The receiver cuts, the thrower leads them. Get the D.",
+		{
+			progress = (s.data.rep - 1) / #ROUTES,
+		}
+	)
 	task.delay(1.2, function()
 		if sessions[s.actor.id] == s then
 			s.data.leg = 1
@@ -833,7 +917,9 @@ local function interceptionResolve(s: Session, text: string, pts: number)
 	end
 	s.data.resolved = true
 	s.data.score += pts
-	local extra = if s.data.laneDist then string.format("  (you were %.1f studs from the lane at release)", s.data.laneDist) else ""
+	local extra = if s.data.laneDist
+		then string.format("  (you were %.1f studs from the lane at release)", s.data.laneDist)
+		else ""
 	send(s, "DrillTick", { text = text .. extra })
 	task.delay(1.6, function()
 		interceptionRep(s)
@@ -906,14 +992,38 @@ DRILLS.Interception = {
 ---------------------------------------------------------------------------
 
 local CHALLENGES = {
-	{ name = "Sold!", hint = "Fake Commit, then Snap Cut away", seq = { { tech = "FakeCommit" }, { tech = "SnapCut", info = "Sold" } } },
-	{ name = "Plant and Go", hint = "Momentum Cancel, then a PERFECT restart", seq = { { tech = "MomentumCancel" }, { tech = "SnapCut", info = "Restart", quality = "Perfect" } } },
-	{ name = "Cut-Burst", hint = "Snap Cut, then Burst within 0.15 s (Perfect)", seq = { { tech = "SnapCut" }, { tech = "BurstStep", quality = "Perfect" } } },
-	{ name = "Stick the Landing", hint = "Jump, Air Redirect, Precision Landing", seq = { { tech = "Jump" }, { tech = "AirRedirect" }, { tech = "PrecisionLanding" } } },
+	{
+		name = "Sold!",
+		hint = "Fake Commit, then Snap Cut away",
+		seq = { { tech = "FakeCommit" }, { tech = "SnapCut", info = "Sold" } },
+	},
+	{
+		name = "Plant and Go",
+		hint = "Momentum Cancel, then a PERFECT restart",
+		seq = { { tech = "MomentumCancel" }, { tech = "SnapCut", info = "Restart", quality = "Perfect" } },
+	},
+	{
+		name = "Cut-Burst",
+		hint = "Snap Cut, then Burst within 0.15 s (Perfect)",
+		seq = { { tech = "SnapCut" }, { tech = "BurstStep", quality = "Perfect" } },
+	},
+	{
+		name = "Stick the Landing",
+		hint = "Jump, Air Redirect, Precision Landing",
+		seq = { { tech = "Jump" }, { tech = "AirRedirect" }, { tech = "PrecisionLanding" } },
+	},
 	{ name = "Slide Cut", hint = "Slide, then cut out of it", seq = { { tech = "Slide" }, { tech = "SlideCut" } } },
 	{ name = "Get Up!", hint = "Dive, then Recovery Chain", seq = { { tech = "Dive" }, { tech = "RecoveryChain" } } },
-	{ name = "Off the Wall", hint = "Wall Rebound (jump at a pink wall), then Air Redirect", seq = { { tech = "WallRebound" }, { tech = "AirRedirect" } } },
-	{ name = "Full Send", hint = "Snap Cut, Burst Step, Layout", seq = { { tech = "SnapCut" }, { tech = "BurstStep" }, { tech = "Dive" } } },
+	{
+		name = "Off the Wall",
+		hint = "Wall Rebound (jump at a pink wall), then Air Redirect",
+		seq = { { tech = "WallRebound" }, { tech = "AirRedirect" } },
+	},
+	{
+		name = "Full Send",
+		hint = "Snap Cut, Burst Step, Layout",
+		seq = { { tech = "SnapCut" }, { tech = "BurstStep" }, { tech = "Dive" } },
+	},
 }
 
 local function comboStatus(s: Session)
@@ -926,7 +1036,12 @@ local function comboStatus(s: Session)
 		end
 		table.insert(lines, (if ok then "[x] " else "[ ] ") .. c.name .. " — " .. c.hint)
 	end
-	hud(s, string.format("COMBO LAB  %d/%d", done, #CHALLENGES), table.concat(lines, "\n"), { progress = done / #CHALLENGES, list = true })
+	hud(
+		s,
+		string.format("COMBO LAB  %d/%d", done, #CHALLENGES),
+		table.concat(lines, "\n"),
+		{ progress = done / #CHALLENGES, list = true }
+	)
 	return done
 end
 
@@ -973,7 +1088,14 @@ DRILLS.Combo = {
 				s.data.done[i] = true
 				send(s, "DrillTick", { text = "Challenge complete: " .. c.name })
 				if comboStatus(s) >= #CHALLENGES then
-					finish(s, "COMBO LAB COMPLETE", { "Every chain landed. Now do it with a disc in the air." }, "Combo", 1, false)
+					finish(
+						s,
+						"COMBO LAB COMPLETE",
+						{ "Every chain landed. Now do it with a disc in the air." },
+						"Combo",
+						1,
+						false
+					)
 				end
 			end
 		end

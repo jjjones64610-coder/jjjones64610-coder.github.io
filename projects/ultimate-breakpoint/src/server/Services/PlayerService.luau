@@ -42,11 +42,21 @@ PlayerService.TeamChanged = Signal.new()
 
 PlayerService.CollisionGroup = "UBPlayers"
 
+-- Root parts collide with the world but not with each other. Limbs collide
+-- with nothing: the procedural layout/slide poses must never snag the ground
+-- (the Humanoid floats on its root part, so limbs need no collision).
+PlayerService.LimbGroup = "UBLimbs"
+
 local function setupCollisionGroups()
-	pcall(function()
-		PhysicsService:RegisterCollisionGroup(PlayerService.CollisionGroup)
-	end)
+	for _, g in { PlayerService.CollisionGroup, PlayerService.LimbGroup } do
+		pcall(function()
+			PhysicsService:RegisterCollisionGroup(g)
+		end)
+	end
 	PhysicsService:CollisionGroupSetCollidable(PlayerService.CollisionGroup, PlayerService.CollisionGroup, false)
+	PhysicsService:CollisionGroupSetCollidable(PlayerService.LimbGroup, "Default", false)
+	PhysicsService:CollisionGroupSetCollidable(PlayerService.LimbGroup, PlayerService.CollisionGroup, false)
+	PhysicsService:CollisionGroupSetCollidable(PlayerService.LimbGroup, PlayerService.LimbGroup, false)
 end
 
 local function setupTeams()
@@ -65,15 +75,19 @@ local function setupTeams()
 	end
 end
 
+local function groupFor(part: BasePart): string
+	return if part.Name == "HumanoidRootPart" then PlayerService.CollisionGroup else PlayerService.LimbGroup
+end
+
 local function applyCollision(model: Model)
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
-			d.CollisionGroup = PlayerService.CollisionGroup
+			d.CollisionGroup = groupFor(d)
 		end
 	end
 	model.DescendantAdded:Connect(function(d)
 		if d:IsA("BasePart") then
-			d.CollisionGroup = PlayerService.CollisionGroup
+			d.CollisionGroup = groupFor(d)
 		end
 	end)
 end

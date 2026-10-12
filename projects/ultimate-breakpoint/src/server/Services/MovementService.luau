@@ -221,7 +221,11 @@ local function updateKinematics()
 
 			-- travel enforcement
 			if track.holding then
-				if track.pivot == nil and grounded and now() - track.holdStart >= MovementConfig.Holding.DecelMaxTime + 0.15 then
+				if
+					track.pivot == nil
+					and grounded
+					and now() - track.holdStart >= MovementConfig.Holding.DecelMaxTime + 0.15
+				then
 					track.pivot = Vector3.new(pos.X, pos.Y, pos.Z)
 				end
 				local pivot = track.pivot

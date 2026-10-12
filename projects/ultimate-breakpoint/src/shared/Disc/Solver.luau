@@ -51,7 +51,13 @@ end
 
 -- Simulates one candidate; returns closest catchable approach to the moving
 -- target: distance, time, lateral error (signed, relative to aim right).
-local function evaluate(o: Options, yaw: number, pitch: number, power: number, dt: number): (number, number, number, Vector3)
+local function evaluate(
+	o: Options,
+	yaw: number,
+	pitch: number,
+	power: number,
+	dt: number
+): (number, number, number, Vector3)
 	local params: ThrowModel.Params = {
 		throwType = o.throwType,
 		yaw = yaw,

@@ -99,7 +99,7 @@ end
 -- the field itself
 ---------------------------------------------------------------------------
 
-local function buildField(model: Model, arena: any, f: FieldSpec): ({ [string]: BasePart })
+local function buildField(model: Model, arena: any, f: FieldSpec): { [string]: BasePart }
 	local L = f.length / 2
 	local E = f.endZone
 	local W = f.width / 2
@@ -290,7 +290,17 @@ local function crowdFigure(parent: Instance, rng: Rng.Rng, pos: Vector3, facing:
 end
 
 -- Stepped stand along one side. axis = "Z" (sideline) or "X" (end).
-local function stand(parent: Instance, rng: Rng.Rng, center: Vector3, length: number, outward: Vector3, rows: number, crowd: number, color: Color3, fanBudget: { n: number })
+local function stand(
+	parent: Instance,
+	rng: Rng.Rng,
+	center: Vector3,
+	length: number,
+	outward: Vector3,
+	rows: number,
+	crowd: number,
+	color: Color3,
+	fanBudget: { n: number }
+)
 	local m = Build.model(parent, "Stand")
 	local along = Vector3.new(-outward.Z, 0, outward.X)
 	local rowDepth, rowRise = 3, 2
@@ -300,7 +310,7 @@ local function stand(parent: Instance, rng: Rng.Rng, center: Vector3, length: nu
 		Build.part(m, {
 			Name = "Tier",
 			Size = Vector3.new(length, h, rowDepth),
-			CFrame = CFrame.lookAt(c, c + outward) ,
+			CFrame = CFrame.lookAt(c, c + outward),
 			Color = if r % 2 == 0 then color else color:Lerp(Color3.new(0, 0, 0), 0.15),
 			Material = Enum.Material.Concrete,
 			CastShadow = true,
@@ -522,9 +532,39 @@ local function themeStadium(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 	local props = Build.folder(model, "Props")
 	local budget = { n = math.floor(320 * arena.Crowd) }
 	local color = Color3.fromRGB(58, 62, 74)
-	stand(props, rng, Vector3.new(0, 0, W + MARGIN + 2), 2 * L, Vector3.new(0, 0, 1), 9, 0.75 * arena.Crowd, color, budget)
-	stand(props, rng, Vector3.new(0, 0, -(W + MARGIN + 2)), 2 * L, Vector3.new(0, 0, -1), 9, 0.75 * arena.Crowd, color, budget)
-	stand(props, rng, Vector3.new(L + MARGIN + 2, 0, 0), 2 * W + 20, Vector3.new(1, 0, 0), 6, 0.6 * arena.Crowd, color, budget)
+	stand(
+		props,
+		rng,
+		Vector3.new(0, 0, W + MARGIN + 2),
+		2 * L,
+		Vector3.new(0, 0, 1),
+		9,
+		0.75 * arena.Crowd,
+		color,
+		budget
+	)
+	stand(
+		props,
+		rng,
+		Vector3.new(0, 0, -(W + MARGIN + 2)),
+		2 * L,
+		Vector3.new(0, 0, -1),
+		9,
+		0.75 * arena.Crowd,
+		color,
+		budget
+	)
+	stand(
+		props,
+		rng,
+		Vector3.new(L + MARGIN + 2, 0, 0),
+		2 * W + 20,
+		Vector3.new(1, 0, 0),
+		6,
+		0.6 * arena.Crowd,
+		color,
+		budget
+	)
 	floodlights(props, f, 1.4, Color3.fromRGB(255, 248, 230))
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 26, 0), Vector3.new(1, 0, 0))
 	-- sideline benches in team colours
@@ -543,9 +583,23 @@ local function themeCoastal(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 	local W = f.width / 2
 	local props = Build.folder(model, "Props")
 	local budget = { n = math.floor(200 * arena.Crowd) }
-	stand(props, rng, Vector3.new(0, 0, -(W + MARGIN + 2)), 2 * L * 0.7, Vector3.new(0, 0, -1), 5, 0.7, Color3.fromRGB(220, 220, 225), budget)
+	stand(
+		props,
+		rng,
+		Vector3.new(0, 0, -(W + MARGIN + 2)),
+		2 * L * 0.7,
+		Vector3.new(0, 0, -1),
+		5,
+		0.7,
+		Color3.fromRGB(220, 220, 225),
+		budget
+	)
 	-- the sea beyond the far sideline
-	workspace.Terrain:FillBlock(CFrame.new(0, -6, W + MARGIN + 160), Vector3.new(2 * L + 900, 12, 260), Enum.Material.Water)
+	workspace.Terrain:FillBlock(
+		CFrame.new(0, -6, W + MARGIN + 160),
+		Vector3.new(2 * L + 900, 12, 260),
+		Enum.Material.Water
+	)
 	workspace.Terrain:FillBlock(CFrame.new(0, -9, W + MARGIN + 30), Vector3.new(2 * L + 900, 6, 60), Enum.Material.Sand)
 	for x = -L - 40, L + 40, 26 do
 		palm(props, rng, Vector3.new(x + rng:range(-6, 6), 0, W + MARGIN + rng:range(8, 20)))
@@ -553,9 +607,19 @@ local function themeCoastal(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 	-- lifeguard tower
 	local base = Vector3.new(L + MARGIN + 30, 0, W + MARGIN + 10)
 	for _, o in { Vector3.new(-2, 0, -2), Vector3.new(2, 0, -2), Vector3.new(-2, 0, 2), Vector3.new(2, 0, 2) } do
-		Build.part(props, { Name = "Leg", Size = Vector3.new(0.6, 10, 0.6), CFrame = CFrame.new(base + o + Vector3.new(0, 5, 0)), Color = Color3.fromRGB(240, 240, 240) })
+		Build.part(props, {
+			Name = "Leg",
+			Size = Vector3.new(0.6, 10, 0.6),
+			CFrame = CFrame.new(base + o + Vector3.new(0, 5, 0)),
+			Color = Color3.fromRGB(240, 240, 240),
+		})
 	end
-	Build.part(props, { Name = "Hut", Size = Vector3.new(6, 4, 6), CFrame = CFrame.new(base + Vector3.new(0, 12, 0)), Color = Color3.fromRGB(230, 70, 60) })
+	Build.part(props, {
+		Name = "Hut",
+		Size = Vector3.new(6, 4, 6),
+		CFrame = CFrame.new(base + Vector3.new(0, 12, 0)),
+		Color = Color3.fromRGB(230, 70, 60),
+	})
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 20, 0), Vector3.new(1, 0, 0))
 end
 
@@ -574,7 +638,12 @@ local function themeRooftop(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 		})
 	end
 	-- skyline ring
-	local neon = { Color3.fromRGB(255, 80, 200), Color3.fromRGB(90, 230, 255), Color3.fromRGB(255, 200, 80), Color3.fromRGB(140, 120, 255) }
+	local neon = {
+		Color3.fromRGB(255, 80, 200),
+		Color3.fromRGB(90, 230, 255),
+		Color3.fromRGB(255, 200, 80),
+		Color3.fromRGB(140, 120, 255),
+	}
 	for i = 0, 46 do
 		local ang = i / 47 * math.pi * 2
 		local radius = rng:range(330, 470)
@@ -630,10 +699,20 @@ local function themeBeach(model: Model, _arena: any, f: FieldSpec, rng: Rng.Rng)
 	local L = f.length / 2 + f.endZone
 	local W = f.width / 2
 	local props = Build.folder(model, "Props")
-	workspace.Terrain:FillBlock(CFrame.new(L + MARGIN + 150, -6, 0), Vector3.new(260, 12, 2 * W + 900), Enum.Material.Water)
+	workspace.Terrain:FillBlock(
+		CFrame.new(L + MARGIN + 150, -6, 0),
+		Vector3.new(260, 12, 2 * W + 900),
+		Enum.Material.Water
+	)
 	for _ = 1, 14 do
-		local pos = Vector3.new(rng:range(-L, L), 0, (if rng:next() < 0.5 then 1 else -1) * (W + rng:range(14, MARGIN - 4)))
-		Build.part(props, { Name = "Pole", Size = Vector3.new(0.3, 7, 0.3), CFrame = CFrame.new(pos + Vector3.new(0, 3.5, 0)), Color = Color3.new(1, 1, 1) })
+		local pos =
+			Vector3.new(rng:range(-L, L), 0, (if rng:next() < 0.5 then 1 else -1) * (W + rng:range(14, MARGIN - 4)))
+		Build.part(props, {
+			Name = "Pole",
+			Size = Vector3.new(0.3, 7, 0.3),
+			CFrame = CFrame.new(pos + Vector3.new(0, 3.5, 0)),
+			Color = Color3.new(1, 1, 1),
+		})
 		Build.part(props, {
 			Name = "Umbrella",
 			Shape = Enum.PartType.Cylinder,
@@ -655,8 +734,18 @@ local function themeIndoor(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 	local hx, hz, h = L + MARGIN + 30, W + MARGIN + 30, 70
 	local wallColor = Color3.fromRGB(30, 34, 42)
 	for _, sx in { 1, -1 } do
-		Build.part(props, { Name = "Wall", Size = Vector3.new(2, h, 2 * hz), CFrame = CFrame.new(sx * hx, h / 2, 0), Color = wallColor })
-		Build.part(props, { Name = "Wall", Size = Vector3.new(2 * hx, h, 2), CFrame = CFrame.new(0, h / 2, sx * hz), Color = wallColor })
+		Build.part(props, {
+			Name = "Wall",
+			Size = Vector3.new(2, h, 2 * hz),
+			CFrame = CFrame.new(sx * hx, h / 2, 0),
+			Color = wallColor,
+		})
+		Build.part(props, {
+			Name = "Wall",
+			Size = Vector3.new(2 * hx, h, 2),
+			CFrame = CFrame.new(0, h / 2, sx * hz),
+			Color = wallColor,
+		})
 		for k = 1, 4 do
 			Build.part(props, {
 				Name = "Strip",
@@ -667,7 +756,13 @@ local function themeIndoor(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 			})
 		end
 	end
-	Build.part(props, { Name = "Roof", Size = Vector3.new(2 * hx, 2, 2 * hz), CFrame = CFrame.new(0, h, 0), Color = wallColor, CastShadow = true })
+	Build.part(props, {
+		Name = "Roof",
+		Size = Vector3.new(2 * hx, 2, 2 * hz),
+		CFrame = CFrame.new(0, h, 0),
+		Color = wallColor,
+		CastShadow = true,
+	})
 	for x = -L, L, 45 do
 		for _, z in { -W * 0.5, W * 0.5 } do
 			local panel = Build.part(props, {
@@ -677,12 +772,36 @@ local function themeIndoor(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 				Color = Color3.fromRGB(240, 250, 255),
 				Material = Enum.Material.Neon,
 			})
-			Build.light(panel, "SurfaceLight", { Face = Enum.NormalId.Bottom, Range = 60, Angle = 120, Brightness = 2.2, Shadows = false })
+			Build.light(
+				panel,
+				"SurfaceLight",
+				{ Face = Enum.NormalId.Bottom, Range = 60, Angle = 120, Brightness = 2.2, Shadows = false }
+			)
 		end
 	end
 	local budget = { n = math.floor(220 * arena.Crowd) }
-	stand(props, rng, Vector3.new(0, 0, W + MARGIN + 2), 2 * L, Vector3.new(0, 0, 1), 6, 0.6, Color3.fromRGB(44, 48, 60), budget)
-	stand(props, rng, Vector3.new(0, 0, -(W + MARGIN + 2)), 2 * L, Vector3.new(0, 0, -1), 6, 0.6, Color3.fromRGB(44, 48, 60), budget)
+	stand(
+		props,
+		rng,
+		Vector3.new(0, 0, W + MARGIN + 2),
+		2 * L,
+		Vector3.new(0, 0, 1),
+		6,
+		0.6,
+		Color3.fromRGB(44, 48, 60),
+		budget
+	)
+	stand(
+		props,
+		rng,
+		Vector3.new(0, 0, -(W + MARGIN + 2)),
+		2 * L,
+		Vector3.new(0, 0, -1),
+		6,
+		0.6,
+		Color3.fromRGB(44, 48, 60),
+		budget
+	)
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 30, 0), Vector3.new(1, 0, 0))
 end
 
@@ -698,8 +817,14 @@ local function themePark(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 	-- playground
 	local pg = Vector3.new(L + MARGIN + 40, 0, -20)
 	local red, yellow, blue = Color3.fromRGB(230, 60, 60), Color3.fromRGB(250, 210, 60), Color3.fromRGB(40, 120, 230)
-	Build.part(props, { Name = "Tower", Size = Vector3.new(8, 8, 8), CFrame = CFrame.new(pg + Vector3.new(0, 4, 0)), Color = blue })
-	Build.part(props, { Name = "Roof", Size = Vector3.new(9, 1, 9), CFrame = CFrame.new(pg + Vector3.new(0, 11, 0)), Color = red })
+	Build.part(
+		props,
+		{ Name = "Tower", Size = Vector3.new(8, 8, 8), CFrame = CFrame.new(pg + Vector3.new(0, 4, 0)), Color = blue }
+	)
+	Build.part(
+		props,
+		{ Name = "Roof", Size = Vector3.new(9, 1, 9), CFrame = CFrame.new(pg + Vector3.new(0, 11, 0)), Color = red }
+	)
 	Build.part(props, {
 		Name = "Slide",
 		Size = Vector3.new(3, 0.6, 14),
@@ -708,16 +833,37 @@ local function themePark(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 	})
 	local swing = pg + Vector3.new(0, 0, -20)
 	for _, o in { -6, 6 } do
-		Build.part(props, { Name = "SwingLeg", Size = Vector3.new(0.6, 12, 0.6), CFrame = CFrame.new(swing + Vector3.new(o, 6, 0)), Color = red })
+		Build.part(props, {
+			Name = "SwingLeg",
+			Size = Vector3.new(0.6, 12, 0.6),
+			CFrame = CFrame.new(swing + Vector3.new(o, 6, 0)),
+			Color = red,
+		})
 	end
-	Build.part(props, { Name = "SwingBar", Size = Vector3.new(13, 0.6, 0.6), CFrame = CFrame.new(swing + Vector3.new(0, 12, 0)), Color = red })
+	Build.part(props, {
+		Name = "SwingBar",
+		Size = Vector3.new(13, 0.6, 0.6),
+		CFrame = CFrame.new(swing + Vector3.new(0, 12, 0)),
+		Color = red,
+	})
 	for _, o in { -2.5, 2.5 } do
-		Build.part(props, { Name = "Seat", Size = Vector3.new(2, 0.3, 1), CFrame = CFrame.new(swing + Vector3.new(o, 3, 0)), Color = Color3.fromRGB(40, 40, 40) })
+		Build.part(props, {
+			Name = "Seat",
+			Size = Vector3.new(2, 0.3, 1),
+			CFrame = CFrame.new(swing + Vector3.new(o, 3, 0)),
+			Color = Color3.fromRGB(40, 40, 40),
+		})
 	end
 	-- benches and a couple of spectators
 	local budget = { n = math.floor(60 * arena.Crowd) + 12 }
 	for x = -L + 10, L - 10, 30 do
-		Build.part(props, { Name = "Bench", Size = Vector3.new(8, 1.2, 2), CFrame = CFrame.new(x, 0.6, -(W + 16)), Color = Color3.fromRGB(120, 86, 56), Material = Enum.Material.Wood })
+		Build.part(props, {
+			Name = "Bench",
+			Size = Vector3.new(8, 1.2, 2),
+			CFrame = CFrame.new(x, 0.6, -(W + 16)),
+			Color = Color3.fromRGB(120, 86, 56),
+			Material = Enum.Material.Wood,
+		})
 		if budget.n > 0 then
 			budget.n -= 1
 			crowdFigure(props, rng, Vector3.new(x, 1.2, -(W + 16)), Vector3.new(0, 0, 1))
