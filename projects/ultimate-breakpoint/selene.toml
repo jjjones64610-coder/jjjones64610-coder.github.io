@@ -1,0 +1,10 @@
+std = "roblox_min"
+
+[lints]
+# Services and controllers intentionally shadow short names like `s`, `d`, `t`.
+shadowing = "allow"
+# Pure modules are shared between client, server and tests.
+unused_variable = "warn"
+# The declarative UI helper `Theme.make(class, { prop = v, child, child })`
+# intentionally mixes properties and children in one table.
+mixed_table = "allow"
