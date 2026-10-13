@@ -8,7 +8,10 @@
 	  HolderId    actor id while held
 	  FlightId    increments for every new flight segment (throw, tip, block)
 	  LaunchTime  server time at which the segment starts
-	  LaunchPos / LaunchVel / LaunchNormal (Vector3), Spin, Wind, GroundY
+	  LaunchPos / LaunchVel / LaunchNormal (Vector3), Spin, GroundY
+	  Wind        the wind the disc flies in (setWind: the arena wind for the
+	              match / warm-up discs, zero in training); clients predict
+	              and preview throws with this, never with UBState Wind
 	  StopAt      flight time at which a marker's hands stop this segment (a
 	              hand block; 0 = none): clients hold the disc there until
 	              the deflection segment arrives instead of flying it on
@@ -235,6 +238,16 @@ end
 function DiscService.setSkin(d: Disc, skin: string)
 	d.skin = skin
 	write(d, "Skin", skin)
+end
+
+-- The wind this disc flies in from now on (studs/s, world space): the arena
+-- wind for the match and warm-up discs, none for training discs. Written to
+-- the Wind attribute at once, so the holder's preview, lead assist and
+-- predicted throw use exactly the wind the server will fly with.
+function DiscService.setWind(d: Disc, wind: Vector3)
+	write(d, "Wind", wind)
+	local rw = d.folder:GetAttribute("Wind") :: Vector3
+	d.wind = { x = rw.X, y = rw.Y, z = rw.Z }
 end
 
 function DiscService.giveTo(d: Disc, actorId: number)

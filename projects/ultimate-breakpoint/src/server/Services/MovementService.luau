@@ -147,7 +147,6 @@ local VALID_QUALITY = { Perfect = true, Clean = true, Sloppy = true, Gassed = tr
 local MAX_TECHS_PER_SECOND = 12
 local MAX_EVENT_AGE = 0.35 -- event timestamps older than this (at arrival) are clamped
 local COOLDOWN_SLACK = 0.05
-local EXERTION_FLOOR = -40
 local EXERTION_SLACK = 30 -- the mirror may lag the client by this much before claims are refused
 local HISTORY = 72 -- samples (~1.2 s at 60 Hz)
 local SPEED_WINDOW = 1.0
@@ -354,6 +353,13 @@ end
 
 local function checking(t: Track, clock: number): boolean
 	return clock >= t.graceUntil and t.teleportTarget == nil
+end
+
+-- True while the server has not yet seen this actor's root arrive at its
+-- last teleport target.
+function MovementService.teleportPending(id: number): boolean
+	local t = tracks[id]
+	return t ~= nil and t.teleportTarget ~= nil
 end
 
 ---------------------------------------------------------------------------
@@ -658,16 +664,18 @@ end
 -- exertion mirror
 ---------------------------------------------------------------------------
 
--- Mirrors the client sim: sprinting drains a little and regenerates a little
--- more (sprint is effectively free), anything else regenerates fast; regen
--- pauses briefly only after a technique spend.
+-- Mirrors the client sim exactly: 0..ExertionMax, sprinting (running mode
+-- Ground or Landing above jog speed; Slide, DiveSlide, Recover, Air, Pivot and
+-- Mark never count) drains a little and regenerates a little more (sprint is
+-- effectively free), anything else regenerates fast; regen pauses briefly
+-- only after a technique spend.
 local function regen(dt: number)
 	local tNow = now()
 	for _, t in tracks do
 		local regenOk = tNow >= t.regenAt
 		local sprinting = t.grounded
 			and not t.holding
-			and t.mode ~= "Mark"
+			and (t.mode == "Ground" or t.mode == "Landing")
 			and flat(t.vel).Magnitude > MovementConfig.JogSpeed + 0.5
 		if sprinting then
 			t.exertion -= MovementConfig.SprintDrain * dt
@@ -677,7 +685,7 @@ local function regen(dt: number)
 		elseif regenOk then
 			t.exertion += MovementConfig.ExertionRegen * dt
 		end
-		t.exertion = math.clamp(t.exertion, EXERTION_FLOOR, MovementConfig.ExertionMax)
+		t.exertion = math.clamp(t.exertion, 0, MovementConfig.ExertionMax)
 	end
 end
 
@@ -781,7 +789,7 @@ local function accept(t: Track, tech: string, quality: string, info: string?, ts
 	table.insert(t.techTimes, clock)
 	t.techAt[tech] = ts
 	if cost > 0 then
-		t.exertion = math.max(EXERTION_FLOOR, t.exertion - cost)
+		t.exertion = math.max(0, t.exertion - cost) -- the sim clamps spends at 0 too
 		t.regenAt = ts + MovementConfig.ExertionRegenDelay
 	end
 	return q

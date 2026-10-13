@@ -2165,7 +2165,7 @@ Progression.Achievements = {
 		name = "Student of the Game",
 		description = "Finish every training drill once.",
 		stat = "drillsCompleted",
-		goal = 6,
+		goal = 8,
 	},
 } :: { any }
 
@@ -3163,7 +3163,8 @@ return ThrowModel
 	length on a critically damped spring, direction turning through the front.
 	The root is driven toward P + BodyShare * s (velocity proportional to the
 	distance, capped, never overshooting). swing(side) is the Quick Swing,
-	fakeStep(side) the fake's lunge, Jump the one hop (horizontal zeroed, step
+	fakeStep(side) the fake's lunge (foot first; past full reach the body
+	leans the rest), Jump the one hop (horizontal zeroed, step
 	frozen). Output.step is the world step vector.
 
 	MARKING. setMarking(true) overlays the mark shuffle on the ground: tight
@@ -3193,7 +3194,8 @@ export type TechEvent = {
 	info: string?,
 }
 
-export type Feedback = { kind: string, value: number?, text: string? }
+-- `tech` names the technique a "Cooldown" refusal is about (HUD pip flash).
+export type Feedback = { kind: string, value: number?, text: string?, tech: string? }
 
 export type Input = { move: Vector3, sprint: boolean }
 
@@ -3208,7 +3210,6 @@ export type Env = {
 	pos: Vector3?, -- root position (needed while holding; estimated from velocity otherwise)
 	aimYaw: number?, -- camera / throw yaw (radians, CameraController.getYaw convention)
 	blocked: boolean?, -- a short horizontal ray along the sim velocity hit something solid
-	pivotOffset: Vector3?, -- deprecated and ignored: the pivot lives in the sim (setPivot)
 }
 
 export type Output = {
@@ -3263,6 +3264,7 @@ export type State = {
 	retryReason: string?,
 	retryText: string?,
 	retryValue: number?,
+	retryTech: string?,
 	lookAheadUntil: number,
 	lookLine: Vector3,
 	lookSince: number,
@@ -3319,6 +3321,7 @@ export type State = {
 	lastSwingSide: number,
 	fakeUntil: number,
 	fakeSide: number,
+	fakeLunge: Vector3, -- part of the fake's lunge the body takes (world, flat)
 	lastFakeAt: number,
 	restActive: boolean,
 	restX: number,
@@ -3427,6 +3430,7 @@ function MovementSim.new(now: number?): State
 		retryReason = nil,
 		retryText = nil,
 		retryValue = nil,
+		retryTech = nil,
 		lookAheadUntil = 0,
 		lookLine = FORWARD,
 		lookSince = t,
@@ -3483,6 +3487,7 @@ function MovementSim.new(now: number?): State
 		lastSwingSide = -1,
 		fakeUntil = -math.huge,
 		fakeSide = 0,
+		fakeLunge = Vector3.zero,
 		lastFakeAt = -math.huge,
 		restActive = false,
 		restX = 0,
@@ -3582,14 +3587,14 @@ local function emit(s: State, tech: string, quality: string, dir: Vector3, info:
 	end
 end
 
-local function feedback(s: State, kind: string, value: number?, text: string?)
-	table.insert(s.pendingFeedback, { kind = kind, value = value, text = text })
+local function feedback(s: State, kind: string, value: number?, text: string?, tech: string?)
+	table.insert(s.pendingFeedback, { kind = kind, value = value, text = text, tech = tech })
 end
 
 -- A press that cannot fire. Shows `text` (if any) and returns the reason.
-local function refuse(s: State, reason: string, text: string?, value: number?): (boolean, string?)
+local function refuse(s: State, reason: string, text: string?, value: number?, tech: string?): (boolean, string?)
 	if text then
-		feedback(s, reason, value, text)
+		feedback(s, reason, value, text, tech)
 	end
 	return false, reason
 end
@@ -3602,13 +3607,15 @@ local function defer(
 	side: number,
 	reason: string,
 	text: string?,
-	value: number?
+	value: number?,
+	tech: string?
 ): (boolean, string?)
 	if s.retrying then
 		s.retryDeferred = true
 		s.retryReason = reason
 		s.retryText = text
 		s.retryValue = value
+		s.retryTech = tech
 		return false, reason
 	end
 	s.buffer = { action = action, expires = s.now + BUFFER, side = side }
@@ -3883,9 +3890,14 @@ local function updateStep(s: State, input: Input, env: Env, dt: number)
 	elseif hasDir then
 		tx, ty = m:Dot(right) * R, m:Dot(fwd) * R
 	end
+	s.fakeLunge = Vector3.zero
 	if now < s.fakeUntil then
-		-- the fake lunges the free foot further toward its side
-		tx = math.clamp(tx + s.fakeSide * HD.FakeStep * R, -R, R)
+		-- the fake lunges the free foot further toward its side; what the foot
+		-- cannot take (already at full reach, e.g. A / D held) the body takes,
+		-- so the fake always shows
+		local want = tx + s.fakeSide * HD.FakeStep * R
+		tx = math.clamp(want, -R, R)
+		s.fakeLunge = right * (want - tx)
 	end
 	ty = math.clamp(ty, -HD.BackMax * R, HD.ForwardMax * R)
 
@@ -3957,7 +3969,7 @@ local function updateHolding(s: State, input: Input, env: Env, dt: number)
 		plantPivot(s)
 	end
 	updateStep(s, input, env, dt)
-	local target = (s.pivot :: Vector3) + s.step * HD.BodyShare
+	local target = (s.pivot :: Vector3) + (s.step + s.fakeLunge) * HD.BodyShare
 	local d = VecMath.flat(target - s.pos)
 	local dist = d.Magnitude
 	if dist < 1e-3 then
@@ -4098,9 +4110,9 @@ local function pressPlant(s: State, lineDir: Vector3, gradeSpeed: number): (bool
 	local left = cooldownLeft(s, "MomentumCancel")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Cut", 0, "Cooldown", cooldownText("MomentumCancel", left), left)
+			return defer(s, "Cut", 0, "Cooldown", cooldownText("MomentumCancel", left), left, "MomentumCancel")
 		end
-		return refuse(s, "Cooldown", cooldownText("MomentumCancel", left), left)
+		return refuse(s, "Cooldown", cooldownText("MomentumCancel", left), left, "MomentumCancel")
 	end
 	local q: string
 	if isGassed(s, MC.Cost) then
@@ -4130,9 +4142,9 @@ local function pressFakeCommit(s: State, dir: Vector3, lineDir: Vector3, sideSte
 	local left = cooldownLeft(s, "FakeCommit")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Cut", 0, "Cooldown", cooldownText("FakeCommit", left), left)
+			return defer(s, "Cut", 0, "Cooldown", cooldownText("FakeCommit", left), left, "FakeCommit")
 		end
-		return refuse(s, "Cooldown", cooldownText("FakeCommit", left), left)
+		return refuse(s, "Cooldown", cooldownText("FakeCommit", left), left, "FakeCommit")
 	end
 	local q = if isGassed(s, FC.Cost) then Q.Gassed else Q.Clean
 	spend(s, FC.Cost)
@@ -4222,6 +4234,7 @@ local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: str
 	clearPlant(s)
 	s.jabUntil = 0
 	s.sideStepUntil = 0
+	s.lookAheadUntil = 0 -- a pending Cut look-ahead is spent by the burst
 	setLine(s, dir, bs)
 	emit(s, "BurstStep", q, dir, if free then "Explosive" else nil)
 	return true, nil
@@ -4510,9 +4523,9 @@ local function pressBurst(s: State, dir: Vector3, hasDir: boolean, env: Env): (b
 	local left = cooldownLeft(s, "BurstStep")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Burst", 0, "Cooldown", cooldownText("BurstStep", left), left)
+			return defer(s, "Burst", 0, "Cooldown", cooldownText("BurstStep", left), left, "BurstStep")
 		end
-		return refuse(s, "Cooldown", cooldownText("BurstStep", left), left)
+		return refuse(s, "Cooldown", cooldownText("BurstStep", left), left, "BurstStep")
 	end
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
 	if s.mode == "Slide" then
@@ -4571,9 +4584,9 @@ local function pressSlide(s: State, env: Env): (boolean, string?)
 	local left = cooldownLeft(s, "Slide")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Slide", 0, "Cooldown", cooldownText("Slide", left), left)
+			return defer(s, "Slide", 0, "Cooldown", cooldownText("Slide", left), left, "Slide")
 		end
-		return refuse(s, "Cooldown", cooldownText("Slide", left), left)
+		return refuse(s, "Cooldown", cooldownText("Slide", left), left, "Slide")
 	end
 	local speed = s.vel.Magnitude
 	if speed < SL.MinSpeed then
@@ -4618,9 +4631,9 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 	local left = cooldownLeft(s, "Dive")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Dive", 0, "Cooldown", cooldownText("Dive", left), left)
+			return defer(s, "Dive", 0, "Cooldown", cooldownText("Dive", left), left, "Dive")
 		end
-		return refuse(s, "Cooldown", cooldownText("Dive", left), left)
+		return refuse(s, "Cooldown", cooldownText("Dive", left), left, "Dive")
 	end
 	local speed = s.vel.Magnitude
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
@@ -4678,9 +4691,9 @@ local function doSwing(s: State, side: number, env: Env): (boolean, string?)
 	local left = cooldownLeft(s, "PivotSwing")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Swing", side, "Cooldown", cooldownText("PivotSwing", left), left)
+			return defer(s, "Swing", side, "Cooldown", cooldownText("PivotSwing", left), left, "PivotSwing")
 		end
-		return refuse(s, "Cooldown", cooldownText("PivotSwing", left), left)
+		return refuse(s, "Cooldown", cooldownText("PivotSwing", left), left, "PivotSwing")
 	end
 	if s.holdPhase ~= "Pivot" then
 		plantPivot(s)
@@ -4770,6 +4783,7 @@ local function retryBuffer(s: State, input: Input, env: Env)
 	s.retryReason = nil
 	s.retryText = nil
 	s.retryValue = nil
+	s.retryTech = nil
 	local ok = dispatch(s, b.action, input, env, b.side)
 	s.retrying = false
 	if ok or not s.retryDeferred then
@@ -4778,7 +4792,7 @@ local function retryBuffer(s: State, input: Input, env: Env)
 	if s.now < b.expires then
 		s.buffer = b
 	elseif s.retryText then
-		feedback(s, s.retryReason or "Context", s.retryValue, s.retryText)
+		feedback(s, s.retryReason or "Context", s.retryValue, s.retryText, s.retryTech)
 	end
 end
 
@@ -4843,8 +4857,9 @@ function MovementSim.swing(s: State, side: number, env: Env): (boolean, string?)
 end
 
 -- The fake's lunge while holding: the free foot reaches 0.6R further toward
--- `side` (-1/+1, clamped to R) for FakeStepOut, then springs back. side 0 = no
--- lunge. Always starts the window in which a swing counts as Sold.
+-- `side` (-1/+1, clamped to R; the body takes whatever the foot cannot, so a
+-- fake with A / D held still lunges) for FakeStepOut, then springs back.
+-- side 0 = no lunge. Always starts the window in which a swing counts as Sold.
 function MovementSim.fakeStep(s: State, side: number)
 	if not s.holding then
 		return
@@ -4963,11 +4978,12 @@ function MovementSim.getPivot(s: State): Vector3?
 	return nil
 end
 
--- Where the root is being driven while pivoting: P + BodyShare * step.
+-- Where the root is being driven while pivoting: P + BodyShare * step (plus
+-- the body's share of a fake's lunge).
 function MovementSim.rootTarget(s: State): Vector3?
 	local p = s.pivot
 	if s.holding and s.holdPhase == "Pivot" and p ~= nil then
-		return p + s.step * HD.BodyShare
+		return p + (s.step + s.fakeLunge) * HD.BodyShare
 	end
 	return nil
 end
@@ -5057,7 +5073,7 @@ function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: 
 		if ttl ~= nil and ttl <= PL.ArmWindow and s.precisionArmedAt == nil then
 			hint.Slide = if mode == "Dive" then "ROLL OUT" else "PRECISION LANDING"
 		end
-		if mode == "Air" and not s.airDiveUsed then
+		if mode == "Air" and not s.airDiveUsed and cooldownLeft(s, "Dive") <= 0 then
 			hint.Dive = "AIR LAYOUT"
 		end
 		return hint
@@ -5065,7 +5081,9 @@ function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: 
 	if mode == "Slide" then
 		hint.Cut = "SLIDE CUT"
 		hint.Jump = "SLIDE HOP"
-		hint.Dive = "LAYOUT"
+		if cooldownLeft(s, "Dive") <= 0 then
+			hint.Dive = "LAYOUT"
+		end
 		if cooldownLeft(s, "BurstStep") <= 0 then
 			hint.Burst = "BURST"
 		end
@@ -5087,10 +5105,8 @@ function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: 
 		hint.Cut = cut
 	end
 	hint.Jump = if plantWindow then "PLANT JUMP" else "JUMP"
-	if plantWindow then
-		hint.Burst = "EXPLOSIVE RESTART"
-	elseif cooldownLeft(s, "BurstStep") <= 0 then
-		hint.Burst = "BURST"
+	if cooldownLeft(s, "BurstStep") <= 0 then
+		hint.Burst = if plantWindow then "EXPLOSIVE RESTART" else "BURST"
 	end
 	if cooldownLeft(s, "Dive") <= 0 then
 		hint.Dive = "LAYOUT"
@@ -5321,7 +5337,7 @@ return MovementSim
 	Client -> server
 	  Tech        (events: {{tech, quality, dir, t, info}}, mode)   validated on t, replicated as pose attributes
 	  Pivot       (pos: Vector3)                                 proposed pivot foot P; server validates, writes UBPivot
-	  ThrowCharge (throwType)                                    windup pose for everyone
+	  ThrowCharge (throwType | false)                            windup pose for everyone (false = charge lost)
 	  Throw       (params)                                       params incl. step, pivot, releaseT, rootPos; the
 	                                                             server computes the launch itself
 	  Fake        (throwType, side)
@@ -5366,7 +5382,7 @@ Net.Events = {
 	"Combo",
 }
 
--- Unreliable streams (none at the moment; the old MarkAim pitch stream is gone).
+-- Unreliable streams (none at the moment; Net.unreliable() stays for future ones).
 Net.Unreliable = {} :: { string }
 
 Net.Functions = { "GetProfile", "GetLeaderboard" }
@@ -8923,9 +8939,13 @@ local THEMES = {
 ---------------------------------------------------------------------------
 
 function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
+	-- The old arena goes only after the new one is parented: replication is
+	-- ordered, so clients receive the whole new field before the old floor
+	-- disappears (destroying first left players standing on nothing while a
+	-- thousand-part model streamed in, and they fell through the field).
 	local old = parent:FindFirstChild("Arena")
 	if old then
-		old:Destroy()
+		old.Name = "ArenaOld"
 	end
 	workspace.Terrain:Clear()
 	applyLighting(arena)
@@ -8954,6 +8974,9 @@ function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
 	spawn.Parent = model
 
 	model.Parent = parent
+	if old then
+		old:Destroy()
+	end
 	return { model = model, endZones = endZones, spawn = spawn, margin = MARGIN, benches = benches }
 end
 
@@ -9825,9 +9848,10 @@ return ArenaService
 	                  step away, cut, burst), then clear to the back
 	  offense 3v3     one handler (the dump) and lane cutters who pick open
 	                  space 10-38 % of the field ahead of the disc
-	  defense         the defender closest to the holder marks; everyone
-	                  else guards one attacker per possession, goal side,
-	                  from a reaction-lagged read of their position
+	  defense         the defender closest to the holder marks (a human
+	                  who steps up with the mark stance takes it over from a
+	                  bot); everyone else guards one attacker per possession,
+	                  goal side, from a reaction-lagged read of their position
 	  disc in flight  the best-placed bot of each team chases the earliest
 	                  reachable point (one shared prediction per flight;
 	                  a human teammate who gets there as fast has priority)
@@ -9845,7 +9869,9 @@ return ArenaService
 	sim's mark overlay, facing P. Low stance by default, High only while an
 	overhead windup is really live (after the reaction delay). Bites on
 	fakes (FakeT / FakeSide; 0.6 - 0.4 x skill, never twice in 1.2 s) and
-	jump-blocks hops (0.35 x skill).
+	jump-blocks hops (0.35 x skill), reacting on the Heartbeat the hop is
+	seen, since the rewound hand-block test only counts a jump that had
+	started where the thrower could see it.
 
 	THROWER (diag 3 §6). Lets the sim plant the pivot, reads the receivers,
 	then picks the release side away from the marker's shade in the throw
@@ -10171,7 +10197,7 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		humanoid:SetStateEnabled(st, false)
 	end
 	local att = Instance.new("Attachment")
-	att.Name = "UBMoveAttachment"
+	att.Name = "UBFaceAttachment"
 	att.Parent = root
 	local align = Instance.new("AlignOrientation")
 	align.Name = "UBFace"
@@ -10552,8 +10578,33 @@ end
 
 -- Player habits the brain's 10 Hz can't time: a Precision Landing just
 -- before touchdown and a pop-up the moment the dive slide stops.
+-- Jump-block a hop the moment it is seen (one roll per possession: the
+-- holder hops once). No think-rate wait and no reaction delay: the hand-block
+-- test rewinds markers to where the thrower saw them, so any later jump
+-- would only ever leave the ground after the disc had gone.
+local function jumpBlock(b: Bot, env: MovementSim.Env)
+	local mk = b.mark
+	if not mk or not b.stanceOn or b.stanceName ~= "Low" then
+		return
+	end
+	local hroot = Actors.rootOf(mk.holder)
+	local hc = hroot and hroot.Parent
+	if not hc or hc:GetAttribute("MS") ~= "Air" or services.MovementService.pivotOf(mk.holder) == nil then
+		return
+	end
+	local held = hc:GetAttribute("HeldSince")
+	local key = if type(held) == "number" then held else 1
+	if mk.hopKey ~= key then
+		mk.hopKey = key
+		if b.rng:next() < 0.35 * b.skill then
+			MovementSim.press(b.sim, "Jump", NO_INPUT, env)
+		end
+	end
+end
+
 local function reflexes(b: Bot, env: MovementSim.Env)
 	local sim = b.sim
+	jumpBlock(b, env)
 	if b.precisionArmed then
 		local ttl = env.timeToLand
 		if sim.landedAt > b.armedAt + 0.05 then
@@ -10978,14 +11029,35 @@ local function teamPlan(w: World, team: string, ref: Vector3): TeamPlan
 	return np
 end
 
--- A human marker who never steps up loses the mark to the nearest bot.
+-- The mark goes to a human defender who steps up (mark stance on within
+-- Marking.Range of P): the bot marker drops back to guarding. A human marker
+-- who never steps up, or drifts out of StallRange, loses the mark to the
+-- nearest bot after 1.2 s.
 local function checkMarker(p: TeamPlan, w: World, team: string, holder: number, pivot: Vector3)
 	if w.markerChecked[team] then
 		return
 	end
 	w.markerChecked[team] = true
 	local m = if p.marker then w.bodies[p.marker] else nil
-	if m and (m.isBot or flat(m.pos - pivot).Magnitude <= DM.StallRange + 1) then
+	if m == nil or m.isBot then
+		local human, humanD = nil, MC.Marking.Range
+		for _, body in w.team[team] do
+			local actor = if body.isBot then nil else services.PlayerService.get(body.id)
+			if actor and actor.role == "Match" and services.DefenseService.stanceOf(body.id) ~= "Relaxed" then
+				local dd = flat(body.pos - pivot).Magnitude
+				if dd <= humanD then
+					human, humanD = body, dd
+				end
+			end
+		end
+		if human then
+			p.marker = human.id
+			p.guards[human.id] = nil
+			p.markerAwaySince = nil
+			return
+		end
+	end
+	if m and (m.isBot or flat(m.pos - pivot).Magnitude <= DM.StallRange) then
 		p.markerAwaySince = nil
 		return
 	end
@@ -11489,17 +11561,7 @@ local function runMark(b: Bot, holderId: number, up: Vector3, force: string)
 	end
 	setStance(b, true, stance)
 
-	-- jump-block a hop (one roll per possession: the holder hops once)
-	if pivot and hc:GetAttribute("MS") == "Air" and stance == "Low" then
-		local held = hc:GetAttribute("HeldSince")
-		local key = if type(held) == "number" then held else 1
-		if mk.hopKey ~= key then
-			mk.hopKey = key
-			if b.rng:next() < 0.35 * skill then
-				press(b, "Jump", nil, b.reaction * (1.2 - skill))
-			end
-		end
-	end
+	-- (the hop itself is jump-blocked by reflexes(), every Heartbeat)
 
 	local away = flat(target - pos).Magnitude
 	if away > (if b.marking then 8 else 5) then
@@ -12944,8 +13006,10 @@ return DataService
 	                lifted by a jump). Markers are rewound (MovementService.
 	                positionAt) by about two one-way pings plus a little,
 	                capped at Mark.RewindMax, so the test uses where the
-	                thrower saw them: a pivot that visibly beats the mark beats
-	                it. Contact = a point block. Pure geometry, no hidden roll.
+	                thrower saw them, in the stance they saw (a stance change
+	                newer than the rewind time uses the previous stance): a
+	                pivot that visibly beats the mark beats it. Contact = a
+	                point block. Pure geometry, no hidden roll.
 	  Force side    each team's markers force a side per point (UBState
 	                ForceA / ForceB = "FH" | "BH", set by MatchService);
 	                forceFor(team) reads it for bots and the HUD.
@@ -12975,7 +13039,15 @@ DefenseService.StallTick = Signal.new() -- (count)
 
 local services: any
 
-type Stance = { on: boolean, stance: CatchGeometry.MarkStance, at: number }
+-- The current stance plus the one before it (`at` = server time of the
+-- change), so a rewound hand-block test uses the stance the thrower saw.
+type Stance = {
+	on: boolean,
+	stance: CatchGeometry.MarkStance,
+	at: number,
+	prevOn: boolean,
+	prevStance: CatchGeometry.MarkStance,
+}
 local stances: { [number]: Stance } = {}
 
 local stall = {
@@ -12997,7 +13069,17 @@ end
 
 function DefenseService.setStance(actorId: number, on: boolean, stance: string?)
 	local st: CatchGeometry.MarkStance = if stance == "High" then "High" else "Low"
-	stances[actorId] = { on = on, stance = st, at = now() }
+	local old = stances[actorId]
+	if not (old and old.on == on and old.stance == st) then
+		-- a change (a repeat keeps when it last changed)
+		stances[actorId] = {
+			on = on,
+			stance = st,
+			at = now(),
+			prevOn = if old then old.on else false,
+			prevStance = if old then old.stance else "Low",
+		}
+	end
 	local actor = services.PlayerService.get(actorId)
 	if actor and actor.character then
 		actor.character:SetAttribute("Mark", if on then st else "")
@@ -13010,6 +13092,19 @@ function DefenseService.stanceOf(actorId: number): CatchGeometry.MarkStance
 		return s.stance
 	end
 	return "Relaxed"
+end
+
+-- The stance at server time t (the one before the last change when that
+-- change came after t).
+local function stanceAt(actorId: number, t: number): CatchGeometry.MarkStance
+	local s = stances[actorId]
+	if not s then
+		return "Relaxed"
+	end
+	if s.at > t then
+		return if s.prevOn then s.prevStance else "Relaxed"
+	end
+	return if s.on then s.stance else "Relaxed"
 end
 
 -- The side ("FH" | "BH") the markers of `team` force this point.
@@ -13037,7 +13132,10 @@ function DefenseService.startStall(holderId: number?, interval: number, maxCount
 	local state = Net.state()
 	state:SetAttribute("Stall", 0)
 	state:SetAttribute("StallMax", maxCount)
-	state:SetAttribute("StallState", if holderId then "Unmarked" else "None")
+	-- keep setState's memory in step, or a new possession that starts
+	-- Counting (the last one ended Counting) would never be published
+	stall.stateName = if holderId then "Unmarked" else "None"
+	state:SetAttribute("StallState", stall.stateName)
 	state:SetAttribute("MarkerId", 0)
 end
 
@@ -13181,7 +13279,7 @@ function DefenseService.checkHandBlock(
 			local pos, facing = services.MovementService.positionAt(a.id, rewindT)
 			if (pos - pivot).Magnitude < HAND_BLOCK_RADIUS then
 				local rise = pos.Y - groundY - services.MovementService.standHeight(a.id)
-				local stance: CatchGeometry.MarkStance = DefenseService.stanceOf(a.id)
+				local stance: CatchGeometry.MarkStance = stanceAt(a.id, rewindT)
 				table.insert(candidates, {
 					id = a.id,
 					box = CatchGeometry.markBox(
@@ -13247,7 +13345,10 @@ return DefenseService
 	  HolderId    actor id while held
 	  FlightId    increments for every new flight segment (throw, tip, block)
 	  LaunchTime  server time at which the segment starts
-	  LaunchPos / LaunchVel / LaunchNormal (Vector3), Spin, Wind, GroundY
+	  LaunchPos / LaunchVel / LaunchNormal (Vector3), Spin, GroundY
+	  Wind        the wind the disc flies in (setWind: the arena wind for the
+	              match / warm-up discs, zero in training); clients predict
+	              and preview throws with this, never with UBState Wind
 	  StopAt      flight time at which a marker's hands stop this segment (a
 	              hand block; 0 = none): clients hold the disc there until
 	              the deflection segment arrives instead of flying it on
@@ -13474,6 +13575,16 @@ end
 function DiscService.setSkin(d: Disc, skin: string)
 	d.skin = skin
 	write(d, "Skin", skin)
+end
+
+-- The wind this disc flies in from now on (studs/s, world space): the arena
+-- wind for the match and warm-up discs, none for training discs. Written to
+-- the Wind attribute at once, so the holder's preview, lead assist and
+-- predicted throw use exactly the wind the server will fly with.
+function DiscService.setWind(d: Disc, wind: Vector3)
+	write(d, "Wind", wind)
+	local rw = d.folder:GetAttribute("Wind") :: Vector3
+	d.wind = { x = rw.X, y = rw.Y, z = rw.Z }
 end
 
 function DiscService.giveTo(d: Disc, actorId: number)
@@ -14087,8 +14198,11 @@ return LeaderboardService
 	                7v7 from 10, a vote in between); the list refreshes on
 	                every join / leave / training change. 20 s countdown with
 	                2+ humans, 30 s alone ("Practice vs bots — waiting for
-	                players"). In a private server or Studio the host picks
-	                the mode and rules and can start at once.
+	                players"). In a private server (the owner) or Studio
+	                (the first player, the next one if they leave) the host
+	                picks the mode and rules and can start at once. Everyone
+	                in the warm-up plays the next match (JoinMatch is a no-op).
+	                The match and warm-up discs fly in the arena's wind.
 	  PointSetup    TeamService picks the line (MatchPlan: whoever sat out
 	                longest, bots fill to exactly 3v3 / 7v7); the lines are
 	                teleported behind the goal lines they defend, substitutes
@@ -14832,7 +14946,8 @@ local function pickForce()
 	set("ForceB", if rng:NextNumber() < FORCE_FH_CHANCE then "FH" else "BH")
 end
 
--- Hands the point's disc to its starter (already on their line-up spot).
+-- Hands the point's disc to its starter (on their line-up spot, or wherever
+-- they are when picked later).
 local function giveStarter(id: number)
 	local p = S.point
 	local actor = services.PlayerService.get(id)
@@ -14842,9 +14957,17 @@ local function giveStarter(id: number)
 	S.starter = id
 	services.DiscService.giveTo(S.disc, id)
 	applySkin(S.disc, id)
-	local attrs = actor.character:GetAttribute("UBTeleportPos")
+	-- the pivot goes where the starter is: their line-up spot while that
+	-- teleport is still arriving, else where the server sees them now (a
+	-- starter picked later in the line-up may have walked off their spot)
+	local tp = actor.character:GetAttribute("UBTeleportPos")
 	local root = services.PlayerService.root(actor)
-	local at = if typeof(attrs) == "Vector3" then attrs elseif root then root.Position else nil
+	local at: Vector3? = nil
+	if typeof(tp) == "Vector3" and (root == nil or services.MovementService.teleportPending(id)) then
+		at = tp
+	elseif root then
+		at = root.Position
+	end
 	if at then
 		services.MovementService.setPivot(id, at)
 	end
@@ -15229,6 +15352,7 @@ local function startIntermission()
 	if not S.warmupDisc then
 		S.warmupDisc = services.DiscService.create("Warmup", nil, warmupHandler)
 	end
+	services.DiscService.setWind(S.warmupDisc, services.ArenaService.windVector())
 	services.DiscService.placeOnGround(S.warmupDisc, Vector3.new(0, 0, -20))
 	recolorEndZones()
 	publishScore()
@@ -15319,6 +15443,9 @@ local function startMatch()
 	if not S.disc then
 		S.disc = services.DiscService.create("Match", nil, matchHandler)
 	end
+	-- the arena's wind is constant for the match (it "flips with the teams"
+	-- because they swap ends); every throw, pull and bot solve uses it
+	services.DiscService.setWind(S.disc, services.ArenaService.windVector())
 	set("DiscId", S.disc.id)
 	notifyAll("Banner", string.upper(mode.Display), { sub = if mode.Ranked then "RANKED" else arena.Display })
 	setupPoint()
@@ -15614,6 +15741,18 @@ local function onActorRemoving(actor: any)
 	if actor.isBot then
 		return
 	end
+	if actor.id == S.hostId and game.PrivateServerOwnerId == 0 then
+		-- the Studio host left: the next human (oldest id first) hosts
+		local nextHost = 0
+		for _, h in services.PlayerService.humans() do
+			if h.id ~= actor.id then
+				nextHost = h.id
+				break
+			end
+		end
+		S.hostId = nextHost
+		set("HostId", S.hostId)
+	end
 	penalizeLeaver(actor)
 	if services.TeamService.inMatch() then
 		services.TeamService.remove(actor)
@@ -15670,7 +15809,11 @@ function MatchService.action(player: Player, kind: string, payload: any)
 			actor.character:SetAttribute("CelebrateT", now())
 		end
 	elseif kind == "JoinMatch" then
-		if actor.role == "Training" then
+		local training = actor.role == "Training"
+		if S.phase == "Intermission" and not training then
+			return -- the warm-up already plays the next match (no spawn teleport)
+		end
+		if training then
 			services.TrainingService.leave(actor)
 		end
 		if actor.role ~= "Match" and actor.role ~= "Bench" then
@@ -15695,7 +15838,7 @@ function MatchService.Start()
 	end
 	set("HostId", S.hostId)
 
-	services.PlayerService.ActorAdded:Connect(function(actor)
+	local function onHumanAdded(actor: any)
 		if actor.isBot then
 			return
 		end
@@ -15704,10 +15847,19 @@ function MatchService.Start()
 			set("HostId", S.hostId)
 		end
 		task.defer(function()
-			placeIntoMatch(actor)
+			if services.PlayerService.get(actor.id) == actor then
+				placeIntoMatch(actor)
+			end
 		end)
-	end)
+	end
+	services.PlayerService.ActorAdded:Connect(onHumanAdded)
 	services.PlayerService.ActorRemoving:Connect(onActorRemoving)
+	-- players who joined while the server was still starting (DataService's
+	-- probe yields during Init): PlayerService announced them before this
+	-- listener existed
+	for _, actor in services.PlayerService.humans() do
+		onHumanAdded(actor)
+	end
 	services.PlayerService.CharacterSpawned:Connect(function(actor, _model)
 		if actor.isBot then
 			return
@@ -15753,7 +15905,7 @@ function MatchService.Start()
 		end
 	end)
 	services.MovementService.Travel:Connect(function(id)
-		notify(id, "Toast", "Travel — reset to your pivot", nil)
+		notify(id, "Travel", "Travel — reset to your pivot", nil)
 	end)
 	services.DefenseService.StallOut:Connect(function(holderId)
 		local e = S.engine
@@ -15932,7 +16084,6 @@ local VALID_QUALITY = { Perfect = true, Clean = true, Sloppy = true, Gassed = tr
 local MAX_TECHS_PER_SECOND = 12
 local MAX_EVENT_AGE = 0.35 -- event timestamps older than this (at arrival) are clamped
 local COOLDOWN_SLACK = 0.05
-local EXERTION_FLOOR = -40
 local EXERTION_SLACK = 30 -- the mirror may lag the client by this much before claims are refused
 local HISTORY = 72 -- samples (~1.2 s at 60 Hz)
 local SPEED_WINDOW = 1.0
@@ -16139,6 +16290,13 @@ end
 
 local function checking(t: Track, clock: number): boolean
 	return clock >= t.graceUntil and t.teleportTarget == nil
+end
+
+-- True while the server has not yet seen this actor's root arrive at its
+-- last teleport target.
+function MovementService.teleportPending(id: number): boolean
+	local t = tracks[id]
+	return t ~= nil and t.teleportTarget ~= nil
 end
 
 ---------------------------------------------------------------------------
@@ -16443,16 +16601,18 @@ end
 -- exertion mirror
 ---------------------------------------------------------------------------
 
--- Mirrors the client sim: sprinting drains a little and regenerates a little
--- more (sprint is effectively free), anything else regenerates fast; regen
--- pauses briefly only after a technique spend.
+-- Mirrors the client sim exactly: 0..ExertionMax, sprinting (running mode
+-- Ground or Landing above jog speed; Slide, DiveSlide, Recover, Air, Pivot and
+-- Mark never count) drains a little and regenerates a little more (sprint is
+-- effectively free), anything else regenerates fast; regen pauses briefly
+-- only after a technique spend.
 local function regen(dt: number)
 	local tNow = now()
 	for _, t in tracks do
 		local regenOk = tNow >= t.regenAt
 		local sprinting = t.grounded
 			and not t.holding
-			and t.mode ~= "Mark"
+			and (t.mode == "Ground" or t.mode == "Landing")
 			and flat(t.vel).Magnitude > MovementConfig.JogSpeed + 0.5
 		if sprinting then
 			t.exertion -= MovementConfig.SprintDrain * dt
@@ -16462,7 +16622,7 @@ local function regen(dt: number)
 		elseif regenOk then
 			t.exertion += MovementConfig.ExertionRegen * dt
 		end
-		t.exertion = math.clamp(t.exertion, EXERTION_FLOOR, MovementConfig.ExertionMax)
+		t.exertion = math.clamp(t.exertion, 0, MovementConfig.ExertionMax)
 	end
 end
 
@@ -16566,7 +16726,7 @@ local function accept(t: Track, tech: string, quality: string, info: string?, ts
 	table.insert(t.techTimes, clock)
 	t.techAt[tech] = ts
 	if cost > 0 then
-		t.exertion = math.max(EXERTION_FLOOR, t.exertion - cost)
+		t.exertion = math.max(0, t.exertion - cost) -- the sim clamps spends at 0 too
 		t.regenAt = ts + MovementConfig.ExertionRegenDelay
 	end
 	return q
@@ -18093,8 +18253,10 @@ return TeamService
 	poses), FakeT (the estimated time the fake happened: arrival minus ping;
 	MovementService judges a "Sold" PivotSwing against it, bots react to it)
 	and FakeSide (-1 thrower's left, 0 none, +1 thrower's right). Windups set
-	WindupType + Windup; a release resets Windup and WindupType so no stale
-	windup is ever read (DiscService also clears them when possession ends).
+	WindupType + Windup; a release resets Windup and WindupType, and so does
+	a charge the client lost (ThrowCharge false: it landed from the hop), so
+	no stale windup is ever read (DiscService also clears them when
+	possession ends).
 
 	Combo: the release reports to MovementService.noteRelease, which adds the
 	"Break" link after a Sold swing (the client's own "Break" Tech event for
@@ -18156,6 +18318,17 @@ function ThrowService.beginCharge(actorId: number, throwType: string)
 	chargeStart[actorId] = os.clock()
 	setAttr(actorId, "WindupType", throwType)
 	setAttr(actorId, "Windup", now())
+end
+
+-- The thrower lost the charge without throwing (landed from the hop): the
+-- windup is over for poses and bots.
+function ThrowService.endCharge(actorId: number)
+	if chargeStart[actorId] == nil then
+		return
+	end
+	chargeStart[actorId] = nil
+	setAttr(actorId, "Windup", 0)
+	setAttr(actorId, "WindupType", "")
 end
 
 -- A pump fake. `side` is where the fake stepped (-1 left, 0 none, +1 right
@@ -18459,7 +18632,12 @@ end
 function ThrowService.Start()
 	Net.event("ThrowCharge").OnServerEvent:Connect(function(player, throwType)
 		local actor = services.PlayerService.fromPlayer(player)
-		if actor and type(throwType) == "string" and (DiscConfig.Types :: any)[throwType] then
+		if not actor then
+			return
+		end
+		if throwType == false then
+			ThrowService.endCharge(actor.id)
+		elseif type(throwType) == "string" and (DiscConfig.Types :: any)[throwType] then
 			ThrowService.beginCharge(actor.id, throwType)
 		end
 	end)
@@ -20802,7 +20980,9 @@ return CameraController
 	the controller keeps tracking for up to ClaimTrackTime, or until the disc
 	starts moving away from your zone core (its closest approach), then
 	claims: Catch(discId, tFirst, zoneKind, reachDir, rootPos, rootVel) with
-	your body as it was at first contact. On the claim:
+	your body as it was at first contact. On the claim (except a defender's
+	rim touch deeper than BlockDepth, which the server rules a Block and is
+	not predicted):
 	  * Claimed(discId, zoneKind) fires (MovementController starts the catch
 	    slow-down) and the disc eases into your hand (DiscRenderer)
 	  * the catch sound and a small burst play at once for a confident claim
@@ -20814,7 +20994,8 @@ return CameraController
 	cleared so a disc still inside your zones is claimed again at once. A
 	claim with no answer yet is never repeated sooner than ClaimThrottle.
 
-	Reach (Primary while not holding): opens a 0.28 s window where your hand
+	Reach (Primary while not holding, and not while a claimed catch awaits
+	the server's answer): opens a 0.28 s window where your hand
 	extends toward your aim. A light assist bends the reach toward a disc that
 	is close and roughly where you are looking. Primary next to a disc lying
 	on the ground asks the server to pick it up instead (Action "Pickup").
@@ -21160,12 +21341,29 @@ local function localFeedback(c: Contact, pos: Vector3)
 	controllers.EffectsController.burst(pos, color, 6, 8)
 end
 
-local function sendClaim(id: string, c: Contact, discPos: Vector3)
+-- Would the server rule this touch a Block? (a defender who only got the
+-- rim: depth > BlockDepth; CatchGeometry.outcome, never on a pull)
+local function likelyBlock(folder: Configuration, c: Contact): boolean
+	local throwerTeam = folder:GetAttribute("ThrowerTeam")
+	local defending = type(throwerTeam) == "string"
+		and throwerTeam ~= ""
+		and throwerTeam ~= myTeam()
+		and folder:GetAttribute("Pull") ~= true
+	return defending and c.bestDepth > C.BlockDepth
+end
+
+local function sendClaim(folder: Configuration, id: string, c: Contact, discPos: Vector3)
 	local tFirst = c.tFirst :: number
 	c.sentAt = os.clock()
 	c.awaiting = true
 	c.retry = false
 	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel)
+	if likelyBlock(folder, c) then
+		-- a rim touch on defense is a Block: no predicted catch (no slow-down,
+		-- no disc in the hand); an interception after all is confirmed by
+		-- the server like any catch
+		return
+	end
 	controllers.DiscRenderer.predictCatch(id)
 	localFeedback(c, discPos)
 	CatchController.Claimed:Fire(id, c.kind)
@@ -21240,7 +21438,7 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 	local tracked = tNow - tFirst >= C.ClaimTrackTime
 	c.lastDepth = if ev then ev.depth else 1
 	if (c.retry or receding or tracked) and clock - c.sentAt >= C.ClaimThrottle then
-		sendClaim(id, c, p)
+		sendClaim(folder, id, c, p)
 		if ev == nil then
 			c.tFirst = nil -- the disc has left the zones; a new touch is a new episode
 		end
@@ -21306,7 +21504,9 @@ end
 
 function CatchController.Start()
 	controllers.InputController.ActionBegan:Connect(function(action)
-		if controllers.ThrowController.isHolding() then
+		-- holding, or a catch claimed but not yet confirmed: the disc keys
+		-- belong to ThrowController (no Reach / pickup / mark mid-claim)
+		if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
 			return
 		end
 		if action == "Primary" then
@@ -22085,10 +22285,9 @@ function DiscRenderer.predictThrow(id: string, state: DiscPhysics.State, t0: num
 	v.predictedT0 = t0 or now()
 	v.predictedStop = if stopAt and stopAt > 0 then stopAt else math.huge
 	v.predictedFlightId = v.flightId
-	local w = Net.state():GetAttribute("Wind")
-	if typeof(w) == "Vector3" then
-		v.wind = { x = w.X, y = w.Y, z = w.Z }
-	end
+	-- the server flies the throw with the disc's own wind (Wind attribute)
+	local w = v.folder:GetAttribute("Wind")
+	v.wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else { x = 0, y = 0, z = 0 }
 end
 
 -- Your own claim: ease the disc into your hand until the server answers.
@@ -22991,6 +23190,8 @@ return EffectsController
 	  * AutoSprint (setting, default on): once the move input has stayed at
 	    least 0.9 for 0.3 s inside a 35 degree cone, you sprint until the input
 	    drops (dips shorter than Config/Input AutoSprint.Grace are forgiven).
+	    A plant (Cut with no direction held) never drops it: the no-input
+	    moment is part of the technique, so the restart keeps sprint speed.
 	  * Touch keeps its SPRINT toggle and AutoSprintTouch (stick pushed fully).
 
 	Roblox's default character controls are off: StarterPlayer uses the
@@ -23209,6 +23410,12 @@ function InputController.moveVector(): Vector3
 	return forward * raw.Y + right * raw.X
 end
 
+-- True while the movement sim is in a plant (brake + restart window).
+local function planting(): boolean
+	local mc = controllers and controllers.MovementController
+	return mc ~= nil and mc.sim().plantAt > 0
+end
+
 -- AutoSprint state machine (time based, so calling it several times per
 -- frame is harmless).
 local function autoSprinting(): boolean
@@ -23231,7 +23438,7 @@ local function autoSprinting(): boolean
 		local weak = auto.weakSince
 		if weak == nil then
 			auto.weakSince = t
-		elseif t - weak > AUTO.Grace then
+		elseif t - weak > AUTO.Grace and not planting() then
 			auto.active = false
 			auto.since = nil
 		end
@@ -23383,7 +23590,8 @@ return InputController
 
 	THE SIM DECIDES, THE HUMANOID MOVES. Each frame it builds an environment
 	snapshot (grounded from Humanoid.FloorMaterial plus a ray sized from the
-	current HipHeight, time-to-land, Rebound walls along / beside you, a short
+	current HipHeight, 1.2 studs past the feet on the ground but only 0.3 in
+	the air so dives and hops land on touchdown, time-to-land, Rebound walls along / beside you, a short
 	"blocked" ray along the sim velocity, root position and camera yaw), steps
 	the sim and drives the body with the Humanoid's own controller:
 	  * Humanoid.WalkSpeed = |v| and Humanoid:Move(v.Unit) every frame, so the
@@ -23397,7 +23605,9 @@ return InputController
 	    (smoother), the reach direction while reaching for the disc
 
 	Holding the disc: the slow-down starts as soon as CatchController claims a
-	catch (predicted; cancelled on Denied or when the server never confirms).
+	catch (predicted; cancelled on Denied, when the claimed disc leaves Flight
+	without becoming ours, e.g. a scoring catch, or when the server never
+	confirms).
 	While holding, Cut swings to the screen-left side, Dive to the right
 	(gamepad X: the mirror of the current step), Jump hops. The sim plants the
 	pivot foot and Output.pivotPos goes to the server (Pivot remote; proposed
@@ -23472,6 +23682,8 @@ local pivotRemote: RemoteEvent? = nil
 local MOVEMENT_ACTIONS = { Jump = true, Cut = true, Slide = true, Dive = true, Burst = true }
 local WALL_RAY = MovementConfig.WallRebound.DetectDistance
 local BLOCK_RAY = 2.5
+local GROUND_RAY_GROUND = 1.2 -- studs past the feet that still count as grounded (ground modes)
+local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
 
 local rayParams = RaycastParams.new()
@@ -23571,14 +23783,19 @@ local function buildEnv(): MovementSim.Env
 	local pos = r.Position
 	local vel = r.AssemblyLinearVelocity
 
-	-- grounded: the Humanoid's own floor detection, or a ray just past the feet
+	-- grounded: the Humanoid's own floor detection, or a ray just past the feet.
+	-- On the ground the ray reaches 1.2 studs below the feet (bridges step-downs
+	-- and coyote flicker); in the air (jumps, hops, dives) only 0.3, less than a
+	-- frame of fall, so a low arc never lands before the feet touch.
 	local state = h:GetState()
 	local humGrounded = h.FloorMaterial ~= Enum.Material.Air
 		and state ~= Enum.HumanoidStateType.Jumping
 		and state ~= Enum.HumanoidStateType.Freefall
 	local grounded = humGrounded
 	if not grounded and vel.Y <= 6 then
-		grounded = workspace:Raycast(pos, Vector3.new(0, -(standHeight + 1.2), 0), rayParams) ~= nil
+		local airborne = sim.mode == "Air" or sim.mode == "Dive"
+		local reach = if airborne then GROUND_RAY_AIR else GROUND_RAY_GROUND
+		grounded = workspace:Raycast(pos, Vector3.new(0, -(standHeight + reach), 0), rayParams) ~= nil
 	end
 
 	local ttl: number? = nil
@@ -23737,7 +23954,7 @@ local function setupCharacter(c: Model)
 	standHeight = computeStandHeight(h, r)
 
 	local att = Instance.new("Attachment")
-	att.Name = "UBMoveAttachment"
+	att.Name = "UBFaceAttachment"
 	att.Parent = r
 
 	local align = Instance.new("AlignOrientation")
@@ -23807,12 +24024,21 @@ local function handleTeleport(c: Model, r: BasePart)
 end
 
 -- Predicted catch (CatchController.Claimed) until the server confirms it;
--- Denied, or no confirmation in time, cancels it.
+-- Denied, no confirmation in time, or the claimed disc ending up anywhere but
+-- in our hand cancels it. (A catch that scores, or lands out of bounds, ends
+-- the possession in the same server frame: the disc goes straight from
+-- Flight to Ground and Held-by-us is never seen.)
 local function updateHolding(grounded: boolean)
 	local confirmed = controllers.ThrowController.isHolding()
 	local p = predicted
 	if confirmed or (p and os.clock() > p.untilT) then
 		predicted = nil
+	elseif p then
+		local f = controllers.DiscRenderer.folderOf(p.disc)
+		local mode = f and f:GetAttribute("Mode")
+		if f and mode ~= "Flight" and not (mode == "Held" and f:GetAttribute("HolderId") == player.UserId) then
+			predicted = nil
+		end
 	end
 	local want = confirmed or predicted ~= nil
 	if want ~= holding then
@@ -25278,8 +25504,10 @@ local function applyProfile(profile: any)
 	end
 	applied = true
 	local s = profile.settings
+	local migrated = false
 	if type(s.values) == "table" then
 		local skip = migratedKeys(s.values.SettingsVersion)
+		migrated = next(skip) ~= nil
 		for k: string, default: any in InputConfig.DefaultSettings :: any do
 			if not skip[k] and k ~= "SettingsVersion" and type(s.values[k]) == type(default) then
 				values[k] = s.values[k]
@@ -25297,6 +25525,10 @@ local function applyProfile(profile: any)
 		end
 	end
 	SettingsController.Changed:Fire("All")
+	if migrated then
+		-- store the new version so the reset happens only once
+		SettingsController.save()
+	end
 end
 
 function SettingsController.Init(_c: any) end
@@ -25342,6 +25574,15 @@ return SettingsController
 	                    crosshair using their CURRENT velocity and marks the
 	                    ideal power on the meter; timing the release is still on you
 
+	The match disc mirrors the server's canThrow: no charge or release outside
+	the Pull (puller) and Live phases (the starter holds the disc through the
+	line-up); a press then says why instead of a throw the server ignores.
+
+	A Primary press made after your catch claim but before the server confirms
+	it (MovementController.holdingDisc() without the Held folder yet) is kept:
+	if the button is still down when the disc becomes yours, the charge starts
+	then (CatchController ignores Primary during that window, so no Reach).
+
 	Release: the disc leaves from your pivot foot P (the server's UBPivot, or
 	the foot your sim just planted) plus your step (ThrowModel). The Throw remote carries the inputs plus
 	step, pivot, rootPos and releaseT, so ThrowService validates and launches
@@ -25349,6 +25590,9 @@ return SettingsController
 	once from the same parameters. Fake -> Sold Pivot Swing -> release inside
 	ComboEvaluator's break window scores a "Break"
 	(MovementController.addTech).
+
+	Previews, the lead assist and the predicted throw all use the held disc's
+	own Wind attribute (what the server flies it with), never UBState Wind.
 
 	The preview arc shows the first part of the flight (how much depends on
 	the mode: full in training, half in Mini, about a third in Normal, a
@@ -25408,6 +25652,7 @@ local state = {
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
+	pendingCharge = false, -- Primary went down while the catch was only predicted
 }
 
 local dots: { BasePart } = {}
@@ -25523,7 +25768,9 @@ local function markersNear(origin: Vector3, groundY: number): { Marker }
 	local me = player.Character
 	local myTeam = me and me:GetAttribute("UBTeam")
 	for _, model in Actors.characters() do
-		if model ~= me then
+		local role = model:GetAttribute("UBRole")
+		-- off the field (bench, spectators) never blocks, as on the server
+		if model ~= me and role ~= "Bench" and role ~= "Spectate" then
 			local team = model:GetAttribute("UBTeam")
 			local mark = model:GetAttribute("Mark")
 			local opponent = (team ~= myTeam and team ~= "N") or mark == "Low" or mark == "High"
@@ -25545,6 +25792,13 @@ end
 local function groundYOf(folder: Configuration?): number
 	local g = folder and folder:GetAttribute("GroundY")
 	return if type(g) == "number" then g else 0
+end
+
+-- The wind the server flies this disc with (its own Wind attribute: the arena
+-- wind for match and warm-up discs, none in training).
+local function windOf(folder: Configuration?): DiscPhysics.Wind?
+	local w = folder and folder:GetAttribute("Wind")
+	return if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
 end
 
 -- The open side for the thrower (-1 screen-left, +1 right, 0 unknown): the
@@ -25653,9 +25907,12 @@ local function cycleType(delta: number)
 	setType(order[i])
 end
 
+-- The charge is lost (landing from the hop): tell the server too, so nobody
+-- keeps seeing (or reacting to) a windup that will never be thrown.
 local function cancelCharge()
 	if state.charging then
 		state.charging = false
+		Net.event("ThrowCharge"):FireServer(false)
 		ThrowController.Changed:Fire()
 	end
 end
@@ -25687,6 +25944,24 @@ local function previewBlockTime(
 	return nil
 end
 
+-- The server's canThrow for the match disc: only the puller in the Pull
+-- phase and the holder in Live may throw (the starter gets the disc during
+-- the line-up). Returns why not, or nil.
+local function throwRefusal(folder: Configuration?): string?
+	if not folder or folder:GetAttribute("Context") ~= "Match" then
+		return nil
+	end
+	local phase = Net.state():GetAttribute("Phase")
+	if phase == "Pull" or phase == "Live" then
+		return nil
+	end
+	return if phase == "PointSetup" then "WAIT FOR THE START" else "NOT NOW"
+end
+
+local function refuseThrow(text: string)
+	controllers.MovementController.Feedback:Fire({ kind = "Context", text = text })
+end
+
 local function release()
 	if not state.charging then
 		return
@@ -25695,6 +25970,14 @@ local function release()
 	local folder = ThrowController.heldFolder()
 	local root = controllers.MovementController.root()
 	if not folder or not root then
+		return
+	end
+	local refusal = throwRefusal(folder)
+	if refusal then
+		-- the server would refuse it silently: say so and drop the windup
+		Net.event("ThrowCharge"):FireServer(false)
+		refuseThrow(refusal)
+		ThrowController.Changed:Fire()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
@@ -25718,8 +26001,7 @@ local function release()
 	local launch = ThrowModel.launch(params, root.Position, root.AssemblyLinearVelocity)
 	local id = folder:GetAttribute("Id") :: string
 	-- if your own view says the mark gets it, the predicted disc stops at the hands
-	local w = Net.state():GetAttribute("Wind")
-	local wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
+	local wind = windOf(folder)
 	local blockT = if folder:GetAttribute("Context") == "Match"
 		then previewBlockTime(launch, wind, groundYOf(folder), serverPivot() or root.Position)
 		else nil
@@ -25811,8 +26093,7 @@ local function updateLead()
 	end
 	state.lastSolve = os.clock()
 	local r = (best :: Model):FindFirstChild("HumanoidRootPart") :: BasePart
-	local w = Net.state():GetAttribute("Wind")
-	local wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
+	local wind = windOf(state.heldFolder)
 	local pivot = serverPivot()
 	local sol = Solver.solve({
 		rootPos = root.Position,
@@ -25869,8 +26150,7 @@ local function drawPreview(folder: Configuration)
 	end
 	local params = currentParams(hold)
 	local launch = ThrowModel.launch(params, root.Position, root.AssemblyLinearVelocity)
-	local w = Net.state():GetAttribute("Wind")
-	local wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
+	local wind = windOf(folder)
 	local groundY = groundYOf(folder)
 	local result = DiscPhysics.simulate(launch.state, 8, wind, groundY, 6)
 	local total = result.landT
@@ -25904,12 +26184,32 @@ local function drawPreview(folder: Configuration)
 	end
 end
 
+local function beginCharge()
+	local refusal = throwRefusal(ThrowController.heldFolder())
+	if refusal then
+		refuseThrow(refusal)
+		return
+	end
+	state.charging = true
+	state.chargeStart = os.clock()
+	Net.event("ThrowCharge"):FireServer(state.throwType)
+end
+
 local function step()
 	local folder = ThrowController.heldFolder()
+	if not folder and not controllers.MovementController.holdingDisc() then
+		state.pendingCharge = false -- the predicted catch was denied / expired
+	end
 	if folder ~= state.heldFolder then
 		state.heldFolder = folder
 		if folder then
 			state.holds += 1
+			-- a press made while the catch was still predicted charges now
+			-- (InputController never repeats the "began" of a held button)
+			if state.pendingCharge and controllers.InputController.isHeld("Primary") then
+				beginCharge()
+			end
+			state.pendingCharge = false
 		else
 			state.charging = false
 			state.leadSolution = nil
@@ -25955,16 +26255,17 @@ function ThrowController.Start()
 	local input = controllers.InputController
 	input.ActionBegan:Connect(function(action)
 		if not ThrowController.isHolding() then
-			if action == "Celebrate" then
+			if action == "Primary" and controllers.MovementController.holdingDisc() then
+				-- caught, but the server has not confirmed yet: charge on confirm
+				state.pendingCharge = true
+			elseif action == "Celebrate" then
 				Net.event("Action"):FireServer("Celebrate", nil)
 			end
 			return
 		end
 		-- Cut / Dive / Jump while holding are swings and the hop (MovementController)
 		if action == "Primary" then
-			state.charging = true
-			state.chargeStart = os.clock()
-			Net.event("ThrowCharge"):FireServer(state.throwType)
+			beginCharge()
 		elseif action == "Secondary" then
 			fake()
 		elseif action == "BankLeft" then
@@ -25993,6 +26294,7 @@ function ThrowController.Start()
 	end)
 	input.ActionEnded:Connect(function(action)
 		if action == "Primary" then
+			state.pendingCharge = false
 			release()
 		elseif action == "Slide" then
 			state.low = false
@@ -26005,8 +26307,8 @@ function ThrowController.Start()
 		end
 	end)
 	controllers.MovementController.Feedback:Connect(function(fb)
-		-- landing from the hop (or a travel reset) loses the charge
-		if fb.kind == "HopLanded" or fb.kind == "Travel" then
+		-- landing from the hop loses the charge
+		if fb.kind == "HopLanded" then
 			cancelCharge()
 		end
 	end)
@@ -26027,7 +26329,8 @@ return ThrowController
 	  Movement feedback (MovementController.Feedback): the sim's ready-made
 	  texts ("NEED SPEED", "ONE PER JUMP", "PRECISION LANDING -40 ms", ...)
 	  become chips above the crosshair for 0.6 s. A press refused for a
-	  cooldown flashes that technique's pip instead (no cooldown text).
+	  cooldown flashes that technique's pip instead (Feedback.tech names it;
+	  only techniques without a pip show the cooldown text).
 	  Combos: ComboChanged / ChainEnded drive the Hud chain widget and end
 	  card. The server's Combo event (a chain converted by a catch, block or
 	  interception) shows the x2 card and converts the same chain in the local
@@ -26073,14 +26376,6 @@ local hintedVote = false
 local DENIED_DELAY = 0.3 -- a denied claim must stay unanswered this long before it is shown ...
 local DENIED_GAP = 1.5 -- ... and at most once per this long
 local TRAVEL_TEXT = "TRAVEL — RESET TO YOUR PIVOT"
-
--- First word of a Cooldown feedback text ("BURST READY IN 0.8s") -> its pip.
-local COOLDOWN_PIP: { [string]: string } = {
-	BURST = "BurstStep",
-	LAYOUT = "Dive",
-	PLANT = "MomentumCancel",
-	SLIDE = "Slide",
-}
 
 local REASONS: { [string]: string } = {
 	Incomplete = "Incomplete pass",
@@ -26128,12 +26423,7 @@ local function onNotify(kind: string, text: string, data: any)
 	elseif kind == "Travel" then
 		Hud.chip(if type(text) == "string" and text ~= "" then string.upper(text) else TRAVEL_TEXT, C.Bad, 1.4)
 	elseif kind == "Toast" then
-		if type(text) == "string" and string.sub(string.lower(text), 1, 6) == "travel" then
-			-- (the travel reset, until it arrives as its own "Travel" kind)
-			Hud.chip(TRAVEL_TEXT, C.Bad, 1.4)
-		else
-			Hud.toast(text, nil, 3.5)
-		end
+		Hud.toast(text, nil, 3.5)
 	elseif kind == "Achievement" then
 		Hud.toast("ACHIEVEMENT: " .. text .. " — " .. tostring(d.description or ""), C.Gold, 6)
 		controllers.AudioController.play("Highlight")
@@ -26199,11 +26489,14 @@ local function onMovementFeedback(fb: any)
 	local kind = fb.kind
 	local text: string? = if type(fb.text) == "string" and fb.text ~= "" then fb.text else nil
 	if kind == "Cooldown" then
-		-- the pips show readiness: flash the one that refused instead of printing it
-		local first = if text then string.match(text, "^(%u+)") else nil
-		local pip = if first then COOLDOWN_PIP[first] else nil
-		if pip then
-			Hud.flashPip(pip)
+		-- the pips show readiness: flash the one that refused instead of printing
+		-- it; a technique without a pip (fake, swing) gets its text as a chip
+		local tech = fb.tech
+		if type(tech) == "string" and Hud.flashPip(tech) then
+			return
+		end
+		if text then
+			Hud.chip(text, C.Sloppy)
 		end
 		return
 	elseif kind == "Error" then
@@ -26215,7 +26508,7 @@ local function onMovementFeedback(fb: any)
 	end
 	if kind == "LandingOffset" then
 		Hud.chip(text, if string.find(text, "^PRECISION") then C.Perfect else C.Sloppy, 0.8)
-	elseif kind == "HopLanded" or kind == "Travel" then
+	elseif kind == "HopLanded" then
 		Hud.chip(text, C.Bad, 1.2)
 	elseif kind == "Context" then
 		Hud.chip(text, C.Text)
@@ -27086,11 +27379,14 @@ function Hud.chip(text: string, color: Color3?, duration: number?)
 end
 
 -- Flashes a cooldown pip ("BurstStep", "Dive", "MomentumCancel", "Slide"):
--- the press was refused because that technique is still recharging.
-function Hud.flashPip(key: string)
+-- the press was refused because that technique is still recharging. Returns
+-- false when that technique has no pip (the caller shows text instead).
+function Hud.flashPip(key: string): boolean
 	if pips[key] then
 		pipFlashAt[key] = os.clock()
+		return true
 	end
+	return false
 end
 
 function Hud.toast(text: string, color: Color3?, duration: number?)
@@ -27560,7 +27856,8 @@ return Hud
 --[[
 	Menu — Play, Training, Profile, Locker, Leaderboard, Settings, Controls.
 
-	Play: join / training, then during warm-up the mode choice. On a public
+	Play: join (mid-match only: everyone in the warm-up is already in the
+	next match) / training, then during warm-up the mode choice. On a public
 	server only the modes the head count allows are offered (UBState
 	VoteModes; Mini up to 9 players, Normal from 7), each other mode says how
 	many players it needs, and a single eligible mode is shown as decided
@@ -27893,6 +28190,7 @@ function render.Play(content: Instance)
 		)
 	)
 	local role = if player.Character then player.Character:GetAttribute("UBRole") else nil
+	local inTraining = role == "Training"
 	local r = row(content, nextOrder(), 44)
 	if role == "Bench" then
 		Theme.label("ON THE BENCH — you play next point", 15, {
@@ -27900,6 +28198,15 @@ function render.Play(content: Instance)
 			LayoutOrder = 1,
 			Size = UDim2.fromOffset(330, 30),
 			TextColor3 = C.Gold,
+			Font = Theme.Fonts.Heavy,
+		})
+	elseif phase == "Intermission" and not inTraining then
+		-- everyone in the warm-up plays the next match: nothing to join
+		Theme.label("YOU'RE IN THE NEXT MATCH — warm up meanwhile", 15, {
+			Parent = r,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(330, 30),
+			TextColor3 = C.Accent,
 			Font = Theme.Fonts.Heavy,
 		})
 	elseif role ~= "Match" then

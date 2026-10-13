@@ -12,7 +12,7 @@
 	Client -> server
 	  Tech        (events: {{tech, quality, dir, t, info}}, mode)   validated on t, replicated as pose attributes
 	  Pivot       (pos: Vector3)                                 proposed pivot foot P; server validates, writes UBPivot
-	  ThrowCharge (throwType)                                    windup pose for everyone
+	  ThrowCharge (throwType | false)                            windup pose for everyone (false = charge lost)
 	  Throw       (params)                                       params incl. step, pivot, releaseT, rootPos; the
 	                                                             server computes the launch itself
 	  Fake        (throwType, side)
@@ -57,7 +57,7 @@ Net.Events = {
 	"Combo",
 }
 
--- Unreliable streams (none at the moment; the old MarkAim pitch stream is gone).
+-- Unreliable streams (none at the moment; Net.unreliable() stays for future ones).
 Net.Unreliable = {} :: { string }
 
 Net.Functions = { "GetProfile", "GetLeaderboard" }

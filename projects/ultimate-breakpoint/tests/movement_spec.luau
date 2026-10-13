@@ -499,6 +499,25 @@ test("Q then a steer within 100 ms is a Snap Cut; Q alone is a Fake Commit", fun
 	expect(s2.vel.Magnitude > Config.SprintSpeed * 0.8, "the jab barely slows you")
 end)
 
+test("a Burst during the Cut look-ahead spends it: no phantom Fake Commit, no cancelled burst", function()
+	local s, body = sprintFwd()
+	expect(press(s, body, "Cut", { move = FWD, sprint = true }), "look-ahead accepted")
+	run(s, body, { move = FWD, sprint = true }, 2 * DT)
+	expect(press(s, body, "Burst", { move = FWD, sprint = true }), "burst accepted")
+	local events = run(s, body, { move = FWD, sprint = true }, 0.2)
+	expect(find(events, "BurstStep") ~= nil, "burst fired")
+	expect(find(events, "FakeCommit") == nil, "no phantom fake commit")
+
+	local s2, b2 = sprintFwd()
+	press(s2, b2, "Cut", { move = FWD, sprint = true })
+	run(s2, b2, { move = FWD, sprint = true }, 2 * DT)
+	press(s2, b2, "Burst", { move = FWD, sprint = true })
+	run(s2, b2, { move = FWD, sprint = true }, DT)
+	local steered = run(s2, b2, { move = RIGHT, sprint = true }, 0.05)
+	expect(find(steered, "SnapCut") == nil, "a steer after the burst is not a look-ahead cut")
+	expect(s2.burstUntil > s2.now, "the burst is still running")
+end)
+
 test("plant is recognised even with S held before Q (judged on the old line)", function()
 	for _, k in { 3, 6, 12 } do
 		local s, body = sprintFwd()
@@ -583,6 +602,11 @@ test("burst step has a cooldown and respects its speed ceiling", function()
 	expect(s.vel.Magnitude <= Config.BurstStep.MaxSpeed + 1e-3, "burst speed " .. s.vel.Magnitude)
 	local ok, reason = press(s, body, "Burst", { move = FWD, sprint = true })
 	expect(not ok and reason == "Cooldown", "burst on cooldown: " .. tostring(reason))
+	-- the refusal names the technique (the HUD flashes that pip) and says when
+	local out = frame(s, body, { move = FWD, sprint = true })
+	local fb = out.feedback[1]
+	expect(fb ~= nil and fb.kind == "Cooldown" and fb.tech == "BurstStep", "cooldown feedback names the tech")
+	expect(fb ~= nil and type(fb.text) == "string" and type(fb.value) == "number", "cooldown text and time left")
 	run(s, body, { move = FWD, sprint = true }, 1.0)
 	expect(s.vel.Magnitude < Config.SprintSpeed + 1, "overspeed decays back toward sprint")
 end)
@@ -881,6 +905,22 @@ test("a swing right after a fake is Sold (Perfect); a plain one is Clean", funct
 	expect(e2 and e2.quality == "Clean", "plain swing is Clean")
 end)
 
+test("a fake with the side key held (foot at full reach) still lunges the body", function()
+	local s, body, pivot = catchAndPlant()
+	run(s, body, { move = RIGHT, sprint = false }, 0.6)
+	expect(s.step:Dot(RIGHT) > 0.95 * R, "stepped out fully")
+	local before = (body.pos - pivot):Dot(RIGHT)
+	MovementSim.fakeStep(s, 1)
+	local most = before
+	run(s, body, { move = RIGHT, sprint = false }, HD.FakeStepOut, function()
+		most = math.max(most, (body.pos - pivot):Dot(RIGHT))
+	end)
+	expect(most - before > 0.15 * R, string.format("body lunged %.2f studs", most - before))
+	expect(s.step.Magnitude <= R + 1e-6, "the step itself stays within reach")
+	run(s, body, { move = RIGHT, sprint = false }, 0.5)
+	near((body.pos - pivot):Dot(RIGHT), before, 0.1, "and comes back")
+end)
+
 test("the pivot survives a teleport reset and adopts the server's UBPivot", function()
 	local s, body, pivot = catchAndPlant()
 	run(s, body, { move = RIGHT, sprint = false }, 0.3)
@@ -1001,6 +1041,39 @@ test("contextHint names what each key would do right now", function()
 	expect(s2.vel == before, "contextHint is pure")
 end)
 
+test("contextHint never offers a press the cooldown would refuse", function()
+	-- Burst, then plant inside the Burst cooldown: no EXPLOSIVE RESTART
+	local s, body = sprintFwd()
+	expect(press(s, body, "Burst", { move = FWD, sprint = true }), "burst accepted")
+	run(s, body, { move = FWD, sprint = true }, 0.4)
+	expect(press(s, body, "Cut", { move = NONE, sprint = true }), "plant accepted")
+	run(s, body, { move = NONE, sprint = true }, 0.1)
+	expect(s.plantAt > 0, "in the plant")
+	local h = MovementSim.contextHint(s, { move = NONE, sprint = true }, envFor(body, s))
+	expect(h.Burst == nil, "burst on cooldown: " .. tostring(h.Burst))
+	local ok = press(s, body, "Burst", { move = RIGHT, sprint = true })
+	expect(not ok, "and the press is indeed refused")
+
+	-- ground layout, then a pop-up jump: no AIR LAYOUT while Dive cools down
+	local s2, b2 = sprintFwd()
+	expect(press(s2, b2, "Dive", { move = FWD, sprint = true }), "dive accepted")
+	local cooling, offered = 0, 0
+	for _ = 1, 120 do
+		frame(s2, b2, { move = FWD, sprint = true })
+		if s2.mode == "DiveSlide" or s2.mode == "Recover" then
+			press(s2, b2, "Jump", { move = FWD, sprint = true })
+		elseif s2.mode == "Air" and (s2.ready.Dive or -math.huge) > s2.now then
+			cooling += 1
+			local hh = MovementSim.contextHint(s2, { move = FWD, sprint = true }, envFor(b2, s2))
+			if hh.Dive ~= nil then
+				offered += 1
+			end
+		end
+	end
+	expect(cooling > 0, "popped up while the Dive cooldown ran")
+	expect(offered == 0, "AIR LAYOUT offered on cooldown " .. offered .. " frames")
+end)
+
 ---------------------------------------------------------------------------
 -- fuzz
 ---------------------------------------------------------------------------
@@ -1062,7 +1135,16 @@ test("fuzz (120k frames): never past HardCap, no NaN, exertion in range, root ta
 			end
 			local p, target = MovementSim.getPivot(s), MovementSim.rootTarget(s)
 			if p and target then
-				expect(VecMath.flat(target - p).Magnitude <= HD.BodyShare * R + 0.05, "root target strayed from P")
+				-- P + BodyShare * s; only a fake's lunge (FakeStepOut long) may
+				-- lean the body past that, by at most its FakeStep share, which
+				-- still sits inside the server's travel tolerance (0.55R + 1.5)
+				local reach = HD.BodyShare * R
+				if s.now < s.fakeUntil then
+					reach = HD.BodyShare * R * (1 + HD.FakeStep)
+				end
+				local off = VecMath.flat(target - p).Magnitude
+				expect(off <= reach + 0.05, "root target strayed from P")
+				expect(off < HD.BodyShare * R + 1.5, "root target past the server travel tolerance")
 			end
 			expect(out.step.Magnitude <= R + 1e-3, "step longer than R")
 		end

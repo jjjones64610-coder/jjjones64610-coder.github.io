@@ -26,8 +26,10 @@
 	                lifted by a jump). Markers are rewound (MovementService.
 	                positionAt) by about two one-way pings plus a little,
 	                capped at Mark.RewindMax, so the test uses where the
-	                thrower saw them: a pivot that visibly beats the mark beats
-	                it. Contact = a point block. Pure geometry, no hidden roll.
+	                thrower saw them, in the stance they saw (a stance change
+	                newer than the rewind time uses the previous stance): a
+	                pivot that visibly beats the mark beats it. Contact = a
+	                point block. Pure geometry, no hidden roll.
 	  Force side    each team's markers force a side per point (UBState
 	                ForceA / ForceB = "FH" | "BH", set by MatchService);
 	                forceFor(team) reads it for bots and the HUD.
@@ -57,7 +59,15 @@ DefenseService.StallTick = Signal.new() -- (count)
 
 local services: any
 
-type Stance = { on: boolean, stance: CatchGeometry.MarkStance, at: number }
+-- The current stance plus the one before it (`at` = server time of the
+-- change), so a rewound hand-block test uses the stance the thrower saw.
+type Stance = {
+	on: boolean,
+	stance: CatchGeometry.MarkStance,
+	at: number,
+	prevOn: boolean,
+	prevStance: CatchGeometry.MarkStance,
+}
 local stances: { [number]: Stance } = {}
 
 local stall = {
@@ -79,7 +89,17 @@ end
 
 function DefenseService.setStance(actorId: number, on: boolean, stance: string?)
 	local st: CatchGeometry.MarkStance = if stance == "High" then "High" else "Low"
-	stances[actorId] = { on = on, stance = st, at = now() }
+	local old = stances[actorId]
+	if not (old and old.on == on and old.stance == st) then
+		-- a change (a repeat keeps when it last changed)
+		stances[actorId] = {
+			on = on,
+			stance = st,
+			at = now(),
+			prevOn = if old then old.on else false,
+			prevStance = if old then old.stance else "Low",
+		}
+	end
 	local actor = services.PlayerService.get(actorId)
 	if actor and actor.character then
 		actor.character:SetAttribute("Mark", if on then st else "")
@@ -92,6 +112,19 @@ function DefenseService.stanceOf(actorId: number): CatchGeometry.MarkStance
 		return s.stance
 	end
 	return "Relaxed"
+end
+
+-- The stance at server time t (the one before the last change when that
+-- change came after t).
+local function stanceAt(actorId: number, t: number): CatchGeometry.MarkStance
+	local s = stances[actorId]
+	if not s then
+		return "Relaxed"
+	end
+	if s.at > t then
+		return if s.prevOn then s.prevStance else "Relaxed"
+	end
+	return if s.on then s.stance else "Relaxed"
 end
 
 -- The side ("FH" | "BH") the markers of `team` force this point.
@@ -119,7 +152,10 @@ function DefenseService.startStall(holderId: number?, interval: number, maxCount
 	local state = Net.state()
 	state:SetAttribute("Stall", 0)
 	state:SetAttribute("StallMax", maxCount)
-	state:SetAttribute("StallState", if holderId then "Unmarked" else "None")
+	-- keep setState's memory in step, or a new possession that starts
+	-- Counting (the last one ended Counting) would never be published
+	stall.stateName = if holderId then "Unmarked" else "None"
+	state:SetAttribute("StallState", stall.stateName)
 	state:SetAttribute("MarkerId", 0)
 end
 
@@ -263,7 +299,7 @@ function DefenseService.checkHandBlock(
 			local pos, facing = services.MovementService.positionAt(a.id, rewindT)
 			if (pos - pivot).Magnitude < HAND_BLOCK_RADIUS then
 				local rise = pos.Y - groundY - services.MovementService.standHeight(a.id)
-				local stance: CatchGeometry.MarkStance = DefenseService.stanceOf(a.id)
+				local stance: CatchGeometry.MarkStance = stanceAt(a.id, rewindT)
 				table.insert(candidates, {
 					id = a.id,
 					box = CatchGeometry.markBox(

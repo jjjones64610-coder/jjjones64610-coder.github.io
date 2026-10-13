@@ -5,7 +5,8 @@
 	  Movement feedback (MovementController.Feedback): the sim's ready-made
 	  texts ("NEED SPEED", "ONE PER JUMP", "PRECISION LANDING -40 ms", ...)
 	  become chips above the crosshair for 0.6 s. A press refused for a
-	  cooldown flashes that technique's pip instead (no cooldown text).
+	  cooldown flashes that technique's pip instead (Feedback.tech names it;
+	  only techniques without a pip show the cooldown text).
 	  Combos: ComboChanged / ChainEnded drive the Hud chain widget and end
 	  card. The server's Combo event (a chain converted by a catch, block or
 	  interception) shows the x2 card and converts the same chain in the local
@@ -51,14 +52,6 @@ local hintedVote = false
 local DENIED_DELAY = 0.3 -- a denied claim must stay unanswered this long before it is shown ...
 local DENIED_GAP = 1.5 -- ... and at most once per this long
 local TRAVEL_TEXT = "TRAVEL — RESET TO YOUR PIVOT"
-
--- First word of a Cooldown feedback text ("BURST READY IN 0.8s") -> its pip.
-local COOLDOWN_PIP: { [string]: string } = {
-	BURST = "BurstStep",
-	LAYOUT = "Dive",
-	PLANT = "MomentumCancel",
-	SLIDE = "Slide",
-}
 
 local REASONS: { [string]: string } = {
 	Incomplete = "Incomplete pass",
@@ -106,12 +99,7 @@ local function onNotify(kind: string, text: string, data: any)
 	elseif kind == "Travel" then
 		Hud.chip(if type(text) == "string" and text ~= "" then string.upper(text) else TRAVEL_TEXT, C.Bad, 1.4)
 	elseif kind == "Toast" then
-		if type(text) == "string" and string.sub(string.lower(text), 1, 6) == "travel" then
-			-- (the travel reset, until it arrives as its own "Travel" kind)
-			Hud.chip(TRAVEL_TEXT, C.Bad, 1.4)
-		else
-			Hud.toast(text, nil, 3.5)
-		end
+		Hud.toast(text, nil, 3.5)
 	elseif kind == "Achievement" then
 		Hud.toast("ACHIEVEMENT: " .. text .. " — " .. tostring(d.description or ""), C.Gold, 6)
 		controllers.AudioController.play("Highlight")
@@ -177,11 +165,14 @@ local function onMovementFeedback(fb: any)
 	local kind = fb.kind
 	local text: string? = if type(fb.text) == "string" and fb.text ~= "" then fb.text else nil
 	if kind == "Cooldown" then
-		-- the pips show readiness: flash the one that refused instead of printing it
-		local first = if text then string.match(text, "^(%u+)") else nil
-		local pip = if first then COOLDOWN_PIP[first] else nil
-		if pip then
-			Hud.flashPip(pip)
+		-- the pips show readiness: flash the one that refused instead of printing
+		-- it; a technique without a pip (fake, swing) gets its text as a chip
+		local tech = fb.tech
+		if type(tech) == "string" and Hud.flashPip(tech) then
+			return
+		end
+		if text then
+			Hud.chip(text, C.Sloppy)
 		end
 		return
 	elseif kind == "Error" then
@@ -193,7 +184,7 @@ local function onMovementFeedback(fb: any)
 	end
 	if kind == "LandingOffset" then
 		Hud.chip(text, if string.find(text, "^PRECISION") then C.Perfect else C.Sloppy, 0.8)
-	elseif kind == "HopLanded" or kind == "Travel" then
+	elseif kind == "HopLanded" then
 		Hud.chip(text, C.Bad, 1.2)
 	elseif kind == "Context" then
 		Hud.chip(text, C.Text)

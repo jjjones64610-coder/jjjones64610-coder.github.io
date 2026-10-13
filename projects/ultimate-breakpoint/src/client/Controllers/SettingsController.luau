@@ -112,8 +112,10 @@ local function applyProfile(profile: any)
 	end
 	applied = true
 	local s = profile.settings
+	local migrated = false
 	if type(s.values) == "table" then
 		local skip = migratedKeys(s.values.SettingsVersion)
+		migrated = next(skip) ~= nil
 		for k: string, default: any in InputConfig.DefaultSettings :: any do
 			if not skip[k] and k ~= "SettingsVersion" and type(s.values[k]) == type(default) then
 				values[k] = s.values[k]
@@ -131,6 +133,10 @@ local function applyProfile(profile: any)
 		end
 	end
 	SettingsController.Changed:Fire("All")
+	if migrated then
+		-- store the new version so the reset happens only once
+		SettingsController.save()
+	end
 end
 
 function SettingsController.Init(_c: any) end

@@ -8,8 +8,11 @@
 	                7v7 from 10, a vote in between); the list refreshes on
 	                every join / leave / training change. 20 s countdown with
 	                2+ humans, 30 s alone ("Practice vs bots — waiting for
-	                players"). In a private server or Studio the host picks
-	                the mode and rules and can start at once.
+	                players"). In a private server (the owner) or Studio
+	                (the first player, the next one if they leave) the host
+	                picks the mode and rules and can start at once. Everyone
+	                in the warm-up plays the next match (JoinMatch is a no-op).
+	                The match and warm-up discs fly in the arena's wind.
 	  PointSetup    TeamService picks the line (MatchPlan: whoever sat out
 	                longest, bots fill to exactly 3v3 / 7v7); the lines are
 	                teleported behind the goal lines they defend, substitutes
@@ -753,7 +756,8 @@ local function pickForce()
 	set("ForceB", if rng:NextNumber() < FORCE_FH_CHANCE then "FH" else "BH")
 end
 
--- Hands the point's disc to its starter (already on their line-up spot).
+-- Hands the point's disc to its starter (on their line-up spot, or wherever
+-- they are when picked later).
 local function giveStarter(id: number)
 	local p = S.point
 	local actor = services.PlayerService.get(id)
@@ -763,9 +767,17 @@ local function giveStarter(id: number)
 	S.starter = id
 	services.DiscService.giveTo(S.disc, id)
 	applySkin(S.disc, id)
-	local attrs = actor.character:GetAttribute("UBTeleportPos")
+	-- the pivot goes where the starter is: their line-up spot while that
+	-- teleport is still arriving, else where the server sees them now (a
+	-- starter picked later in the line-up may have walked off their spot)
+	local tp = actor.character:GetAttribute("UBTeleportPos")
 	local root = services.PlayerService.root(actor)
-	local at = if typeof(attrs) == "Vector3" then attrs elseif root then root.Position else nil
+	local at: Vector3? = nil
+	if typeof(tp) == "Vector3" and (root == nil or services.MovementService.teleportPending(id)) then
+		at = tp
+	elseif root then
+		at = root.Position
+	end
 	if at then
 		services.MovementService.setPivot(id, at)
 	end
@@ -1150,6 +1162,7 @@ local function startIntermission()
 	if not S.warmupDisc then
 		S.warmupDisc = services.DiscService.create("Warmup", nil, warmupHandler)
 	end
+	services.DiscService.setWind(S.warmupDisc, services.ArenaService.windVector())
 	services.DiscService.placeOnGround(S.warmupDisc, Vector3.new(0, 0, -20))
 	recolorEndZones()
 	publishScore()
@@ -1240,6 +1253,9 @@ local function startMatch()
 	if not S.disc then
 		S.disc = services.DiscService.create("Match", nil, matchHandler)
 	end
+	-- the arena's wind is constant for the match (it "flips with the teams"
+	-- because they swap ends); every throw, pull and bot solve uses it
+	services.DiscService.setWind(S.disc, services.ArenaService.windVector())
 	set("DiscId", S.disc.id)
 	notifyAll("Banner", string.upper(mode.Display), { sub = if mode.Ranked then "RANKED" else arena.Display })
 	setupPoint()
@@ -1535,6 +1551,18 @@ local function onActorRemoving(actor: any)
 	if actor.isBot then
 		return
 	end
+	if actor.id == S.hostId and game.PrivateServerOwnerId == 0 then
+		-- the Studio host left: the next human (oldest id first) hosts
+		local nextHost = 0
+		for _, h in services.PlayerService.humans() do
+			if h.id ~= actor.id then
+				nextHost = h.id
+				break
+			end
+		end
+		S.hostId = nextHost
+		set("HostId", S.hostId)
+	end
 	penalizeLeaver(actor)
 	if services.TeamService.inMatch() then
 		services.TeamService.remove(actor)
@@ -1591,7 +1619,11 @@ function MatchService.action(player: Player, kind: string, payload: any)
 			actor.character:SetAttribute("CelebrateT", now())
 		end
 	elseif kind == "JoinMatch" then
-		if actor.role == "Training" then
+		local training = actor.role == "Training"
+		if S.phase == "Intermission" and not training then
+			return -- the warm-up already plays the next match (no spawn teleport)
+		end
+		if training then
 			services.TrainingService.leave(actor)
 		end
 		if actor.role ~= "Match" and actor.role ~= "Bench" then
@@ -1616,7 +1648,7 @@ function MatchService.Start()
 	end
 	set("HostId", S.hostId)
 
-	services.PlayerService.ActorAdded:Connect(function(actor)
+	local function onHumanAdded(actor: any)
 		if actor.isBot then
 			return
 		end
@@ -1625,10 +1657,19 @@ function MatchService.Start()
 			set("HostId", S.hostId)
 		end
 		task.defer(function()
-			placeIntoMatch(actor)
+			if services.PlayerService.get(actor.id) == actor then
+				placeIntoMatch(actor)
+			end
 		end)
-	end)
+	end
+	services.PlayerService.ActorAdded:Connect(onHumanAdded)
 	services.PlayerService.ActorRemoving:Connect(onActorRemoving)
+	-- players who joined while the server was still starting (DataService's
+	-- probe yields during Init): PlayerService announced them before this
+	-- listener existed
+	for _, actor in services.PlayerService.humans() do
+		onHumanAdded(actor)
+	end
 	services.PlayerService.CharacterSpawned:Connect(function(actor, _model)
 		if actor.isBot then
 			return
@@ -1674,7 +1715,7 @@ function MatchService.Start()
 		end
 	end)
 	services.MovementService.Travel:Connect(function(id)
-		notify(id, "Toast", "Travel — reset to your pivot", nil)
+		notify(id, "Travel", "Travel — reset to your pivot", nil)
 	end)
 	services.DefenseService.StallOut:Connect(function(holderId)
 		local e = S.engine

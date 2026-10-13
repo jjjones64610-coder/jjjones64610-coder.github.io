@@ -251,7 +251,7 @@ Progression.Achievements = {
 		name = "Student of the Game",
 		description = "Finish every training drill once.",
 		stat = "drillsCompleted",
-		goal = 6,
+		goal = 8,
 	},
 } :: { any }
 

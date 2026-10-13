@@ -62,7 +62,8 @@
 	length on a critically damped spring, direction turning through the front.
 	The root is driven toward P + BodyShare * s (velocity proportional to the
 	distance, capped, never overshooting). swing(side) is the Quick Swing,
-	fakeStep(side) the fake's lunge, Jump the one hop (horizontal zeroed, step
+	fakeStep(side) the fake's lunge (foot first; past full reach the body
+	leans the rest), Jump the one hop (horizontal zeroed, step
 	frozen). Output.step is the world step vector.
 
 	MARKING. setMarking(true) overlays the mark shuffle on the ground: tight
@@ -92,7 +93,8 @@ export type TechEvent = {
 	info: string?,
 }
 
-export type Feedback = { kind: string, value: number?, text: string? }
+-- `tech` names the technique a "Cooldown" refusal is about (HUD pip flash).
+export type Feedback = { kind: string, value: number?, text: string?, tech: string? }
 
 export type Input = { move: Vector3, sprint: boolean }
 
@@ -107,7 +109,6 @@ export type Env = {
 	pos: Vector3?, -- root position (needed while holding; estimated from velocity otherwise)
 	aimYaw: number?, -- camera / throw yaw (radians, CameraController.getYaw convention)
 	blocked: boolean?, -- a short horizontal ray along the sim velocity hit something solid
-	pivotOffset: Vector3?, -- deprecated and ignored: the pivot lives in the sim (setPivot)
 }
 
 export type Output = {
@@ -162,6 +163,7 @@ export type State = {
 	retryReason: string?,
 	retryText: string?,
 	retryValue: number?,
+	retryTech: string?,
 	lookAheadUntil: number,
 	lookLine: Vector3,
 	lookSince: number,
@@ -218,6 +220,7 @@ export type State = {
 	lastSwingSide: number,
 	fakeUntil: number,
 	fakeSide: number,
+	fakeLunge: Vector3, -- part of the fake's lunge the body takes (world, flat)
 	lastFakeAt: number,
 	restActive: boolean,
 	restX: number,
@@ -326,6 +329,7 @@ function MovementSim.new(now: number?): State
 		retryReason = nil,
 		retryText = nil,
 		retryValue = nil,
+		retryTech = nil,
 		lookAheadUntil = 0,
 		lookLine = FORWARD,
 		lookSince = t,
@@ -382,6 +386,7 @@ function MovementSim.new(now: number?): State
 		lastSwingSide = -1,
 		fakeUntil = -math.huge,
 		fakeSide = 0,
+		fakeLunge = Vector3.zero,
 		lastFakeAt = -math.huge,
 		restActive = false,
 		restX = 0,
@@ -481,14 +486,14 @@ local function emit(s: State, tech: string, quality: string, dir: Vector3, info:
 	end
 end
 
-local function feedback(s: State, kind: string, value: number?, text: string?)
-	table.insert(s.pendingFeedback, { kind = kind, value = value, text = text })
+local function feedback(s: State, kind: string, value: number?, text: string?, tech: string?)
+	table.insert(s.pendingFeedback, { kind = kind, value = value, text = text, tech = tech })
 end
 
 -- A press that cannot fire. Shows `text` (if any) and returns the reason.
-local function refuse(s: State, reason: string, text: string?, value: number?): (boolean, string?)
+local function refuse(s: State, reason: string, text: string?, value: number?, tech: string?): (boolean, string?)
 	if text then
-		feedback(s, reason, value, text)
+		feedback(s, reason, value, text, tech)
 	end
 	return false, reason
 end
@@ -501,13 +506,15 @@ local function defer(
 	side: number,
 	reason: string,
 	text: string?,
-	value: number?
+	value: number?,
+	tech: string?
 ): (boolean, string?)
 	if s.retrying then
 		s.retryDeferred = true
 		s.retryReason = reason
 		s.retryText = text
 		s.retryValue = value
+		s.retryTech = tech
 		return false, reason
 	end
 	s.buffer = { action = action, expires = s.now + BUFFER, side = side }
@@ -782,9 +789,14 @@ local function updateStep(s: State, input: Input, env: Env, dt: number)
 	elseif hasDir then
 		tx, ty = m:Dot(right) * R, m:Dot(fwd) * R
 	end
+	s.fakeLunge = Vector3.zero
 	if now < s.fakeUntil then
-		-- the fake lunges the free foot further toward its side
-		tx = math.clamp(tx + s.fakeSide * HD.FakeStep * R, -R, R)
+		-- the fake lunges the free foot further toward its side; what the foot
+		-- cannot take (already at full reach, e.g. A / D held) the body takes,
+		-- so the fake always shows
+		local want = tx + s.fakeSide * HD.FakeStep * R
+		tx = math.clamp(want, -R, R)
+		s.fakeLunge = right * (want - tx)
 	end
 	ty = math.clamp(ty, -HD.BackMax * R, HD.ForwardMax * R)
 
@@ -856,7 +868,7 @@ local function updateHolding(s: State, input: Input, env: Env, dt: number)
 		plantPivot(s)
 	end
 	updateStep(s, input, env, dt)
-	local target = (s.pivot :: Vector3) + s.step * HD.BodyShare
+	local target = (s.pivot :: Vector3) + (s.step + s.fakeLunge) * HD.BodyShare
 	local d = VecMath.flat(target - s.pos)
 	local dist = d.Magnitude
 	if dist < 1e-3 then
@@ -997,9 +1009,9 @@ local function pressPlant(s: State, lineDir: Vector3, gradeSpeed: number): (bool
 	local left = cooldownLeft(s, "MomentumCancel")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Cut", 0, "Cooldown", cooldownText("MomentumCancel", left), left)
+			return defer(s, "Cut", 0, "Cooldown", cooldownText("MomentumCancel", left), left, "MomentumCancel")
 		end
-		return refuse(s, "Cooldown", cooldownText("MomentumCancel", left), left)
+		return refuse(s, "Cooldown", cooldownText("MomentumCancel", left), left, "MomentumCancel")
 	end
 	local q: string
 	if isGassed(s, MC.Cost) then
@@ -1029,9 +1041,9 @@ local function pressFakeCommit(s: State, dir: Vector3, lineDir: Vector3, sideSte
 	local left = cooldownLeft(s, "FakeCommit")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Cut", 0, "Cooldown", cooldownText("FakeCommit", left), left)
+			return defer(s, "Cut", 0, "Cooldown", cooldownText("FakeCommit", left), left, "FakeCommit")
 		end
-		return refuse(s, "Cooldown", cooldownText("FakeCommit", left), left)
+		return refuse(s, "Cooldown", cooldownText("FakeCommit", left), left, "FakeCommit")
 	end
 	local q = if isGassed(s, FC.Cost) then Q.Gassed else Q.Clean
 	spend(s, FC.Cost)
@@ -1121,6 +1133,7 @@ local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: str
 	clearPlant(s)
 	s.jabUntil = 0
 	s.sideStepUntil = 0
+	s.lookAheadUntil = 0 -- a pending Cut look-ahead is spent by the burst
 	setLine(s, dir, bs)
 	emit(s, "BurstStep", q, dir, if free then "Explosive" else nil)
 	return true, nil
@@ -1409,9 +1422,9 @@ local function pressBurst(s: State, dir: Vector3, hasDir: boolean, env: Env): (b
 	local left = cooldownLeft(s, "BurstStep")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Burst", 0, "Cooldown", cooldownText("BurstStep", left), left)
+			return defer(s, "Burst", 0, "Cooldown", cooldownText("BurstStep", left), left, "BurstStep")
 		end
-		return refuse(s, "Cooldown", cooldownText("BurstStep", left), left)
+		return refuse(s, "Cooldown", cooldownText("BurstStep", left), left, "BurstStep")
 	end
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
 	if s.mode == "Slide" then
@@ -1470,9 +1483,9 @@ local function pressSlide(s: State, env: Env): (boolean, string?)
 	local left = cooldownLeft(s, "Slide")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Slide", 0, "Cooldown", cooldownText("Slide", left), left)
+			return defer(s, "Slide", 0, "Cooldown", cooldownText("Slide", left), left, "Slide")
 		end
-		return refuse(s, "Cooldown", cooldownText("Slide", left), left)
+		return refuse(s, "Cooldown", cooldownText("Slide", left), left, "Slide")
 	end
 	local speed = s.vel.Magnitude
 	if speed < SL.MinSpeed then
@@ -1517,9 +1530,9 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 	local left = cooldownLeft(s, "Dive")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Dive", 0, "Cooldown", cooldownText("Dive", left), left)
+			return defer(s, "Dive", 0, "Cooldown", cooldownText("Dive", left), left, "Dive")
 		end
-		return refuse(s, "Cooldown", cooldownText("Dive", left), left)
+		return refuse(s, "Cooldown", cooldownText("Dive", left), left, "Dive")
 	end
 	local speed = s.vel.Magnitude
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
@@ -1577,9 +1590,9 @@ local function doSwing(s: State, side: number, env: Env): (boolean, string?)
 	local left = cooldownLeft(s, "PivotSwing")
 	if left > 0 then
 		if left <= BUFFER then
-			return defer(s, "Swing", side, "Cooldown", cooldownText("PivotSwing", left), left)
+			return defer(s, "Swing", side, "Cooldown", cooldownText("PivotSwing", left), left, "PivotSwing")
 		end
-		return refuse(s, "Cooldown", cooldownText("PivotSwing", left), left)
+		return refuse(s, "Cooldown", cooldownText("PivotSwing", left), left, "PivotSwing")
 	end
 	if s.holdPhase ~= "Pivot" then
 		plantPivot(s)
@@ -1669,6 +1682,7 @@ local function retryBuffer(s: State, input: Input, env: Env)
 	s.retryReason = nil
 	s.retryText = nil
 	s.retryValue = nil
+	s.retryTech = nil
 	local ok = dispatch(s, b.action, input, env, b.side)
 	s.retrying = false
 	if ok or not s.retryDeferred then
@@ -1677,7 +1691,7 @@ local function retryBuffer(s: State, input: Input, env: Env)
 	if s.now < b.expires then
 		s.buffer = b
 	elseif s.retryText then
-		feedback(s, s.retryReason or "Context", s.retryValue, s.retryText)
+		feedback(s, s.retryReason or "Context", s.retryValue, s.retryText, s.retryTech)
 	end
 end
 
@@ -1742,8 +1756,9 @@ function MovementSim.swing(s: State, side: number, env: Env): (boolean, string?)
 end
 
 -- The fake's lunge while holding: the free foot reaches 0.6R further toward
--- `side` (-1/+1, clamped to R) for FakeStepOut, then springs back. side 0 = no
--- lunge. Always starts the window in which a swing counts as Sold.
+-- `side` (-1/+1, clamped to R; the body takes whatever the foot cannot, so a
+-- fake with A / D held still lunges) for FakeStepOut, then springs back.
+-- side 0 = no lunge. Always starts the window in which a swing counts as Sold.
 function MovementSim.fakeStep(s: State, side: number)
 	if not s.holding then
 		return
@@ -1862,11 +1877,12 @@ function MovementSim.getPivot(s: State): Vector3?
 	return nil
 end
 
--- Where the root is being driven while pivoting: P + BodyShare * step.
+-- Where the root is being driven while pivoting: P + BodyShare * step (plus
+-- the body's share of a fake's lunge).
 function MovementSim.rootTarget(s: State): Vector3?
 	local p = s.pivot
 	if s.holding and s.holdPhase == "Pivot" and p ~= nil then
-		return p + s.step * HD.BodyShare
+		return p + (s.step + s.fakeLunge) * HD.BodyShare
 	end
 	return nil
 end
@@ -1956,7 +1972,7 @@ function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: 
 		if ttl ~= nil and ttl <= PL.ArmWindow and s.precisionArmedAt == nil then
 			hint.Slide = if mode == "Dive" then "ROLL OUT" else "PRECISION LANDING"
 		end
-		if mode == "Air" and not s.airDiveUsed then
+		if mode == "Air" and not s.airDiveUsed and cooldownLeft(s, "Dive") <= 0 then
 			hint.Dive = "AIR LAYOUT"
 		end
 		return hint
@@ -1964,7 +1980,9 @@ function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: 
 	if mode == "Slide" then
 		hint.Cut = "SLIDE CUT"
 		hint.Jump = "SLIDE HOP"
-		hint.Dive = "LAYOUT"
+		if cooldownLeft(s, "Dive") <= 0 then
+			hint.Dive = "LAYOUT"
+		end
 		if cooldownLeft(s, "BurstStep") <= 0 then
 			hint.Burst = "BURST"
 		end
@@ -1986,10 +2004,8 @@ function MovementSim.contextHint(s: State, input: Input, env: Env): { [string]: 
 		hint.Cut = cut
 	end
 	hint.Jump = if plantWindow then "PLANT JUMP" else "JUMP"
-	if plantWindow then
-		hint.Burst = "EXPLOSIVE RESTART"
-	elseif cooldownLeft(s, "BurstStep") <= 0 then
-		hint.Burst = "BURST"
+	if cooldownLeft(s, "BurstStep") <= 0 then
+		hint.Burst = if plantWindow then "EXPLOSIVE RESTART" else "BURST"
 	end
 	if cooldownLeft(s, "Dive") <= 0 then
 		hint.Dive = "LAYOUT"

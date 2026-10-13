@@ -975,9 +975,13 @@ local THEMES = {
 ---------------------------------------------------------------------------
 
 function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
+	-- The old arena goes only after the new one is parented: replication is
+	-- ordered, so clients receive the whole new field before the old floor
+	-- disappears (destroying first left players standing on nothing while a
+	-- thousand-part model streamed in, and they fell through the field).
 	local old = parent:FindFirstChild("Arena")
 	if old then
-		old:Destroy()
+		old.Name = "ArenaOld"
 	end
 	workspace.Terrain:Clear()
 	applyLighting(arena)
@@ -1006,6 +1010,9 @@ function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
 	spawn.Parent = model
 
 	model.Parent = parent
+	if old then
+		old:Destroy()
+	end
 	return { model = model, endZones = endZones, spawn = spawn, margin = MARGIN, benches = benches }
 end
 

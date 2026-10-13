@@ -18,6 +18,8 @@
 	  * AutoSprint (setting, default on): once the move input has stayed at
 	    least 0.9 for 0.3 s inside a 35 degree cone, you sprint until the input
 	    drops (dips shorter than Config/Input AutoSprint.Grace are forgiven).
+	    A plant (Cut with no direction held) never drops it: the no-input
+	    moment is part of the technique, so the restart keeps sprint speed.
 	  * Touch keeps its SPRINT toggle and AutoSprintTouch (stick pushed fully).
 
 	Roblox's default character controls are off: StarterPlayer uses the
@@ -236,6 +238,12 @@ function InputController.moveVector(): Vector3
 	return forward * raw.Y + right * raw.X
 end
 
+-- True while the movement sim is in a plant (brake + restart window).
+local function planting(): boolean
+	local mc = controllers and controllers.MovementController
+	return mc ~= nil and mc.sim().plantAt > 0
+end
+
 -- AutoSprint state machine (time based, so calling it several times per
 -- frame is harmless).
 local function autoSprinting(): boolean
@@ -258,7 +266,7 @@ local function autoSprinting(): boolean
 		local weak = auto.weakSince
 		if weak == nil then
 			auto.weakSince = t
-		elseif t - weak > AUTO.Grace then
+		elseif t - weak > AUTO.Grace and not planting() then
 			auto.active = false
 			auto.since = nil
 		end

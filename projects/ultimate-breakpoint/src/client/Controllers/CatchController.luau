@@ -10,7 +10,9 @@
 	the controller keeps tracking for up to ClaimTrackTime, or until the disc
 	starts moving away from your zone core (its closest approach), then
 	claims: Catch(discId, tFirst, zoneKind, reachDir, rootPos, rootVel) with
-	your body as it was at first contact. On the claim:
+	your body as it was at first contact. On the claim (except a defender's
+	rim touch deeper than BlockDepth, which the server rules a Block and is
+	not predicted):
 	  * Claimed(discId, zoneKind) fires (MovementController starts the catch
 	    slow-down) and the disc eases into your hand (DiscRenderer)
 	  * the catch sound and a small burst play at once for a confident claim
@@ -22,7 +24,8 @@
 	cleared so a disc still inside your zones is claimed again at once. A
 	claim with no answer yet is never repeated sooner than ClaimThrottle.
 
-	Reach (Primary while not holding): opens a 0.28 s window where your hand
+	Reach (Primary while not holding, and not while a claimed catch awaits
+	the server's answer): opens a 0.28 s window where your hand
 	extends toward your aim. A light assist bends the reach toward a disc that
 	is close and roughly where you are looking. Primary next to a disc lying
 	on the ground asks the server to pick it up instead (Action "Pickup").
@@ -368,12 +371,29 @@ local function localFeedback(c: Contact, pos: Vector3)
 	controllers.EffectsController.burst(pos, color, 6, 8)
 end
 
-local function sendClaim(id: string, c: Contact, discPos: Vector3)
+-- Would the server rule this touch a Block? (a defender who only got the
+-- rim: depth > BlockDepth; CatchGeometry.outcome, never on a pull)
+local function likelyBlock(folder: Configuration, c: Contact): boolean
+	local throwerTeam = folder:GetAttribute("ThrowerTeam")
+	local defending = type(throwerTeam) == "string"
+		and throwerTeam ~= ""
+		and throwerTeam ~= myTeam()
+		and folder:GetAttribute("Pull") ~= true
+	return defending and c.bestDepth > C.BlockDepth
+end
+
+local function sendClaim(folder: Configuration, id: string, c: Contact, discPos: Vector3)
 	local tFirst = c.tFirst :: number
 	c.sentAt = os.clock()
 	c.awaiting = true
 	c.retry = false
 	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel)
+	if likelyBlock(folder, c) then
+		-- a rim touch on defense is a Block: no predicted catch (no slow-down,
+		-- no disc in the hand); an interception after all is confirmed by
+		-- the server like any catch
+		return
+	end
 	controllers.DiscRenderer.predictCatch(id)
 	localFeedback(c, discPos)
 	CatchController.Claimed:Fire(id, c.kind)
@@ -448,7 +468,7 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 	local tracked = tNow - tFirst >= C.ClaimTrackTime
 	c.lastDepth = if ev then ev.depth else 1
 	if (c.retry or receding or tracked) and clock - c.sentAt >= C.ClaimThrottle then
-		sendClaim(id, c, p)
+		sendClaim(folder, id, c, p)
 		if ev == nil then
 			c.tFirst = nil -- the disc has left the zones; a new touch is a new episode
 		end
@@ -514,7 +534,9 @@ end
 
 function CatchController.Start()
 	controllers.InputController.ActionBegan:Connect(function(action)
-		if controllers.ThrowController.isHolding() then
+		-- holding, or a catch claimed but not yet confirmed: the disc keys
+		-- belong to ThrowController (no Reach / pickup / mark mid-claim)
+		if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
 			return
 		end
 		if action == "Primary" then

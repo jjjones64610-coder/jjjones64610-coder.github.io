@@ -2,7 +2,8 @@
 --[[
 	Menu — Play, Training, Profile, Locker, Leaderboard, Settings, Controls.
 
-	Play: join / training, then during warm-up the mode choice. On a public
+	Play: join (mid-match only: everyone in the warm-up is already in the
+	next match) / training, then during warm-up the mode choice. On a public
 	server only the modes the head count allows are offered (UBState
 	VoteModes; Mini up to 9 players, Normal from 7), each other mode says how
 	many players it needs, and a single eligible mode is shown as decided
@@ -335,6 +336,7 @@ function render.Play(content: Instance)
 		)
 	)
 	local role = if player.Character then player.Character:GetAttribute("UBRole") else nil
+	local inTraining = role == "Training"
 	local r = row(content, nextOrder(), 44)
 	if role == "Bench" then
 		Theme.label("ON THE BENCH — you play next point", 15, {
@@ -342,6 +344,15 @@ function render.Play(content: Instance)
 			LayoutOrder = 1,
 			Size = UDim2.fromOffset(330, 30),
 			TextColor3 = C.Gold,
+			Font = Theme.Fonts.Heavy,
+		})
+	elseif phase == "Intermission" and not inTraining then
+		-- everyone in the warm-up plays the next match: nothing to join
+		Theme.label("YOU'RE IN THE NEXT MATCH — warm up meanwhile", 15, {
+			Parent = r,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(330, 30),
+			TextColor3 = C.Accent,
 			Font = Theme.Fonts.Heavy,
 		})
 	elseif role ~= "Match" then

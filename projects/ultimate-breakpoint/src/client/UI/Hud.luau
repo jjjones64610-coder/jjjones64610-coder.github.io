@@ -611,11 +611,14 @@ function Hud.chip(text: string, color: Color3?, duration: number?)
 end
 
 -- Flashes a cooldown pip ("BurstStep", "Dive", "MomentumCancel", "Slide"):
--- the press was refused because that technique is still recharging.
-function Hud.flashPip(key: string)
+-- the press was refused because that technique is still recharging. Returns
+-- false when that technique has no pip (the caller shows text instead).
+function Hud.flashPip(key: string): boolean
 	if pips[key] then
 		pipFlashAt[key] = os.clock()
+		return true
 	end
+	return false
 end
 
 function Hud.toast(text: string, color: Color3?, duration: number?)

@@ -41,8 +41,10 @@
 	poses), FakeT (the estimated time the fake happened: arrival minus ping;
 	MovementService judges a "Sold" PivotSwing against it, bots react to it)
 	and FakeSide (-1 thrower's left, 0 none, +1 thrower's right). Windups set
-	WindupType + Windup; a release resets Windup and WindupType so no stale
-	windup is ever read (DiscService also clears them when possession ends).
+	WindupType + Windup; a release resets Windup and WindupType, and so does
+	a charge the client lost (ThrowCharge false: it landed from the hop), so
+	no stale windup is ever read (DiscService also clears them when
+	possession ends).
 
 	Combo: the release reports to MovementService.noteRelease, which adds the
 	"Break" link after a Sold swing (the client's own "Break" Tech event for
@@ -104,6 +106,17 @@ function ThrowService.beginCharge(actorId: number, throwType: string)
 	chargeStart[actorId] = os.clock()
 	setAttr(actorId, "WindupType", throwType)
 	setAttr(actorId, "Windup", now())
+end
+
+-- The thrower lost the charge without throwing (landed from the hop): the
+-- windup is over for poses and bots.
+function ThrowService.endCharge(actorId: number)
+	if chargeStart[actorId] == nil then
+		return
+	end
+	chargeStart[actorId] = nil
+	setAttr(actorId, "Windup", 0)
+	setAttr(actorId, "WindupType", "")
 end
 
 -- A pump fake. `side` is where the fake stepped (-1 left, 0 none, +1 right
@@ -407,7 +420,12 @@ end
 function ThrowService.Start()
 	Net.event("ThrowCharge").OnServerEvent:Connect(function(player, throwType)
 		local actor = services.PlayerService.fromPlayer(player)
-		if actor and type(throwType) == "string" and (DiscConfig.Types :: any)[throwType] then
+		if not actor then
+			return
+		end
+		if throwType == false then
+			ThrowService.endCharge(actor.id)
+		elseif type(throwType) == "string" and (DiscConfig.Types :: any)[throwType] then
 			ThrowService.beginCharge(actor.id, throwType)
 		end
 	end)

@@ -20,6 +20,15 @@
 	                    crosshair using their CURRENT velocity and marks the
 	                    ideal power on the meter; timing the release is still on you
 
+	The match disc mirrors the server's canThrow: no charge or release outside
+	the Pull (puller) and Live phases (the starter holds the disc through the
+	line-up); a press then says why instead of a throw the server ignores.
+
+	A Primary press made after your catch claim but before the server confirms
+	it (MovementController.holdingDisc() without the Held folder yet) is kept:
+	if the button is still down when the disc becomes yours, the charge starts
+	then (CatchController ignores Primary during that window, so no Reach).
+
 	Release: the disc leaves from your pivot foot P (the server's UBPivot, or
 	the foot your sim just planted) plus your step (ThrowModel). The Throw remote carries the inputs plus
 	step, pivot, rootPos and releaseT, so ThrowService validates and launches
@@ -27,6 +36,9 @@
 	once from the same parameters. Fake -> Sold Pivot Swing -> release inside
 	ComboEvaluator's break window scores a "Break"
 	(MovementController.addTech).
+
+	Previews, the lead assist and the predicted throw all use the held disc's
+	own Wind attribute (what the server flies it with), never UBState Wind.
 
 	The preview arc shows the first part of the flight (how much depends on
 	the mode: full in training, half in Mini, about a third in Normal, a
@@ -86,6 +98,7 @@ local state = {
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
+	pendingCharge = false, -- Primary went down while the catch was only predicted
 }
 
 local dots: { BasePart } = {}
@@ -201,7 +214,9 @@ local function markersNear(origin: Vector3, groundY: number): { Marker }
 	local me = player.Character
 	local myTeam = me and me:GetAttribute("UBTeam")
 	for _, model in Actors.characters() do
-		if model ~= me then
+		local role = model:GetAttribute("UBRole")
+		-- off the field (bench, spectators) never blocks, as on the server
+		if model ~= me and role ~= "Bench" and role ~= "Spectate" then
 			local team = model:GetAttribute("UBTeam")
 			local mark = model:GetAttribute("Mark")
 			local opponent = (team ~= myTeam and team ~= "N") or mark == "Low" or mark == "High"
@@ -223,6 +238,13 @@ end
 local function groundYOf(folder: Configuration?): number
 	local g = folder and folder:GetAttribute("GroundY")
 	return if type(g) == "number" then g else 0
+end
+
+-- The wind the server flies this disc with (its own Wind attribute: the arena
+-- wind for match and warm-up discs, none in training).
+local function windOf(folder: Configuration?): DiscPhysics.Wind?
+	local w = folder and folder:GetAttribute("Wind")
+	return if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
 end
 
 -- The open side for the thrower (-1 screen-left, +1 right, 0 unknown): the
@@ -331,9 +353,12 @@ local function cycleType(delta: number)
 	setType(order[i])
 end
 
+-- The charge is lost (landing from the hop): tell the server too, so nobody
+-- keeps seeing (or reacting to) a windup that will never be thrown.
 local function cancelCharge()
 	if state.charging then
 		state.charging = false
+		Net.event("ThrowCharge"):FireServer(false)
 		ThrowController.Changed:Fire()
 	end
 end
@@ -365,6 +390,24 @@ local function previewBlockTime(
 	return nil
 end
 
+-- The server's canThrow for the match disc: only the puller in the Pull
+-- phase and the holder in Live may throw (the starter gets the disc during
+-- the line-up). Returns why not, or nil.
+local function throwRefusal(folder: Configuration?): string?
+	if not folder or folder:GetAttribute("Context") ~= "Match" then
+		return nil
+	end
+	local phase = Net.state():GetAttribute("Phase")
+	if phase == "Pull" or phase == "Live" then
+		return nil
+	end
+	return if phase == "PointSetup" then "WAIT FOR THE START" else "NOT NOW"
+end
+
+local function refuseThrow(text: string)
+	controllers.MovementController.Feedback:Fire({ kind = "Context", text = text })
+end
+
 local function release()
 	if not state.charging then
 		return
@@ -373,6 +416,14 @@ local function release()
 	local folder = ThrowController.heldFolder()
 	local root = controllers.MovementController.root()
 	if not folder or not root then
+		return
+	end
+	local refusal = throwRefusal(folder)
+	if refusal then
+		-- the server would refuse it silently: say so and drop the windup
+		Net.event("ThrowCharge"):FireServer(false)
+		refuseThrow(refusal)
+		ThrowController.Changed:Fire()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
@@ -396,8 +447,7 @@ local function release()
 	local launch = ThrowModel.launch(params, root.Position, root.AssemblyLinearVelocity)
 	local id = folder:GetAttribute("Id") :: string
 	-- if your own view says the mark gets it, the predicted disc stops at the hands
-	local w = Net.state():GetAttribute("Wind")
-	local wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
+	local wind = windOf(folder)
 	local blockT = if folder:GetAttribute("Context") == "Match"
 		then previewBlockTime(launch, wind, groundYOf(folder), serverPivot() or root.Position)
 		else nil
@@ -489,8 +539,7 @@ local function updateLead()
 	end
 	state.lastSolve = os.clock()
 	local r = (best :: Model):FindFirstChild("HumanoidRootPart") :: BasePart
-	local w = Net.state():GetAttribute("Wind")
-	local wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
+	local wind = windOf(state.heldFolder)
 	local pivot = serverPivot()
 	local sol = Solver.solve({
 		rootPos = root.Position,
@@ -547,8 +596,7 @@ local function drawPreview(folder: Configuration)
 	end
 	local params = currentParams(hold)
 	local launch = ThrowModel.launch(params, root.Position, root.AssemblyLinearVelocity)
-	local w = Net.state():GetAttribute("Wind")
-	local wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else nil
+	local wind = windOf(folder)
 	local groundY = groundYOf(folder)
 	local result = DiscPhysics.simulate(launch.state, 8, wind, groundY, 6)
 	local total = result.landT
@@ -582,12 +630,32 @@ local function drawPreview(folder: Configuration)
 	end
 end
 
+local function beginCharge()
+	local refusal = throwRefusal(ThrowController.heldFolder())
+	if refusal then
+		refuseThrow(refusal)
+		return
+	end
+	state.charging = true
+	state.chargeStart = os.clock()
+	Net.event("ThrowCharge"):FireServer(state.throwType)
+end
+
 local function step()
 	local folder = ThrowController.heldFolder()
+	if not folder and not controllers.MovementController.holdingDisc() then
+		state.pendingCharge = false -- the predicted catch was denied / expired
+	end
 	if folder ~= state.heldFolder then
 		state.heldFolder = folder
 		if folder then
 			state.holds += 1
+			-- a press made while the catch was still predicted charges now
+			-- (InputController never repeats the "began" of a held button)
+			if state.pendingCharge and controllers.InputController.isHeld("Primary") then
+				beginCharge()
+			end
+			state.pendingCharge = false
 		else
 			state.charging = false
 			state.leadSolution = nil
@@ -633,16 +701,17 @@ function ThrowController.Start()
 	local input = controllers.InputController
 	input.ActionBegan:Connect(function(action)
 		if not ThrowController.isHolding() then
-			if action == "Celebrate" then
+			if action == "Primary" and controllers.MovementController.holdingDisc() then
+				-- caught, but the server has not confirmed yet: charge on confirm
+				state.pendingCharge = true
+			elseif action == "Celebrate" then
 				Net.event("Action"):FireServer("Celebrate", nil)
 			end
 			return
 		end
 		-- Cut / Dive / Jump while holding are swings and the hop (MovementController)
 		if action == "Primary" then
-			state.charging = true
-			state.chargeStart = os.clock()
-			Net.event("ThrowCharge"):FireServer(state.throwType)
+			beginCharge()
 		elseif action == "Secondary" then
 			fake()
 		elseif action == "BankLeft" then
@@ -671,6 +740,7 @@ function ThrowController.Start()
 	end)
 	input.ActionEnded:Connect(function(action)
 		if action == "Primary" then
+			state.pendingCharge = false
 			release()
 		elseif action == "Slide" then
 			state.low = false
@@ -683,8 +753,8 @@ function ThrowController.Start()
 		end
 	end)
 	controllers.MovementController.Feedback:Connect(function(fb)
-		-- landing from the hop (or a travel reset) loses the charge
-		if fb.kind == "HopLanded" or fb.kind == "Travel" then
+		-- landing from the hop loses the charge
+		if fb.kind == "HopLanded" then
 			cancelCharge()
 		end
 	end)

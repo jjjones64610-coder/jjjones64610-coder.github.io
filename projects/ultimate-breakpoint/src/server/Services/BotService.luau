@@ -41,9 +41,10 @@
 	                  step away, cut, burst), then clear to the back
 	  offense 3v3     one handler (the dump) and lane cutters who pick open
 	                  space 10-38 % of the field ahead of the disc
-	  defense         the defender closest to the holder marks; everyone
-	                  else guards one attacker per possession, goal side,
-	                  from a reaction-lagged read of their position
+	  defense         the defender closest to the holder marks (a human
+	                  who steps up with the mark stance takes it over from a
+	                  bot); everyone else guards one attacker per possession,
+	                  goal side, from a reaction-lagged read of their position
 	  disc in flight  the best-placed bot of each team chases the earliest
 	                  reachable point (one shared prediction per flight;
 	                  a human teammate who gets there as fast has priority)
@@ -61,7 +62,9 @@
 	sim's mark overlay, facing P. Low stance by default, High only while an
 	overhead windup is really live (after the reaction delay). Bites on
 	fakes (FakeT / FakeSide; 0.6 - 0.4 x skill, never twice in 1.2 s) and
-	jump-blocks hops (0.35 x skill).
+	jump-blocks hops (0.35 x skill), reacting on the Heartbeat the hop is
+	seen, since the rewound hand-block test only counts a jump that had
+	started where the thrower could see it.
 
 	THROWER (diag 3 §6). Lets the sim plant the pivot, reads the receivers,
 	then picks the release side away from the marker's shade in the throw
@@ -387,7 +390,7 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		humanoid:SetStateEnabled(st, false)
 	end
 	local att = Instance.new("Attachment")
-	att.Name = "UBMoveAttachment"
+	att.Name = "UBFaceAttachment"
 	att.Parent = root
 	local align = Instance.new("AlignOrientation")
 	align.Name = "UBFace"
@@ -768,8 +771,33 @@ end
 
 -- Player habits the brain's 10 Hz can't time: a Precision Landing just
 -- before touchdown and a pop-up the moment the dive slide stops.
+-- Jump-block a hop the moment it is seen (one roll per possession: the
+-- holder hops once). No think-rate wait and no reaction delay: the hand-block
+-- test rewinds markers to where the thrower saw them, so any later jump
+-- would only ever leave the ground after the disc had gone.
+local function jumpBlock(b: Bot, env: MovementSim.Env)
+	local mk = b.mark
+	if not mk or not b.stanceOn or b.stanceName ~= "Low" then
+		return
+	end
+	local hroot = Actors.rootOf(mk.holder)
+	local hc = hroot and hroot.Parent
+	if not hc or hc:GetAttribute("MS") ~= "Air" or services.MovementService.pivotOf(mk.holder) == nil then
+		return
+	end
+	local held = hc:GetAttribute("HeldSince")
+	local key = if type(held) == "number" then held else 1
+	if mk.hopKey ~= key then
+		mk.hopKey = key
+		if b.rng:next() < 0.35 * b.skill then
+			MovementSim.press(b.sim, "Jump", NO_INPUT, env)
+		end
+	end
+end
+
 local function reflexes(b: Bot, env: MovementSim.Env)
 	local sim = b.sim
+	jumpBlock(b, env)
 	if b.precisionArmed then
 		local ttl = env.timeToLand
 		if sim.landedAt > b.armedAt + 0.05 then
@@ -1194,14 +1222,35 @@ local function teamPlan(w: World, team: string, ref: Vector3): TeamPlan
 	return np
 end
 
--- A human marker who never steps up loses the mark to the nearest bot.
+-- The mark goes to a human defender who steps up (mark stance on within
+-- Marking.Range of P): the bot marker drops back to guarding. A human marker
+-- who never steps up, or drifts out of StallRange, loses the mark to the
+-- nearest bot after 1.2 s.
 local function checkMarker(p: TeamPlan, w: World, team: string, holder: number, pivot: Vector3)
 	if w.markerChecked[team] then
 		return
 	end
 	w.markerChecked[team] = true
 	local m = if p.marker then w.bodies[p.marker] else nil
-	if m and (m.isBot or flat(m.pos - pivot).Magnitude <= DM.StallRange + 1) then
+	if m == nil or m.isBot then
+		local human, humanD = nil, MC.Marking.Range
+		for _, body in w.team[team] do
+			local actor = if body.isBot then nil else services.PlayerService.get(body.id)
+			if actor and actor.role == "Match" and services.DefenseService.stanceOf(body.id) ~= "Relaxed" then
+				local dd = flat(body.pos - pivot).Magnitude
+				if dd <= humanD then
+					human, humanD = body, dd
+				end
+			end
+		end
+		if human then
+			p.marker = human.id
+			p.guards[human.id] = nil
+			p.markerAwaySince = nil
+			return
+		end
+	end
+	if m and (m.isBot or flat(m.pos - pivot).Magnitude <= DM.StallRange) then
 		p.markerAwaySince = nil
 		return
 	end
@@ -1705,17 +1754,7 @@ local function runMark(b: Bot, holderId: number, up: Vector3, force: string)
 	end
 	setStance(b, true, stance)
 
-	-- jump-block a hop (one roll per possession: the holder hops once)
-	if pivot and hc:GetAttribute("MS") == "Air" and stance == "Low" then
-		local held = hc:GetAttribute("HeldSince")
-		local key = if type(held) == "number" then held else 1
-		if mk.hopKey ~= key then
-			mk.hopKey = key
-			if b.rng:next() < 0.35 * skill then
-				press(b, "Jump", nil, b.reaction * (1.2 - skill))
-			end
-		end
-	end
+	-- (the hop itself is jump-blocked by reflexes(), every Heartbeat)
 
 	local away = flat(target - pos).Magnitude
 	if away > (if b.marking then 8 else 5) then

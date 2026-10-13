@@ -735,10 +735,9 @@ function DiscRenderer.predictThrow(id: string, state: DiscPhysics.State, t0: num
 	v.predictedT0 = t0 or now()
 	v.predictedStop = if stopAt and stopAt > 0 then stopAt else math.huge
 	v.predictedFlightId = v.flightId
-	local w = Net.state():GetAttribute("Wind")
-	if typeof(w) == "Vector3" then
-		v.wind = { x = w.X, y = w.Y, z = w.Z }
-	end
+	-- the server flies the throw with the disc's own wind (Wind attribute)
+	local w = v.folder:GetAttribute("Wind")
+	v.wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else { x = 0, y = 0, z = 0 }
 end
 
 -- Your own claim: ease the disc into your hand until the server answers.

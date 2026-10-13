@@ -4,7 +4,8 @@
 
 	THE SIM DECIDES, THE HUMANOID MOVES. Each frame it builds an environment
 	snapshot (grounded from Humanoid.FloorMaterial plus a ray sized from the
-	current HipHeight, time-to-land, Rebound walls along / beside you, a short
+	current HipHeight, 1.2 studs past the feet on the ground but only 0.3 in
+	the air so dives and hops land on touchdown, time-to-land, Rebound walls along / beside you, a short
 	"blocked" ray along the sim velocity, root position and camera yaw), steps
 	the sim and drives the body with the Humanoid's own controller:
 	  * Humanoid.WalkSpeed = |v| and Humanoid:Move(v.Unit) every frame, so the
@@ -18,7 +19,9 @@
 	    (smoother), the reach direction while reaching for the disc
 
 	Holding the disc: the slow-down starts as soon as CatchController claims a
-	catch (predicted; cancelled on Denied or when the server never confirms).
+	catch (predicted; cancelled on Denied, when the claimed disc leaves Flight
+	without becoming ours, e.g. a scoring catch, or when the server never
+	confirms).
 	While holding, Cut swings to the screen-left side, Dive to the right
 	(gamepad X: the mirror of the current step), Jump hops. The sim plants the
 	pivot foot and Output.pivotPos goes to the server (Pivot remote; proposed
@@ -93,6 +96,8 @@ local pivotRemote: RemoteEvent? = nil
 local MOVEMENT_ACTIONS = { Jump = true, Cut = true, Slide = true, Dive = true, Burst = true }
 local WALL_RAY = MovementConfig.WallRebound.DetectDistance
 local BLOCK_RAY = 2.5
+local GROUND_RAY_GROUND = 1.2 -- studs past the feet that still count as grounded (ground modes)
+local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
 
 local rayParams = RaycastParams.new()
@@ -192,14 +197,19 @@ local function buildEnv(): MovementSim.Env
 	local pos = r.Position
 	local vel = r.AssemblyLinearVelocity
 
-	-- grounded: the Humanoid's own floor detection, or a ray just past the feet
+	-- grounded: the Humanoid's own floor detection, or a ray just past the feet.
+	-- On the ground the ray reaches 1.2 studs below the feet (bridges step-downs
+	-- and coyote flicker); in the air (jumps, hops, dives) only 0.3, less than a
+	-- frame of fall, so a low arc never lands before the feet touch.
 	local state = h:GetState()
 	local humGrounded = h.FloorMaterial ~= Enum.Material.Air
 		and state ~= Enum.HumanoidStateType.Jumping
 		and state ~= Enum.HumanoidStateType.Freefall
 	local grounded = humGrounded
 	if not grounded and vel.Y <= 6 then
-		grounded = workspace:Raycast(pos, Vector3.new(0, -(standHeight + 1.2), 0), rayParams) ~= nil
+		local airborne = sim.mode == "Air" or sim.mode == "Dive"
+		local reach = if airborne then GROUND_RAY_AIR else GROUND_RAY_GROUND
+		grounded = workspace:Raycast(pos, Vector3.new(0, -(standHeight + reach), 0), rayParams) ~= nil
 	end
 
 	local ttl: number? = nil
@@ -358,7 +368,7 @@ local function setupCharacter(c: Model)
 	standHeight = computeStandHeight(h, r)
 
 	local att = Instance.new("Attachment")
-	att.Name = "UBMoveAttachment"
+	att.Name = "UBFaceAttachment"
 	att.Parent = r
 
 	local align = Instance.new("AlignOrientation")
@@ -428,12 +438,21 @@ local function handleTeleport(c: Model, r: BasePart)
 end
 
 -- Predicted catch (CatchController.Claimed) until the server confirms it;
--- Denied, or no confirmation in time, cancels it.
+-- Denied, no confirmation in time, or the claimed disc ending up anywhere but
+-- in our hand cancels it. (A catch that scores, or lands out of bounds, ends
+-- the possession in the same server frame: the disc goes straight from
+-- Flight to Ground and Held-by-us is never seen.)
 local function updateHolding(grounded: boolean)
 	local confirmed = controllers.ThrowController.isHolding()
 	local p = predicted
 	if confirmed or (p and os.clock() > p.untilT) then
 		predicted = nil
+	elseif p then
+		local f = controllers.DiscRenderer.folderOf(p.disc)
+		local mode = f and f:GetAttribute("Mode")
+		if f and mode ~= "Flight" and not (mode == "Held" and f:GetAttribute("HolderId") == player.UserId) then
+			predicted = nil
+		end
 	end
 	local want = confirmed or predicted ~= nil
 	if want ~= holding then
