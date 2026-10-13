@@ -8,6 +8,7 @@ local Progression = {}
 Progression.XP = {
 	MatchPlayed = 100,
 	MatchWon = 60,
+	PvPMultiplier = 1.5, -- match XP when both teams had human players (vs bots: x1)
 	Goal = 25,
 	Assist = 20,
 	Callahan = 80,
@@ -18,8 +19,12 @@ Progression.XP = {
 	Layout = 15,
 	Greatest = 60,
 	Highlight = 20,
-	ComboPerHundred = 1, -- converted combos: 1 XP per 100 combo points
-	ComboCap = 60,
+	-- Combos pay from Summary.xpScore (converted: x2 score; not converted:
+	-- 25 % of it, settled once the chain can no longer be converted).
+	ComboPerHundred = 1, -- 1 XP per 100 xpScore points
+	ComboCap = 60, -- per converted chain
+	UnconvertedComboCap = 30, -- per unconverted chain
+	UnconvertedMatchCap = 120, -- unconverted chains, per player per match (match play only)
 	TrainingDrill = 15,
 	PersonalBest = 25,
 }
@@ -230,7 +235,7 @@ Progression.Achievements = {
 	{
 		id = "Huck",
 		name = "Huck It",
-		description = "Complete 10 throws longer than 120 studs.",
+		description = "Complete 10 HUCKs (a completion longer than half the field).",
 		stat = "hucks",
 		goal = 10,
 	},

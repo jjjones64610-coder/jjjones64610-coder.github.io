@@ -7,6 +7,12 @@
 	    must wait for the lock to expire (or the owner to release it) before
 	    taking over, which prevents two servers overwriting each other.
 	  * Template merge + validation on load, so old or damaged data upgrades.
+	    Settings values are merged key by key, so a setting added later
+	    (e.g. AutoSprint, on by default) gets its default in old profiles.
+	    SettingsVersion is deliberately not filled in: a missing version
+	    tells the client the profile predates Input.Migrations.
+	  * Releasing fires (synchronously) just before a leaving player's final
+	    save, so last-moment changes (a ranked leaver's loss) are saved.
 	  * Autosave every 90 s, save on leave, save-all in BindToClose.
 	  * No API access (e.g. Studio without "Enable Studio Access to API
 	    Services") -> profiles live in memory and are marked non-persistent.
@@ -25,7 +31,8 @@ local ProgressionConfig = require(Shared.Config.Progression)
 
 local DataService = {}
 
-DataService.Loaded = Signal.new()
+DataService.Loaded = Signal.new() -- (player, data)
+DataService.Releasing = Signal.new() -- (player, data) right before the final save on leave
 
 local STORE_NAME = "UB_Profiles_v1"
 local LOCK_TIMEOUT = 180 -- seconds before a crashed server's lock is considered stale
@@ -86,6 +93,22 @@ local function reconcile(data: any): { [string]: any }
 	for k, v in data.stats do
 		if type(v) ~= "number" then
 			data.stats[k] = nil
+		end
+	end
+	-- settings added after a profile was saved get their defaults
+	local values = data.settings.values
+	if type(values) ~= "table" then
+		values = {}
+		data.settings.values = values
+	end
+	for k, default in InputConfig.DefaultSettings :: any do
+		if k ~= "SettingsVersion" and type(values[k]) ~= type(default) then
+			values[k] = default
+		end
+	end
+	for _, scheme in { "keyboard", "gamepad" } do
+		if type(data.settings[scheme]) ~= "table" then
+			data.settings[scheme] = {}
 		end
 	end
 	data.version = VERSION
@@ -246,6 +269,10 @@ function DataService.Start()
 		task.spawn(onJoin, p)
 	end
 	Players.PlayerRemoving:Connect(function(player)
+		local profile = profiles[player]
+		if profile then
+			DataService.Releasing:Fire(player, profile.data)
+		end
 		save(player, true)
 		profiles[player] = nil
 	end)

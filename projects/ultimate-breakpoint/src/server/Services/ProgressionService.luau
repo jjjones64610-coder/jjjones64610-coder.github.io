@@ -3,6 +3,15 @@
 	ProgressionService — XP, levels, stats, technique mastery, achievements,
 	cosmetics and ranked rating. Everything it grants is cosmetic or a record;
 	nothing affects movement, throwing or catching.
+
+	  * Match XP is x XP.PvPMultiplier when both teams had human players.
+	  * Combos pay from Summary.xpScore: a chain converted into a play pays its
+	    doubled score (capped at ComboCap) and counts as converted; a chain
+	    that was not converted pays its 25 % share (capped per chain and per
+	    match, match play only) once MovementService settles it.
+	  * Ranked: rated against the roster's average ratings at the start. A
+	    roster player who abandons the match is rated as a loss right away
+	    (rankedLoss); the result is then void for everyone else.
 ]]
 
 local Players = game:GetService("Players")
@@ -19,6 +28,7 @@ local ProgressionService = {}
 
 local services: any
 local pushQueued: { [Player]: boolean } = {}
+local unconvertedPaid: { [number]: number } = {} -- UserId -> unconverted combo XP this match
 
 local XP = ProgressionConfig.XP
 
@@ -224,8 +234,14 @@ function ProgressionService.stat(actor: any, key: string, n: number)
 	push(player)
 end
 
+local function comboXp(summary: any, cap: number): number
+	local points = if type(summary.xpScore) == "number" then summary.xpScore else (summary.score or 0)
+	return math.clamp(math.floor(points / 100 * XP.ComboPerHundred), 0, cap)
+end
+
+-- A chain converted into a play (catch, interception, block).
 function ProgressionService.combo(player: Player, summary: any)
-	local amount = math.min(XP.ComboCap, math.floor(summary.score / 100) * XP.ComboPerHundred)
+	local amount = comboXp(summary, XP.ComboCap)
 	if amount > 0 then
 		ProgressionService.xp(player, amount, "combo")
 	end
@@ -236,6 +252,21 @@ function ProgressionService.combo(player: Player, summary: any)
 		end
 	end)
 	checkAchievements(player)
+end
+
+-- A chain that was not converted: its 25 % share, during match play only.
+function ProgressionService.comboUnconverted(player: Player, summary: any)
+	local actor = services.PlayerService.fromPlayer(player)
+	local phase = services.MatchService.phase()
+	if not actor or actor.role ~= "Match" or (phase ~= "Live" and phase ~= "Pull") then
+		return
+	end
+	local paid = unconvertedPaid[player.UserId] or 0
+	local amount = math.min(comboXp(summary, XP.UnconvertedComboCap), XP.UnconvertedMatchCap - paid)
+	if amount > 0 then
+		unconvertedPaid[player.UserId] = paid + amount
+		ProgressionService.xp(player, amount, "combo")
+	end
 end
 
 local function onTech(actorId: number, tech: string, quality: string)
@@ -259,27 +290,48 @@ local function onTech(actorId: number, tech: string, quality: string)
 	end)
 end
 
--- Called once per finished match. Returns rating changes for the summary.
-function ProgressionService.matchEnded(
-	winner: string?,
-	stats: { [number]: any },
-	rows: { any },
-	ranked: boolean,
-	margin: number
-): { [string]: any }
-	local changes = {}
-	local teamRatings: { [string]: { number } } = { A = {}, B = {} }
-	if ranked then
-		for _, row in rows do
-			local p = services.Actors.playerOf(row.id)
-			local d = p and data(p)
-			if d then
-				table.insert(teamRatings[row.team], d.rating)
-			end
-		end
+export type MatchResult = {
+	ranked: boolean, -- the match counts for rating (ranked and nobody on the roster left)
+	roster: { [number]: string }, -- ranked roster: actor id -> team
+	ratings: { [string]: number }, -- average roster rating per team at the start
+	margin: number,
+	pvp: boolean, -- both teams had human players
+}
+
+function ProgressionService.matchStarted()
+	unconvertedPaid = {}
+end
+
+local function rate(player: Player, mine: number, theirs: number, won: boolean, margin: number): { [string]: number }?
+	local d = data(player)
+	if not d then
+		return nil
 	end
-	local avgA = Rating.teamRating(teamRatings.A)
-	local avgB = Rating.teamRating(teamRatings.B)
+	local old = d.rating
+	local new = Rating.update(old, d.ratedGames, mine, theirs, won, margin)
+	services.DataService.update(player, function(dd: { [string]: any })
+		dd.rating = new
+		dd.ratedGames += 1
+		dd.peakRating = math.max(dd.peakRating, new)
+	end)
+	services.LeaderboardService.submit(player, new)
+	return { old = old, new = new }
+end
+
+-- A ranked roster player abandoned the match: rated as a loss now. (No
+-- immediate save: when they are leaving, DataService's release save follows
+-- right after and a second concurrent save could re-take the session lock.)
+function ProgressionService.rankedLoss(player: Player, mine: number, theirs: number)
+	if rate(player, mine, theirs, false, 0) then
+		ProgressionService.stat({ player = player }, "matches", 1)
+		stampCharacter(player)
+	end
+end
+
+-- Called once per finished match. Returns rating changes for the summary.
+function ProgressionService.matchEnded(winner: string?, rows: { any }, result: MatchResult): { [string]: any }
+	local changes = {}
+	local mult = if result.pvp then XP.PvPMultiplier else 1
 	for _, row in rows do
 		local player = services.Actors.playerOf(row.id)
 		if player then
@@ -288,21 +340,14 @@ function ProgressionService.matchEnded(
 			if won then
 				ProgressionService.stat({ player = player }, "wins", 1)
 			end
-			ProgressionService.xp(player, XP.MatchPlayed + (if won then XP.MatchWon else 0), "match")
-			if ranked then
-				local d = data(player)
-				if d then
-					local mine = if row.team == "A" then avgA else avgB
-					local theirs = if row.team == "A" then avgB else avgA
-					local old = d.rating
-					local new = Rating.update(old, d.ratedGames, mine, theirs, won, margin)
-					services.DataService.update(player, function(dd: { [string]: any })
-						dd.rating = new
-						dd.ratedGames += 1
-						dd.peakRating = math.max(dd.peakRating, new)
-					end)
-					changes[tostring(row.id)] = { old = old, new = new }
-					services.LeaderboardService.submit(player, new)
+			ProgressionService.xp(player, (XP.MatchPlayed + (if won then XP.MatchWon else 0)) * mult, "match")
+			local rosterTeam = result.roster[row.id]
+			if result.ranked and rosterTeam then
+				local mine = if rosterTeam == "A" then result.ratings.A else result.ratings.B
+				local theirs = if rosterTeam == "A" then result.ratings.B else result.ratings.A
+				local change = rate(player, mine, theirs, winner == rosterTeam, result.margin)
+				if change then
+					changes[tostring(row.id)] = change
 				end
 			end
 			stampCharacter(player)
@@ -310,7 +355,6 @@ function ProgressionService.matchEnded(
 			push(player)
 		end
 	end
-	local _ = stats
 	return changes
 end
 
@@ -429,6 +473,7 @@ function ProgressionService.Start()
 	end
 	Players.PlayerRemoving:Connect(function(p)
 		pushQueued[p] = nil
+		unconvertedPaid[p.UserId] = nil
 	end)
 end
 

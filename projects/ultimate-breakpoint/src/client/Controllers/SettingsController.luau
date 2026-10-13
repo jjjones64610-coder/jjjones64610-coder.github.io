@@ -1,6 +1,16 @@
 --!strict
--- SettingsController — local settings and key bindings, synced to the
--- player's saved profile (Settings > Controls rebinding writes here).
+--[[
+	SettingsController — local settings and key bindings, synced to the
+	player's saved profile (Settings > Controls rebinding writes here).
+
+	Every key in Config/Input DefaultSettings is persisted (AutoSprint, on by
+	default, included); profiles saved before a key existed simply get its
+	default. When a default changes on purpose (Input.SettingsVersion /
+	Input.Migrations) the listed keys are reset once for older profiles.
+
+	keyLabel(action, scheme) gives the short label of the first key bound to
+	an action ("Q", "SHIFT", "LMB", "X"), so HUD pips and hints follow rebinds.
+]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -44,6 +54,13 @@ function SettingsController.bindings(scheme: string): { [string]: { string } }
 	return result
 end
 
+-- Short label of the first key bound to `action` in `scheme` ("keyboard" or
+-- "gamepad"); "" when nothing is bound.
+function SettingsController.keyLabel(action: string, scheme: string?): string
+	local keys = SettingsController.bindings(scheme or "keyboard")[action]
+	return InputConfig.keyLabel(if keys then keys[1] else nil)
+end
+
 function SettingsController.setBinding(scheme: string, action: string, keys: { string })
 	local o = (overrides :: any)[scheme]
 	if not o then
@@ -75,6 +92,20 @@ function SettingsController.save()
 	end)
 end
 
+-- Keys whose default changed after the profile was saved.
+local function migratedKeys(savedVersion: any): { [string]: boolean }
+	local skip: { [string]: boolean } = {}
+	local from = if type(savedVersion) == "number" then savedVersion else 1
+	for version, keys in InputConfig.Migrations do
+		if version > from then
+			for _, k in keys do
+				skip[k] = true
+			end
+		end
+	end
+	return skip
+end
+
 local function applyProfile(profile: any)
 	if applied or type(profile) ~= "table" or type(profile.settings) ~= "table" then
 		return
@@ -82,11 +113,13 @@ local function applyProfile(profile: any)
 	applied = true
 	local s = profile.settings
 	if type(s.values) == "table" then
+		local skip = migratedKeys(s.values.SettingsVersion)
 		for k: string, default: any in InputConfig.DefaultSettings :: any do
-			if type(s.values[k]) == type(default) then
+			if not skip[k] and k ~= "SettingsVersion" and type(s.values[k]) == type(default) then
 				values[k] = s.values[k]
 			end
 		end
+		values.SettingsVersion = InputConfig.SettingsVersion
 	end
 	for _, scheme in { "keyboard", "gamepad" } do
 		if type(s[scheme]) == "table" then

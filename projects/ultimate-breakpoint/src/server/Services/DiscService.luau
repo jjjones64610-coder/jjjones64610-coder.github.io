@@ -9,6 +9,9 @@
 	  FlightId    increments for every new flight segment (throw, tip, block)
 	  LaunchTime  server time at which the segment starts
 	  LaunchPos / LaunchVel / LaunchNormal (Vector3), Spin, Wind, GroundY
+	  StopAt      flight time at which a marker's hands stop this segment (a
+	              hand block; 0 = none): clients hold the disc there until
+	              the deflection segment arrives instead of flying it on
 	  GroundPos   resting spot while on the ground
 	  ThrowerId, ThrowerTeam, ThrowType, Quality, Skin, Context, Owner, Pull
 
@@ -16,6 +19,20 @@
 	launch values), so clients reproduce the server's trajectory exactly
 	without any per-frame position replication. The server keeps a short
 	position history for lag-compensated catch validation.
+
+	A segment may start in the recent past (launch `startT`, deflect
+	`contactT`): a throw starts at the thrower's own release time
+	(ThrowService clamps it to [now - min(ping, 0.25), now]) and a block or
+	bobble continues from the contact point at the contact time, so the
+	flight every client re-simulates is in sync with what the players saw
+	instead of rewinding in space. The player who just touched the disc
+	cannot claim it again for TOUCH_LOCK seconds (no repeated self-blocks off
+	the same rim contact).
+
+	Claims are never dropped silently: whenever a segment change, a pickup or
+	a placement discards pending claims, the claimers are told (Denied) so
+	their clients stop predicting at once. Losing the disc also clears the
+	holder's windup attributes, so nothing reads a stale WindupType.
 
 	Multiple discs exist at once: the match disc plus one per training session.
 	A context handler decides what catches and landings mean for each disc.
@@ -79,11 +96,19 @@ export type Disc = {
 	landAt: number,
 	landPos: Vector3?,
 	groundAt: number,
+	lockedId: number?, -- the last toucher, who may not re-claim until lockedUntil
+	lockedUntil: number,
 }
 
 -- Late catch claims (lag compensation) may still arrive for this long after
 -- the server sees the disc touch down.
 local GROUND_GRACE = 0.2
+-- A segment can start at most this far in the past (backdated release / contact).
+local MAX_BACKDATE = 0.3
+-- Nobody claims a deflected disc for this long after the server re-launched it ...
+local DEFLECT_NO_CATCH = 0.06
+-- ... and the player who touched it not for this long.
+local TOUCH_LOCK = 0.25
 
 local discs: { [string]: Disc } = {}
 local services: any
@@ -131,6 +156,8 @@ function DiscService.create(context: string, owner: number?, handler: Handler): 
 		landAt = 0,
 		landPos = nil,
 		groundAt = 0,
+		lockedId = nil,
+		lockedUntil = 0,
 	}
 	folder:SetAttribute("Id", id)
 	folder:SetAttribute("Context", context)
@@ -172,12 +199,25 @@ function DiscService.heldBy(actorId: number): Disc?
 	return nil
 end
 
+-- Tells every pending claimer that their claim is gone (the server always
+-- answers a claim), then forgets the claims.
+local function dropClaims(d: Disc)
+	if #d.claims > 0 then
+		services.CatchingService.discard(d)
+	end
+	d.claims = {}
+	d.resolveAt = nil
+end
+
 local function setHolderAttr(d: Disc, actorId: number?)
 	local prev = d.holder
 	if prev and prev ~= actorId then
 		local actor = services.PlayerService.get(prev)
 		if actor and actor.character then
 			actor.character:SetAttribute("HasDisc", false)
+			-- no stale windup: a new possession starts from a clean slate
+			actor.character:SetAttribute("Windup", 0)
+			actor.character:SetAttribute("WindupType", "")
 		end
 		services.MovementService.setHolding(prev, false)
 	end
@@ -198,10 +238,9 @@ function DiscService.setSkin(d: Disc, skin: string)
 end
 
 function DiscService.giveTo(d: Disc, actorId: number)
+	dropClaims(d)
 	d.mode = "Held"
 	d.sim = nil
-	d.claims = {}
-	d.resolveAt = nil
 	d.pull = false
 	setHolderAttr(d, actorId)
 	write(d, "Mode", "Held")
@@ -210,20 +249,18 @@ function DiscService.giveTo(d: Disc, actorId: number)
 end
 
 function DiscService.placeOnGround(d: Disc, pos: Vector3)
+	dropClaims(d)
 	d.mode = "Ground"
 	d.sim = nil
-	d.claims = {}
-	d.resolveAt = nil
 	setHolderAttr(d, nil)
 	write(d, "GroundPos", Vector3.new(pos.X, d.groundY + 0.15, pos.Z))
 	write(d, "Mode", "Ground")
 end
 
 function DiscService.hide(d: Disc)
+	dropClaims(d)
 	d.mode = "None"
 	d.sim = nil
-	d.claims = {}
-	d.resolveAt = nil
 	setHolderAttr(d, nil)
 	write(d, "Mode", "None")
 end
@@ -238,15 +275,30 @@ export type LaunchMeta = {
 	keepThrower: boolean?,
 	groundY: number?,
 	wind: Vector3?,
+	stopAt: number?, -- a hand block will deflect the disc this far into the flight
 }
 
--- Starts a new flight segment from (pos, vel, normal, spin).
-function DiscService.launch(d: Disc, pos: Vector3, vel: Vector3, normal: Vector3, spin: number, meta: LaunchMeta)
-	local t0 = now()
+-- Starts a new flight segment from (pos, vel, normal, spin). `startT` is the
+-- server time the segment starts (default now; clamped to at most
+-- MAX_BACKDATE in the past): the release time of a throw or the contact time
+-- of a deflection. noCatch counts from that start.
+function DiscService.launch(
+	d: Disc,
+	pos: Vector3,
+	vel: Vector3,
+	normal: Vector3,
+	spin: number,
+	meta: LaunchMeta,
+	startT: number?
+)
+	local tNow = now()
+	local t0 = tNow
+	if startT and startT == startT then
+		t0 = math.clamp(startT, tNow - MAX_BACKDATE, tNow)
+	end
+	dropClaims(d)
 	d.flightId += 1
 	d.mode = "Flight"
-	d.claims = {}
-	d.resolveAt = nil
 	if not meta.keepThrower then
 		d.thrower = meta.thrower
 		d.throwerTeam = meta.throwerTeam
@@ -257,6 +309,8 @@ function DiscService.launch(d: Disc, pos: Vector3, vel: Vector3, normal: Vector3
 		d.touched = false
 		d.pull = meta.pull == true
 		d.flightSamples = {}
+		d.lockedId = nil
+		d.lockedUntil = 0
 	end
 	d.noCatchUntil = t0 + (meta.noCatch or DiscConfig.Throw.NoCatchTime)
 	d.groundY = meta.groundY or d.groundY
@@ -275,6 +329,7 @@ function DiscService.launch(d: Disc, pos: Vector3, vel: Vector3, normal: Vector3
 	write(d, "ThrowType", d.throwType or "")
 	write(d, "Quality", d.quality or "")
 	write(d, "Pull", d.pull)
+	write(d, "StopAt", meta.stopAt or 0)
 	write(d, "Mode", "Flight")
 	write(d, "FlightId", d.flightId)
 
@@ -291,12 +346,34 @@ function DiscService.launch(d: Disc, pos: Vector3, vel: Vector3, normal: Vector3
 	table.insert(d.flightSamples, { t = t0, x = rp.X, y = rp.Y, z = rp.Z })
 end
 
--- Re-launch the current flight from its present position (tips, blocks, bobbles).
-function DiscService.deflect(d: Disc, pos: Vector3, vel: Vector3, normal: Vector3?, spin: number?)
+-- Re-launches the current flight from a contact (tips, blocks, bobbles):
+-- from `pos` at server time `contactT` (default now), so the new segment
+-- continues where and when the touch happened. `toucher` may not claim it
+-- again for TOUCH_LOCK seconds.
+function DiscService.deflect(
+	d: Disc,
+	pos: Vector3,
+	vel: Vector3,
+	normal: Vector3?,
+	spin: number?,
+	contactT: number?,
+	toucher: number?
+)
 	local n = normal or Vector3.new(0, 1, 0)
 	local s = spin or (if d.sim then (d.sim :: DiscPhysics.State).spin * 0.5 else 20)
+	local tNow = now()
+	local t0 = if contactT and contactT == contactT then math.clamp(contactT, tNow - MAX_BACKDATE, tNow) else tNow
 	d.touched = true
-	DiscService.launch(d, pos, vel, n, s, { keepThrower = true, noCatch = 0.06 })
+	-- nobody catches it in the instant after the server re-launches it
+	local noCatch = (tNow - t0) + DEFLECT_NO_CATCH
+	DiscService.launch(d, pos, vel, n, s, { keepThrower = true, noCatch = noCatch }, t0)
+	d.lockedId = toucher
+	d.lockedUntil = if toucher then tNow + TOUCH_LOCK else 0
+end
+
+-- May this actor claim the disc right now (the toucher lock)?
+function DiscService.claimLocked(d: Disc, actorId: number): boolean
+	return d.lockedId == actorId and now() < d.lockedUntil
 end
 
 -- Disc position at absolute server time t (interpolated from history).

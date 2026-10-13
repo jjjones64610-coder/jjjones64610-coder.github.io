@@ -4,12 +4,15 @@
 
 	Highlights come only from validated server facts: the zone that made a
 	catch, whether the catcher was airborne, distances, defenders nearby,
-	technique chains the server accepted and converted into the play. A
-	highlight never pauses play: clients show a short banner, the crowd reacts.
+	technique chains the server accepted and converted into the play (at the
+	claim time, so a catch that ended a chain on the catcher's screen counts).
+	A highlight never pauses play: clients show a short banner, the crowd
+	reacts.
 
 	  LAYOUT        catch made with the dive zone
 	  SKY           airborne catch with a defender within 4.5 studs
-	  HUCK          completion of 120+ studs
+	  HUCK          completion longer than HuckFraction (55 %) of the playing
+	                field (Mini ~88 studs, Normal ~132)
 	  CONTESTED     clean catch that won a contest
 	  FLOW xN       N consecutive quick releases (catch-and-go passing)
 	  COMBO         movement chain converted into the catch (tiered)
@@ -25,6 +28,9 @@ local Actors = require(Shared.Actors)
 local ProgressionConfig = require(Shared.Config.Progression)
 
 local HighlightService = {}
+
+-- A completion at least this share of the playing field's length is a HUCK.
+HighlightService.HuckFraction = 0.55
 
 local services: any
 
@@ -75,8 +81,9 @@ local function has(outcomes: { any }, kind: string): any
 	return nil
 end
 
-local function convertCombo(actorId: number, payoff: string): any
-	local summary = services.MovementService.convertCombo(actorId, payoff)
+-- Converts the actor's movement chain into this play (x2 score and XP).
+local function convertCombo(actorId: number, payoff: string, at: number?): any
+	local summary = services.MovementService.convertCombo(actorId, payoff, at)
 	if not summary then
 		return nil
 	end
@@ -104,7 +111,7 @@ function HighlightService.onCatch(info: any, lastPass: any, outcomes: { any })
 	end
 	if completion and lastPass and lastPass.releasePos then
 		local dist = flat(info.pos - lastPass.releasePos).Magnitude
-		if dist >= 120 then
+		if dist >= HighlightService.HuckFraction * services.ArenaService.field().length then
 			table.insert(tags, "HUCK")
 			score += 300
 			services.MatchService.stat(info.id, "hucks")
@@ -126,7 +133,7 @@ function HighlightService.onCatch(info: any, lastPass: any, outcomes: { any })
 		score += 300
 	end
 	local payoff = if info.zone == "Dive" then "Layout Catch" elseif interception then "Interception" else "Catch"
-	local combo = convertCombo(info.id, payoff)
+	local combo = convertCombo(info.id, payoff, if type(info.t) == "number" then info.t else nil)
 	if combo and combo.tier then
 		table.insert(tags, combo.tier .. " COMBO")
 		score += math.floor(combo.score / 4)

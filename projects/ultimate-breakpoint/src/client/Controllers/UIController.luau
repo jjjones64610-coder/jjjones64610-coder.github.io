@@ -1,5 +1,26 @@
 --!strict
--- UIController — builds the interface and routes server messages to it.
+--[[
+	UIController — builds the interface and routes everything to it.
+
+	  Movement feedback (MovementController.Feedback): the sim's ready-made
+	  texts ("NEED SPEED", "ONE PER JUMP", "PRECISION LANDING -40 ms", ...)
+	  become chips above the crosshair for 0.6 s. A press refused for a
+	  cooldown flashes that technique's pip instead (no cooldown text).
+	  Combos: ComboChanged / ChainEnded drive the Hud chain widget and end
+	  card. The server's Combo event (a chain converted by a catch, block or
+	  interception) shows the x2 card and converts the same chain in the local
+	  tracker, so it is never also shown as unconverted.
+	  Techniques: optional labels; a Sold Pivot Swing says "release now" and a
+	  Break says so.
+	  Catching: a claim the server denies, and that is neither claimed again
+	  nor turned into a catch shortly after, gets a subtle "NO CATCH" chip.
+	  Throws (server Release feedback): text only when it says something —
+	  Perfect, over-held, hand-blocked, a High release the server saw as Mid
+	  (the hop was not seen in the air), off balance, from the ground.
+	  Travel: the server's travel reset is a chip, not a toast.
+	  Hint line (bottom left): the bound keys while playing, plus the bench,
+	  warm-up and training lines.
+]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,6 +30,7 @@ local StarterGui = game:GetService("StarterGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local TeamsConfig = require(Shared.Config.Teams)
+local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local UI = script.Parent.Parent.UI
 local Theme = require(UI.Theme)
 local Hud = require(UI.Hud)
@@ -26,6 +48,18 @@ local player = Players.LocalPlayer
 local lastLevel: number? = nil
 local hintedVote = false
 
+local DENIED_DELAY = 0.3 -- a denied claim must stay unanswered this long before it is shown ...
+local DENIED_GAP = 1.5 -- ... and at most once per this long
+local TRAVEL_TEXT = "TRAVEL — RESET TO YOUR PIVOT"
+
+-- First word of a Cooldown feedback text ("BURST READY IN 0.8s") -> its pip.
+local COOLDOWN_PIP: { [string]: string } = {
+	BURST = "BurstStep",
+	LAYOUT = "Dive",
+	PLANT = "MomentumCancel",
+	SLIDE = "Slide",
+}
+
 local REASONS: { [string]: string } = {
 	Incomplete = "Incomplete pass",
 	Drop = "Dropped",
@@ -41,6 +75,10 @@ end
 
 local function teamName(t: string?): string
 	return if t == "A" then TeamsConfig.A.Name elseif t == "B" then TeamsConfig.B.Name else ""
+end
+
+local function key(action: string, label: string): string
+	return Theme.keyText(controllers.InputController.keyLabel(action), label)
 end
 
 local function onNotify(kind: string, text: string, data: any)
@@ -65,8 +103,15 @@ local function onNotify(kind: string, text: string, data: any)
 			sub = if d.offense == myTeam then "Your disc" else "Defend"
 		end
 		Hud.banner(text, sub, nil, 2.2)
+	elseif kind == "Travel" then
+		Hud.chip(if type(text) == "string" and text ~= "" then string.upper(text) else TRAVEL_TEXT, C.Bad, 1.4)
 	elseif kind == "Toast" then
-		Hud.toast(text, nil, 3.5)
+		if type(text) == "string" and string.sub(string.lower(text), 1, 6) == "travel" then
+			-- (the travel reset, until it arrives as its own "Travel" kind)
+			Hud.chip(TRAVEL_TEXT, C.Bad, 1.4)
+		else
+			Hud.toast(text, nil, 3.5)
+		end
 	elseif kind == "Achievement" then
 		Hud.toast("ACHIEVEMENT: " .. text .. " — " .. tostring(d.description or ""), C.Gold, 6)
 		controllers.AudioController.play("Highlight")
@@ -78,27 +123,41 @@ local function onNotify(kind: string, text: string, data: any)
 	end
 end
 
+-- Release text only when it matters (Clean releases speak for themselves).
+local function onRelease(payload: any)
+	if payload.blocked then
+		Hud.feedback("HAND BLOCKED — fake, step out or change your release height", C.Bad, 2.2)
+		return
+	end
+	local parts: { string } = {}
+	local color = C.Clean
+	if payload.quality == "Perfect" then
+		table.insert(parts, "PERFECT RELEASE")
+		color = C.Perfect
+	elseif payload.quality == "Over" then
+		table.insert(
+			parts,
+			string.format("OVER-HELD — let go sooner  ·  spin %d%%", math.floor((tonumber(payload.spin) or 0) * 100))
+		)
+		color = C.Sloppy
+	end
+	if payload.heightAsked == "High" and payload.heightUsed ~= "High" and not payload.groundThrow then
+		table.insert(parts, "RELEASED MID (HOP NOT SEEN) — release while still in the air")
+		color = C.Sloppy
+	end
+	if payload.groundThrow then
+		table.insert(parts, "FROM THE GROUND")
+	elseif payload.offBalance then
+		table.insert(parts, "OFF BALANCE")
+	end
+	if #parts > 0 then
+		Hud.feedback(table.concat(parts, "  ·  "), color, 2)
+	end
+end
+
 local function onFeedback(kind: string, payload: any)
 	if kind == "Release" and type(payload) == "table" then
-		local color = if payload.quality == "Perfect"
-			then C.Perfect
-			elseif payload.quality == "Over" then C.Sloppy
-			else C.Clean
-		local text = string.format(
-			"%s RELEASE  ·  power %d%%  ·  spin %d%%",
-			string.upper(payload.quality),
-			math.floor(payload.power * 100),
-			math.floor(payload.spin * 100)
-		)
-		if payload.blocked then
-			text = "HAND BLOCKED — fake, pivot or change your release height"
-			color = C.Bad
-		elseif payload.offBalance then
-			text ..= "  ·  off balance"
-		elseif payload.groundThrow then
-			text ..= "  ·  from the ground"
-		end
-		Hud.feedback(text, color, 2.2)
+		onRelease(payload)
 	elseif kind == "DrillHud" then
 		Panels.drillHud(payload)
 	elseif kind == "Drill" then
@@ -112,27 +171,86 @@ local function onFeedback(kind: string, payload: any)
 end
 
 local function onMovementFeedback(fb: any)
-	local kind = fb.kind
-	if kind == "LandingOffset" then
-		local v = fb.value or 0
-		Hud.feedback(
-			string.format("PRECISION LANDING  %s%d ms", if v >= 0 then "-" else "+", math.floor(math.abs(v) * 1000)),
-			C.Perfect,
-			1.2
-		)
-	elseif kind == "LandingEarly" then
-		Hud.feedback("TOO EARLY — press Slide just before touchdown", C.Sloppy, 1.3)
-	elseif kind == "PlantEarly" then
-		Hud.feedback("TOO EARLY — let the plant land (0.1 s), then restart", C.Sloppy, 1.3)
-	elseif kind == "PopEarly" then
-		Hud.feedback("TOO EARLY — wait until your slide stops", C.Sloppy, 1.3)
-	elseif kind == "PopLate" then
-		Hud.feedback("MISSED THE POP-UP WINDOW", C.Sloppy, 1.3)
-	elseif kind == "Cooldown" then
-		Hud.feedback(string.format("COOLDOWN %.1f s", math.max(0, fb.value or 0)), C.Muted, 0.8)
-	elseif kind == "Travel" then
-		Hud.feedback("TRAVEL — release before you land from a hop", C.Bad, 1.6)
+	if type(fb) ~= "table" then
+		return
 	end
+	local kind = fb.kind
+	local text: string? = if type(fb.text) == "string" and fb.text ~= "" then fb.text else nil
+	if kind == "Cooldown" then
+		-- the pips show readiness: flash the one that refused instead of printing it
+		local first = if text then string.match(text, "^(%u+)") else nil
+		local pip = if first then COOLDOWN_PIP[first] else nil
+		if pip then
+			Hud.flashPip(pip)
+		end
+		return
+	elseif kind == "Error" then
+		Hud.feedback(text or "MOVEMENT ERROR", C.Bad, 5)
+		return
+	end
+	if not text then
+		return
+	end
+	if kind == "LandingOffset" then
+		Hud.chip(text, if string.find(text, "^PRECISION") then C.Perfect else C.Sloppy, 0.8)
+	elseif kind == "HopLanded" or kind == "Travel" then
+		Hud.chip(text, C.Bad, 1.2)
+	elseif kind == "Context" then
+		Hud.chip(text, C.Text)
+	else
+		Hud.chip(text, C.Sloppy)
+	end
+end
+
+local function onTech(e: any)
+	Hud.techLabel(e.tech, e.quality, e.info)
+	if e.tech == "PivotSwing" and e.quality == "Perfect" then
+		Hud.chip("SOLD SWING — RELEASE NOW", C.Perfect, 0.5)
+	elseif e.tech == "Break" then
+		Hud.chip(if e.quality == "Perfect" then "BREAK  ·  PERFECT" else "BREAK", C.Perfect, 1)
+	end
+end
+
+-- A denied claim gets a subtle chip, unless it was claimed again (or caught)
+-- right after: the server retries are normal and should stay invisible. A
+-- claim that became your block or bobble is not "denied" either (the server
+-- answers those with accepted = false too).
+local lastClaim: { [string]: number } = {}
+local lastResult: { [string]: string } = {}
+local lastNoCatch = -math.huge
+local NOT_A_MISS: { [string]: boolean } = { Catch = true, Block = true, Bobble = true }
+local function onDenied(discId: any)
+	local at = os.clock()
+	task.delay(DENIED_DELAY, function()
+		if controllers.ThrowController.isHolding() then
+			return
+		end
+		if type(discId) == "string" then
+			if (lastClaim[discId] or -math.huge) > at or NOT_A_MISS[lastResult[discId] or ""] then
+				return
+			end
+		end
+		local clock = os.clock()
+		if clock - lastNoCatch < DENIED_GAP then
+			return
+		end
+		lastNoCatch = clock
+		Hud.chip("NO CATCH", C.Muted, 0.5)
+	end)
+end
+
+local function movementKeys(): string
+	if controllers.InputController.scheme() == "Touch" then
+		return ""
+	end
+	return table.concat({
+		key("Cut", "cut"),
+		key("Burst", "burst"),
+		key("Slide", "slide"),
+		key("Dive", "dive"),
+		key("Jump", "jump"),
+		key("Menu", "menu"),
+	}, "  ·  ")
 end
 
 local function updateHint()
@@ -142,15 +260,19 @@ local function updateHint()
 	if controllers.ThrowController.isHolding() then
 		Hud.setHint("")
 	elseif role == "Training" then
-		Hud.setHint("Walk to a terminal and press G to start a drill  ·  M: menu")
+		Hud.setHint("Walk to a terminal and press G to start a drill  ·  " .. key("Menu", "menu"))
 	elseif phase == "Intermission" then
-		Hud.setHint("Warm-up: grab the disc and throw it around  ·  M: vote / train / settings")
+		Hud.setHint("Warm-up: grab the disc and throw it around  ·  " .. key("Menu", "vote / train / settings"))
 		if not hintedVote then
 			hintedVote = true
 			Hud.toast("Press M to vote for the next mode and arena, or to train.", C.Accent, 6)
 		end
+	elseif role == "Bench" then
+		Hud.setHint("On the bench: you play next point  ·  " .. key("Menu", "menu"))
+	elseif phase == "PointOver" or phase == "MatchOver" then
+		Hud.setHint(key("Celebrate", "celebrate") .. "  ·  " .. key("Menu", "menu"))
 	else
-		Hud.setHint("M: menu  ·  B: celebrate after a goal")
+		Hud.setHint(movementKeys())
 	end
 end
 
@@ -191,10 +313,23 @@ function UIController.Start()
 			Menu.toggle()
 		end
 	end)
-	controllers.MovementController.Tech:Connect(function(e)
-		Hud.techLabel(e.tech, e.quality, e.info)
+	local movement = controllers.MovementController
+	movement.Tech:Connect(onTech)
+	movement.Feedback:Connect(onMovementFeedback)
+	movement.ComboChanged:Connect(Hud.comboChanged)
+	movement.ChainEnded:Connect(Hud.chainEnded)
+
+	controllers.CatchController.Claimed:Connect(function(discId)
+		if type(discId) == "string" then
+			lastClaim[discId] = os.clock()
+		end
 	end)
-	controllers.MovementController.Feedback:Connect(onMovementFeedback)
+	controllers.CatchController.Denied:Connect(onDenied)
+	Net.event("CatchResult").OnClientEvent:Connect(function(discId, _accepted, result)
+		if type(discId) == "string" and type(result) == "string" then
+			lastResult[discId] = result
+		end
+	end)
 
 	Net.event("Notify").OnClientEvent:Connect(onNotify)
 	Net.event("Feedback").OnClientEvent:Connect(onFeedback)
@@ -205,16 +340,14 @@ function UIController.Start()
 	end)
 	Net.event("Combo").OnClientEvent:Connect(function(summary)
 		if type(summary) == "table" and summary.converted then
-			Hud.feedback(
-				string.format(
-					"%s  ·  COMBO %d%s",
-					string.upper(summary.payoff or "PLAY"),
-					summary.score,
-					if summary.tier then "  · " .. summary.tier else ""
-				),
-				C.Gold,
-				2.6
+			-- the same chain in the local tracker is converted too (no
+			-- "unconverted" end card for it later)
+			ComboEvaluator.convert(
+				controllers.MovementController.combo(),
+				Net.now(),
+				tostring(summary.payoff or "Play")
 			)
+			Hud.comboConverted(summary)
 		end
 	end)
 	Net.event("Summary").OnClientEvent:Connect(function(sum)

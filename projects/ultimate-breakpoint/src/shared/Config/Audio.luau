@@ -3,6 +3,13 @@
 -- Built-in engine sounds (rbxasset://) are used so the place works out of the
 -- box. Swap any SoundId for your own uploaded audio (rbxassetid://...) to get
 -- custom crowd beds, whistles and commentary stingers. Empty ids are skipped.
+--
+-- Combo feedback: ComboTick plays once per technique in a chain, pitched up
+-- ComboTickStep semitones per link (capped at ComboTickMaxSteps links), so a
+-- long chain audibly climbs; ComboEnd closes a chain that reached a tier and
+-- ComboConvert plays when a catch / block converts it. Your own catch plays
+-- Catch / CleanCatch the moment you claim it (CatchController), not a round
+-- trip later.
 
 local Audio = {}
 
@@ -27,9 +34,16 @@ Audio.Cues = {
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
 	UiClick = { id = "rbxasset://sounds/button.wav", volume = 0.4, pitch = 1.0 },
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },
+	ComboTick = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.2, pitch = 1.25 },
+	ComboEnd = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.3, pitch = 1.05 },
+	ComboConvert = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.55, pitch = 1.7 },
 	-- Supply your own looping crowd ambience and cheer to enable these.
 	CrowdLoop = { id = "", volume = 0.35, pitch = 1.0, looped = true },
 	CrowdCheer = { id = "", volume = 0.7, pitch = 1.0 },
 }
+
+Audio.ComboTickStep = 2 -- semitones per chain link
+Audio.ComboTickMaxSteps = 7 -- links after which the tick stops climbing
+Audio.ComboTickPerfect = 1.06 -- extra pitch for a Perfect link
 
 return Audio

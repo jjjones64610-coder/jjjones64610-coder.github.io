@@ -1,5 +1,7 @@
 --!strict
 -- AudioController — plays cues from Config/Audio, 2D or positioned in the world.
+-- comboTick(link, perfect) is the combo chain's tick: the same short cue
+-- climbing ComboTickStep semitones per link, so a chain is heard building.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
@@ -40,8 +42,8 @@ local function template(cue: string): Sound?
 	return s
 end
 
--- 2D cue (UI, your own actions).
-function AudioController.play(cue: string, pitchJitter: number?)
+-- 2D cue (UI, your own actions). `pitchMult` scales the cue's pitch.
+function AudioController.play(cue: string, pitchJitter: number?, pitchMult: number?)
 	local t = template(cue)
 	if not t then
 		return
@@ -49,9 +51,11 @@ function AudioController.play(cue: string, pitchJitter: number?)
 	local s = t:Clone()
 	local cfg = (AudioConfig.Cues :: any)[cue]
 	s.Volume = cfg.volume * volumeFor(cue)
+	local pitch = (cfg.pitch or 1) * (pitchMult or 1)
 	if pitchJitter then
-		s.PlaybackSpeed = (cfg.pitch or 1) * (1 + (math.random() - 0.5) * pitchJitter)
+		pitch *= 1 + (math.random() - 0.5) * pitchJitter
 	end
+	s.PlaybackSpeed = pitch
 	s.Parent = SoundService
 	s:Play()
 	s.Ended:Connect(function()
@@ -62,6 +66,16 @@ function AudioController.play(cue: string, pitchJitter: number?)
 			s:Destroy()
 		end
 	end)
+end
+
+-- The combo tick for the `link`-th technique of a chain (1 = first).
+function AudioController.comboTick(link: number, perfect: boolean?)
+	local steps = math.clamp(math.floor(link) - 1, 0, AudioConfig.ComboTickMaxSteps)
+	local mult = 2 ^ (steps * AudioConfig.ComboTickStep / 12)
+	if perfect then
+		mult *= AudioConfig.ComboTickPerfect
+	end
+	AudioController.play("ComboTick", nil, mult)
 end
 
 -- Positional cue in the world.

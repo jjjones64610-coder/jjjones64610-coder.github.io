@@ -1,6 +1,14 @@
 --!strict
--- ArenaService — current arena, field geometry and wind. Rebuilds the world
--- between matches.
+--[[
+	ArenaService — current arena, field geometry and wind. Rebuilds the world
+	between matches.
+
+	The field follows the mode: Config/Modes.Fields.Mini (240 x 90 including
+	end zones) for 3v3 and .Normal (360 x 136) for 7v7. The server boots on
+	the Normal field; MatchService rebuilds when a match needs the other one.
+	Field size is published on UBState (Field, FieldWidth, FieldLength,
+	FieldEndZone, FieldBrick) for clients.
+]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -13,16 +21,21 @@ local ArenaBuilder = require(script.Parent.Parent.Arena.ArenaBuilder)
 
 local ArenaService = {}
 
+ArenaService.DefaultField = "Normal"
+
 local current: any = nil
 local built: ArenaBuilder.Built? = nil
 local field: FieldGeometry.Field? = nil
-local fieldSpec: any = nil
+local fieldSpec: ModesConfig.FieldSpec? = nil
+local currentFieldName = ArenaService.DefaultField
 
 function ArenaService.build(arenaId: string, fieldName: string)
 	local arena = (ArenasConfig.List :: any)[arenaId] or ArenasConfig.List[ArenasConfig.Default]
-	local spec = (ModesConfig.Fields :: any)[fieldName] or ModesConfig.Fields.Standard
+	local name = if ModesConfig.Fields[fieldName] then fieldName else ArenaService.DefaultField
+	local spec = ModesConfig.Fields[name]
 	current = arena
 	fieldSpec = spec
+	currentFieldName = name
 	built = ArenaBuilder.build(arena, spec, workspace)
 	field = FieldGeometry.new({
 		center = Vector3.new(0, 0, 0),
@@ -35,6 +48,7 @@ function ArenaService.build(arenaId: string, fieldName: string)
 	state:SetAttribute("Arena", arena.id)
 	state:SetAttribute("ArenaName", arena.Display)
 	state:SetAttribute("Wind", arena.Wind)
+	state:SetAttribute("Field", name)
 	state:SetAttribute("FieldWidth", spec.width)
 	state:SetAttribute("FieldLength", spec.length)
 	state:SetAttribute("FieldEndZone", spec.endZone)
@@ -46,8 +60,13 @@ function ArenaService.field(): FieldGeometry.Field
 	return field :: FieldGeometry.Field
 end
 
-function ArenaService.fieldSpec(): any
+function ArenaService.fieldSpec(): ModesConfig.FieldSpec?
 	return fieldSpec
+end
+
+-- Key into Config/Modes.Fields of the field that is built ("Mini" / "Normal").
+function ArenaService.fieldName(): string
+	return currentFieldName
 end
 
 function ArenaService.arena(): any
@@ -70,11 +89,21 @@ function ArenaService.endZone(side: string): BasePart?
 	return nil
 end
 
+-- Centre of a team's sideline bench (where FieldGeometry.benchSpots stand),
+-- facing the field.
+function ArenaService.benchCFrame(team: string): CFrame?
+	if built then
+		return built.benches[team]
+	end
+	return nil
+end
+
 function ArenaService.spawnCFrame(): CFrame
 	if built then
 		return built.spawn.CFrame + Vector3.new(0, 3, 0)
 	end
-	return CFrame.new(0, 5, -70)
+	local width = if fieldSpec then fieldSpec.width else ModesConfig.Fields[ArenaService.DefaultField].width
+	return CFrame.new(0, 5, -(width / 2 + 16))
 end
 
 function ArenaService.margin(): number
@@ -82,7 +111,7 @@ function ArenaService.margin(): number
 end
 
 function ArenaService.Init(_s: any)
-	ArenaService.build(ArenasConfig.Default, "Standard")
+	ArenaService.build(ArenasConfig.Default, ArenaService.DefaultField)
 end
 
 function ArenaService.Start() end

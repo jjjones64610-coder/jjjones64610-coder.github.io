@@ -1,9 +1,11 @@
 --!strict
 -- ARENAS
--- Every arena uses the same regulation-inspired field so spacing and muscle
--- memory carry over. Arenas differ in look, lighting, wind and (special
--- variants only) optional rebound walls. Ranked uses Competitive arenas, whose
--- wind is zero or light and always shown on the HUD.
+-- The field itself follows the mode (Config/Modes.Fields: Mini 240 x 90 for
+-- 3v3, Normal 360 x 136 for 7v7) and is identical in every arena, so spacing
+-- and muscle memory carry over. Arenas differ in look, lighting, wind and
+-- (special variants only) optional rebound walls; their dressing scales with
+-- the field. Ranked uses Competitive arenas, whose wind is zero or light and
+-- always shown on the HUD.
 
 export type Arena = {
 	id: string,
@@ -190,7 +192,7 @@ Arenas.List = {
 	Beach = {
 		id = "Beach",
 		Display = "Windy Beach",
-		Description = "Sand, surf and a strong, steady crosswind. Casual only.",
+		Description = "Sand, surf and a strong, steady crosswind. Unranked matches only.",
 		Theme = "Beach",
 		Competitive = false,
 		Wind = Vector3.new(0, 0, -7),
@@ -310,7 +312,9 @@ Arenas.List = {
 Arenas.Order = { "Championship", "Coastal", "Rooftop", "Indoor", "Park", "Beach", "RooftopRebound" }
 Arenas.Default = "Championship"
 
--- Training ground is a fixed location beside the main field.
+-- Training ground is a fixed location beside the main field. The hall spans
+-- z 760..1140; the furthest +Z arena geometry on the Normal field (the
+-- scaled Rooftop skyline) ends near z 660, so the hall stays clear.
 Arenas.TrainingOrigin = Vector3.new(0, 0, 900)
 
 return Arenas

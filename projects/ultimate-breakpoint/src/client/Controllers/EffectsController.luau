@@ -4,9 +4,25 @@
 
 	Every technique has its own colour and shape (Theme.TechColors) so
 	experienced players recognise what an opponent just did; nothing hides the
-	disc or the players. Also: catch / block / bobble bursts, goal confetti,
-	crowd idle and cheering, wind flags, the moving training target, stadium
-	scoreboards, cosmetic movement trails and end-zone glow.
+	disc or the players. To keep the screen calm, only Clean and Perfect
+	techniques get particles, and your own techniques make a sound only when
+	it says something (Burst / Layout body sounds, Perfect stingers; the combo
+	tick in the Hud covers the rest). There is no FOV pulse per technique: a
+	Burst asks the camera for at most a 2 degree kick (CameraController caps
+	kicks there anyway).
+
+	Pivot readability. While you hold the disc: a team-coloured disc under your
+	planted pivot foot (MovementController.pivot(), which follows the server's
+	UBPivot), the step range around it (radius StepRadius over the front 270
+	degrees, flattened where the lunge limit ForwardMax cuts it, turned with
+	your aim) and a ghost of your free foot at P + step. Opponents who hold the
+	disc show a small pivot dot (their UBPivot) so a marker can read the foot.
+
+	Also: catch / block / bobble bursts (your own catch already played its
+	sound and burst on the claim in CatchController, so the server's copy is
+	skipped), goal confetti, crowd idle and cheering, wind flags, the moving
+	training target, stadium scoreboards, cosmetic movement trails and
+	end-zone glow.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -18,6 +34,7 @@ local TweenService = game:GetService("TweenService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local Actors = require(Shared.Actors)
+local MovementConfig = require(Shared.Config.Movement)
 local ProgressionConfig = require(Shared.Config.Progression)
 local TeamsConfig = require(Shared.Config.Teams)
 local Theme = require(script.Parent.Parent.UI.Theme)
@@ -177,10 +194,15 @@ local function streak(model: Model, color: Color3, duration: number)
 	end)
 end
 
--- Visual for a technique performed by `model` (local or remote).
+-- Visual for a technique performed by `model` (local or remote). Sloppy and
+-- Gassed techniques get none: the movement itself and the combo widget
+-- already show them, and the effects stay meaningful.
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
+		return
+	end
+	if quality ~= "Perfect" and quality ~= "Clean" then
 		return
 	end
 	local color = (Theme.TechColors :: any)[tech] or Color3.new(1, 1, 1)
@@ -188,22 +210,22 @@ function EffectsController.tech(model: Model, tech: string, quality: string, dir
 	local isLocal = model == player.Character
 	local perfect = quality == "Perfect"
 	if tech == "SnapCut" or tech == "SlideCut" then
-		EffectsController.dust(feet, 8)
+		EffectsController.dust(feet, 6)
 		streak(model, color, 0.25)
 		if perfect then
 			EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 3, 0.25)
 		end
 	elseif tech == "MomentumCancel" then
-		EffectsController.dust(feet, 14)
+		EffectsController.dust(feet, 12)
 		skid(feet, dir)
 	elseif tech == "BurstStep" then
 		EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 4.5, 0.3)
 		streak(model, color, 0.35)
 		if isLocal then
-			controllers.CameraController.kick(5)
+			controllers.CameraController.kick(2)
 		end
 	elseif tech == "Slide" then
-		EffectsController.dust(feet, 16)
+		EffectsController.dust(feet, 12)
 	elseif tech == "Dive" then
 		streak(model, color, 0.45)
 	elseif tech == "AirRedirect" then
@@ -215,13 +237,20 @@ function EffectsController.tech(model: Model, tech: string, quality: string, dir
 		EffectsController.burst(root.Position - dir * 1.5, color, 16, 14)
 	elseif tech == "RecoveryChain" then
 		EffectsController.burst(feet + Vector3.new(0, 1, 0), color, 10, 8)
+	elseif tech == "PivotSwing" then
+		EffectsController.dust(feet + dir * 1.5, 3)
+		if perfect then
+			EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 2.4, 0.2)
+		end
+	elseif tech == "Break" then
+		EffectsController.burst(root.Position + Vector3.new(0, 1, 0), color, 14, 10)
 	end
 	-- (FakeCommit / "Lean" deliberately has no visual: a fake must look real)
 	if isLocal then
 		if tech == "BurstStep" or tech == "Dive" then
 			controllers.AudioController.play("Burst", 0.1)
-		elseif tech ~= "Jump" and tech ~= "FakeCommit" then
-			controllers.AudioController.play(if perfect then "TechPerfect" else "Tech", 0.15)
+		elseif perfect and tech ~= "Jump" and tech ~= "FakeCommit" then
+			controllers.AudioController.play("TechPerfect", 0.15)
 		end
 	end
 end
@@ -438,6 +467,189 @@ local function updateScoreboards()
 end
 
 ---------------------------------------------------------------------------
+-- pivot: your planted foot, step range and free foot; opponents' pivot dots
+---------------------------------------------------------------------------
+
+local HD = MovementConfig.Holding
+local FLAT = CFrame.Angles(0, 0, math.pi / 2) -- a Cylinder part's axis is X: lay it on the ground
+local GROUND_LIFT = 0.06
+local ARC_SEGMENTS = 20
+local ARC_HALF = math.rad(135) -- the step range is drawn over the front 270 degrees
+local GHOST_MIN_STEP = 0.35 -- the free-foot ghost shows once the step is this long
+local DOT_EVERY = 0.1
+
+type PivotFx = {
+	foot: BasePart,
+	ghost: BasePart,
+	arc: { BasePart },
+	shown: boolean,
+	color: Color3?,
+}
+
+local pivotFx: PivotFx? = nil
+local arcLocal: { CFrame } = {}
+local remoteDots: { [Model]: BasePart } = {}
+
+local function flatDisc(name: string, diameter: number, color: Color3, transparency: number): BasePart
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Shape = Enum.PartType.Cylinder
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Material = Enum.Material.Neon
+	p.Color = color
+	p.Transparency = transparency
+	p.Size = Vector3.new(0.06, diameter, diameter)
+	p.Parent = fx
+	return p
+end
+
+-- Edge of the reachable step region at angle `a` from the aim (0 = forward,
+-- + = right): the StepRadius circle cut by the lunge / drop-step limits.
+local function stepEdge(a: number): Vector3
+	local R = HD.StepRadius
+	local fwd = math.cos(a)
+	local d = R
+	if fwd > 1e-3 then
+		d = math.min(d, HD.ForwardMax * R / fwd)
+	elseif fwd < -1e-3 then
+		d = math.min(d, HD.BackMax * R / -fwd)
+	end
+	-- local frame: +X right, -Z forward (CFrame.Angles(0, yaw, 0) convention)
+	return Vector3.new(math.sin(a) * d, 0, -fwd * d)
+end
+
+local function buildPivotFx(): PivotFx
+	local arc: { BasePart } = {}
+	table.clear(arcLocal)
+	for i = 0, ARC_SEGMENTS - 1 do
+		local a0 = -ARC_HALF + 2 * ARC_HALF * i / ARC_SEGMENTS
+		local a1 = -ARC_HALF + 2 * ARC_HALF * (i + 1) / ARC_SEGMENTS
+		local p0, p1 = stepEdge(a0), stepEdge(a1)
+		local seg = Instance.new("Part")
+		seg.Name = "UBStepArc"
+		seg.Anchored = true
+		seg.CanCollide = false
+		seg.CanQuery = false
+		seg.CanTouch = false
+		seg.CastShadow = false
+		seg.Material = Enum.Material.Neon
+		seg.Transparency = 1
+		seg.Size = Vector3.new(0.12, 0.04, (p1 - p0).Magnitude + 0.04)
+		seg.Parent = fx
+		table.insert(arc, seg)
+		table.insert(arcLocal, CFrame.lookAt((p0 + p1) / 2, p1))
+	end
+	return {
+		foot = flatDisc("UBPivotFoot", 1.1, Theme.Colors.Accent, 1),
+		ghost = flatDisc("UBFreeFoot", 0.9, Color3.new(1, 1, 1), 1),
+		arc = arc,
+		shown = false,
+		color = nil,
+	}
+end
+
+local function setPivotShown(p: PivotFx, shown: boolean, ghost: boolean)
+	p.ghost.Transparency = if shown and ghost then 0.5 else 1
+	if p.shown == shown then
+		return
+	end
+	p.shown = shown
+	p.foot.Transparency = if shown then 0.15 else 1
+	for _, seg in p.arc do
+		seg.Transparency = if shown then 0.55 else 1
+	end
+end
+
+local function standHeightOf(model: Model): number
+	local h = model:FindFirstChildOfClass("Humanoid")
+	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if h and root and h.RigType == Enum.HumanoidRigType.R15 then
+		return h.HipHeight + root.Size.Y / 2
+	end
+	return 3
+end
+
+-- Every frame after the camera: your pivot foot, step range and free foot.
+local function updateLocalPivot()
+	local p = pivotFx
+	if not p then
+		return
+	end
+	local mc = controllers.MovementController
+	local pivot: Vector3? = if mc.holdingDisc() then mc.pivot() else nil
+	local character = player.Character
+	if not pivot or not character or not mc.root() then
+		setPivotShown(p, false, false)
+		return
+	end
+	local team = character:GetAttribute("UBTeam")
+	local color = Theme.teamColor(if type(team) == "string" then team else nil)
+	if team ~= "A" and team ~= "B" then
+		color = Theme.Colors.Accent
+	end
+	if p.color ~= color then
+		p.color = color
+		p.foot.Color = color
+		local edge = color:Lerp(Color3.new(1, 1, 1), 0.35)
+		for _, seg in p.arc do
+			seg.Color = edge
+		end
+	end
+	local base = Vector3.new(pivot.X, pivot.Y - mc.standHeight() + GROUND_LIFT, pivot.Z)
+	local step: Vector3 = mc.step()
+	local flatStep = Vector3.new(step.X, 0, step.Z)
+	local showGhost = flatStep.Magnitude >= GHOST_MIN_STEP
+	setPivotShown(p, true, showGhost)
+	local parts: { BasePart } = { p.foot, p.ghost }
+	local cfs: { CFrame } = {
+		CFrame.new(base) * FLAT,
+		CFrame.new(base + flatStep + Vector3.new(0, 0.01, 0)) * FLAT,
+	}
+	local frame = CFrame.new(base) * CFrame.Angles(0, controllers.CameraController.getYaw(), 0)
+	for i, seg in p.arc do
+		table.insert(parts, seg)
+		table.insert(cfs, frame * arcLocal[i])
+	end
+	workspace:BulkMoveTo(parts, cfs, Enum.BulkMoveMode.FireCFrameChanged)
+end
+
+-- A small pivot dot under every opponent who holds the disc (their UBPivot).
+local function updateRemoteDots()
+	local mine = player.Character
+	local myTeam = if mine then mine:GetAttribute("UBTeam") else nil
+	local onTeam = myTeam == "A" or myTeam == "B"
+	local seen: { [Model]: boolean } = {}
+	for _, m in Actors.characters() do
+		if m ~= mine then
+			local pv = m:GetAttribute("UBPivot")
+			local team = m:GetAttribute("UBTeam")
+			if typeof(pv) == "Vector3" and (not onTeam or team ~= myTeam) then
+				seen[m] = true
+				local color = Theme.teamColor(if type(team) == "string" then team else nil)
+				local dot = remoteDots[m]
+				if not dot then
+					dot = flatDisc("UBPivotDot", 0.8, color, 0.3)
+					remoteDots[m] = dot
+				end
+				local d = dot :: BasePart
+				d.Color = color
+				d.CFrame = CFrame.new(pv.X, pv.Y - standHeightOf(m) + GROUND_LIFT, pv.Z) * FLAT
+			end
+		end
+	end
+	for m, dot in remoteDots do
+		if not seen[m] then
+			dot:Destroy()
+			remoteDots[m] = nil
+		end
+	end
+end
+
+---------------------------------------------------------------------------
 
 function EffectsController.Init(c: any)
 	controllers = c
@@ -481,9 +693,12 @@ function EffectsController.Start()
 		end
 		local mine = actorId == player.UserId
 		if kind == "Catch" then
-			local color = if quality == "Clean" then Theme.Colors.Clean else Theme.Colors.Gold
-			EffectsController.burst(pos, color, if zone == "Dive" then 26 else 12, 10)
-			controllers.AudioController.playAt(if quality == "Clean" then "CleanCatch" else "Catch", pos)
+			-- your own claim already played the sound and a burst (CatchController)
+			if not (mine and controllers.CatchController.recentLocalCatch()) then
+				local color = if quality == "Clean" then Theme.Colors.Clean else Theme.Colors.Gold
+				EffectsController.burst(pos, color, if zone == "Dive" then 26 else 12, 10)
+				controllers.AudioController.playAt(if quality == "Clean" then "CleanCatch" else "Catch", pos)
+			end
 			if mine and zone == "Dive" then
 				controllers.CameraController.shake(0.15, 0.25)
 			end
@@ -528,9 +743,6 @@ function EffectsController.Start()
 			return
 		end
 		EffectsController.cheer(if (h.score or 0) > 700 then 2.5 else 1.4)
-		if h.id == player.UserId then
-			controllers.CameraController.kick(3)
-		end
 	end)
 
 	local collectQueued = false
@@ -547,12 +759,21 @@ function EffectsController.Start()
 	CollectionService:GetInstanceAddedSignal("UBFlag"):Connect(queueCollect)
 	collectFans()
 
+	pivotFx = buildPivotFx()
+	-- after the camera (its yaw turns the step range) and the movement step
+	RunService:BindToRenderStep("UBPivotFx", Enum.RenderPriority.Camera.Value + 6, updateLocalPivot)
+
 	local lastScan = 0
+	local lastDots = 0
 	RunService.Heartbeat:Connect(function()
 		animateCrowd()
 		animateMovers()
 		updateScoreboards()
 		local clock = os.clock()
+		if clock - lastDots >= DOT_EVERY then
+			lastDots = clock
+			updateRemoteDots()
+		end
 		if clock - lastScan > 0.5 then
 			lastScan = clock
 			for _, m in Actors.characters() do

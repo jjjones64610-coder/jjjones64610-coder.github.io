@@ -5,10 +5,17 @@
 	All positions are relative to Arenas.TrainingOrigin. Layout (top view,
 	+Z = north):
 
-	  z 150..230  Interception Drill (W)        | Throwing Range targets (E)
-	  z   0..140  Aerial Catch (W) | Combo Lab  | Throwing Range lane (E)
-	  z -130..-10 Movement School  | Cutting    | Momentum Shuttle
-	              (W)              | Course (C) | (E)
+	  z 150..230  Interception    | Break the Mark | Throwing Range
+	              Drill (W)       | lane (C)       | targets (E)
+	  z 100..150  Aerial Catch    | Break the Mark | Throwing Range
+	              launcher (W)    | pivot mark (C) | lane (E)
+	  z   0..100  Aerial Catch (W) | Combo Lab     | Throwing Range lane (E)
+	  z -130..-10 Movement School  | Cutting       | Momentum Shuttle
+	              (W)              | Course (C)    | (E)
+
+	Break the Mark: the thrower's pivot mark at (-5, 120) facing north, a
+	scripted bot marker in front of it and two receiver pads 28 studs
+	downfield, one either side of the lane.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -41,6 +48,9 @@ export type Layout = {
 	targets: { { pos: Vector3, radius: number, points: number, name: string } },
 	mover: { center: Vector3, amplitude: number, period: number, radius: number, points: number },
 	interception: { thrower: Vector3, receiverStart: Vector3, playerStart: Vector3 },
+	-- Break the Mark: `mark` is the pivot spot (ground), `facing` points down
+	-- the lane, `receivers` are the two receiver pads (ground).
+	breakMark: { mark: Vector3, facing: Vector3, receivers: { Vector3 } },
 	prompts: { [string]: ProximityPrompt },
 }
 
@@ -411,6 +421,47 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 		Vector3.new(0, 0, 1)
 	)
 
+	-- Break the Mark (north centre): pivot mark, lane and two receiver pads
+	local breakFolder = Build.folder(model, "BreakTheMark")
+	local markSpot = at(-5, 120)
+	local breakFacing = Vector3.new(0, 0, 1)
+	Build.part(breakFolder, {
+		Name = "BreakLane",
+		Size = Vector3.new(44, 0.04, 56),
+		CFrame = CFrame.new(at(-5, 146, 0.03)),
+		Color = Color3.fromRGB(255, 120, 200),
+		Material = Enum.Material.Neon,
+		Transparency = 0.92,
+	})
+	Build.part(breakFolder, {
+		Name = "PivotMark",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.1, 3, 3),
+		CFrame = CFrame.new(markSpot + Vector3.new(0, 0.06, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+		Color = Color3.fromRGB(80, 255, 140),
+		Material = Enum.Material.Neon,
+	})
+	local receivers = { at(-17, 148), at(7, 148) }
+	for i, pos in receivers do
+		Build.part(breakFolder, {
+			Name = "ReceiverPad" .. i,
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.1, 7, 7),
+			CFrame = CFrame.new(pos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+			Color = Color3.fromRGB(255, 200, 60),
+			Material = Enum.Material.Neon,
+			Transparency = 0.4,
+		})
+	end
+	station(
+		"BreakMark",
+		"BREAK THE MARK",
+		"Pivot past a live marker. Find the open side.",
+		at(-30, 112),
+		markSpot + Vector3.new(0, 3, 0),
+		breakFacing
+	)
+
 	model.Parent = parent
 	return {
 		model = model,
@@ -427,6 +478,7 @@ function TrainingBuilder.build(origin: Vector3, parent: Instance): Layout
 		targets = targets,
 		mover = mover,
 		interception = interception,
+		breakMark = { mark = markSpot, facing = breakFacing, receivers = receivers },
 		prompts = prompts,
 	}
 end
