@@ -1,442 +1,425 @@
 # ULTIMATE: BREAKPOINT — Design
 
 > Ultimate frisbee turned into a competitive movement-skill sport.
-> A beginner sees a disc, runs to it, catches it and gets it. An expert plants,
-> restarts, bursts into a lane, takes a lead pass at full extension and pops up
-> into a quick release before the defense can turn around.
+> A beginner runs to the disc, catches it and throws it. An expert plants,
+> restarts, bursts into a lane, tips a disc out of the air to reset their air
+> moves, and pivots around a marker to break the mark.
 
-**Why "Breakpoint".** In ultimate, a *break* is a throw around the marker to the
-side they are denying, and *breaking* a defender is what good cutting does. The
-whole game is built around creating those two moments, so the working title
-stayed.
+**Why "Breakpoint".** In ultimate a *break* is a throw around the marker to
+the side they are denying, and *breaking* a defender is what good cutting
+does. The game is built around both moments.
 
-All numbers below come from `src/shared/Config/*.luau`. Change them there; the
-offline tests (`tests/`) will tell you if a change breaks an invariant
-(speed caps, flight shapes, rule outcomes).
+All numbers come from `src/shared/Config/*.luau`; change them there. The
+offline tests (`tests/`) encode the intended *relationships* (speed caps,
+flight shapes, rule outcomes, reset limits) and fail if a change breaks one.
+
+**Status.** Written and checked offline only (types against the real Roblox
+API, lint, 188 Lune tests, place build). It has not been run in Roblox
+Studio; see `docs/TESTING.md`.
 
 ---
 
-## 1. Pillars → where they live in the design
+## 1. Pillars
 
 | Pillar | How it shows up |
 |---|---|
-| Skill over randomness | No hidden rolls anywhere. Throws, catches, bobbles, blocks and bot noise are deterministic functions of inputs and positions (bots use a seeded RNG for personality, never for outcomes). |
-| Movement is a competitive mechanic | A sprinting player turns on a ~7-stud radius. Getting open requires techniques with timing windows (§3). |
-| The disc is the centre | Combos only pay out when converted into a catch, block or interception (§7). |
-| Easy to learn | WASD + Shift + Space + click works: running into the disc catches it, holding and releasing the mouse throws. Movement School teaches the rest. |
-| Hard to master | Every technique has a Perfect/Clean/Sloppy window, chains have their own windows, throws have five types × bank × height × timing. |
-| Earned spectacle | Highlights are detected from validated server facts only (§7). |
-| Integrity / counterplay | Every technique has a cost, cooldown or commitment. Defenders get the same toolkit plus mark stances and hand blocks (§5). |
-| Responsive controls | Movement is simulated on the client with zero input latency; the server validates instead of round-tripping (§11). |
-| Teamwork | Stall count, no running with the disc, the Flow bonus for quick releases, and bots/humans who mark goal-side make passing the only way up the field. |
-| No pay-to-win | Progression unlocks are cosmetic only (§9). There are no purchases in the code. |
+| Feels good first | The Humanoid moves the body every frame from the sim's velocity (§3.1). Running is the default (auto-sprint); stops and turns are quick; every press does something visible. |
+| Skill over randomness | No hidden rolls. Throws, catches, tips, bobbles, blocks and bot noise are deterministic functions of inputs and positions. |
+| Hard to master | Timing only changes the *bonus*. The ceiling is in chains, resets and signature moves (§4), break throws from the pivot (§6), and reading the mark (§7). |
+| Fair bodies | Everyone has the same fixed hitbox (§2). |
+| PvP | Exactly two modes, Mini 3v3 and Normal 7v7; bots only fill empty spots (§10). |
+| Integrity | Every technique has a cost, cooldown or commitment; the server validates every technique, reset, tip, catch and throw (§12). |
+| No pay-to-win | Progression is cosmetic only. There are no purchases in the code. |
 
 ---
 
-## 2. Scale and feel
+## 2. Scale, fields and the fixed hitbox
 
-* 1 metre ≈ 3 studs (a 5.3-stud avatar ≈ 1.77 m).
-* Sprint 26 studs/s (≈ 8.7 m/s, elite-runner pace), jog 17, hard cap 34.
-* Character gravity 160 studs/s² with a 44 studs/s jump: ~6 studs of air in 0.55 s.
-  Stylised and readable, but the disc uses real-scale physics (§4), so hang
-  times and running under a huck feel like the real sport.
-* Field (Standard): 190 × 100 playing proper, 40-stud end zones, brick 40 studs
-  in. Small (Rush/Clutch): 124 × 76, 28-stud end zones.
+* 1 metre ≈ 3 studs. Characters: jog 18 studs/s, sprint 28, hard cap 36.
+  Gravity 160 studs/s², jump 46 studs/s (+4 at full sprint): ~6.6 studs of
+  air in ~0.58 s.
+* **Fields** (`Config/Modes.Fields`; `length` is the playing field proper):
 
----
+  | Field | Width | Playing field | End zones | Brick | Total | Sprint across |
+  |---|---|---|---|---|---|---|
+  | Mini (3v3) | 90 | 160 | 2 × 40 | 44 | 240 × 90 | ~6 s |
+  | Normal (7v7) | 136 | 240 | 2 × 60 | 64 | 360 × 136 | ~9 s (real ultimate ≈ 8.5–9 s) |
 
-## 3. Movement engine (`Movement/MovementSim.luau`)
-
-### 3.1 Modes
-
-```
-            jump / dive / walk off edge
-   Ground ───────────────────────────────► Air ──(dive)──► Dive
-     ▲  │ slide                              │                │
-     │  ▼                                    │ touch down      │ touch down
-   Slide ──(slide ends / slide cut)──► Ground ◄── Landing ◄────┘ (no dive)
-                                             ▲                 │
-                                             │                 ▼ (dive)
-                            Recover ◄─── DiveSlide        Precision Landing
-                              │  pop window (0.2 s)          (skips Landing /
-                              └──── Recovery Chain ──► Ground   becomes Roll-out)
-   Frozen: line-ups and pulls. Holding: an overlay on any mode (decel → pivot).
-```
-
-### 3.2 Momentum model
-
-Velocity is horizontal; vertical belongs to physics. Each frame on the ground
-the desired velocity (input × top speed) is split into the component **along**
-the current velocity and the component **across** it:
-
-* along: speed up at 58 studs/s² (95 from below 7 studs/s), brake at 80 if the
-  input opposes motion, coast down at 50 with no input, bleed overspeed at 38;
-* across: limited to 92 studs/s² of lateral acceleration.
-
-So turning radius = v² / 92: 7.3 studs at sprint, 3.1 at jog. A plain reversal
-from sprint takes ~0.75 s. That cost is what techniques buy back.
-
-In the air, control is 20 studs/s² and can never raise speed more than 3 above
-takeoff speed (or 10, whichever is higher). With no input, momentum is kept.
-
-**Exertion** (0–100): sprinting drains 4.5/s; each technique has a cost;
-regeneration is 20/s after 0.6 s without sprinting or techniques. When a
-technique costs more than you have, it still happens, as a weaker *Gassed*
-version (no lockouts that stop play). Below 15 exertion, sprint top speed
-slides from 26 toward 21.
-
-### 3.3 Techniques
-
-All are reached from five actions — **Cut, Burst, Slide, Dive, Jump** —
-pressed in a context and at a time.
-
-| Technique | Input / context | Effect | Timing & quality | Cost / limits | Counterplay |
-|---|---|---|---|---|---|
-| **Snap Cut** | Cut with input 25–115° off travel, ≥ 9 studs/s | instant redirect keeping speed × retention | *Perfect* if you held one line ≥ 0.6 s at ≥ 85 % sprint (96 % kept, +2); *Clean* after ≥ 0.32 s (86 %); *Sloppy* otherwise or within 0.4 s of the last cut (62 %). Sharper angles lose up to 15 % more. | 10 exertion, 0.2 s min interval | Zig-zag spam bleeds speed; a defender who stays goal-side and doesn't bite on the line keeps up. |
-| **Momentum Cancel** | Cut with input >115° off travel (or no input), ≥ 12 studs/s | 0.12 s plant at 330 studs/s² braking | Restart with Cut/Burst/Jump **0.10–0.32 s** after: 0.10–0.21 s = *Perfect* (leave at 92 % sprint), later = *Clean* (76 %). Pressing before 0.10 s locks restarts out for 0.15 s (no mashing). | 10, 0.45 s cooldown | A mistimed plant leaves you standing still next to your defender. |
-| **Fake Commit** | Cut along travel (or while standing) | jab step: −20 % speed (or a 9 studs/s side jab) and a forward lean | Any cut ≥ 30° away within 0.45 s is **Sold**: always Perfect and leaves at ≥ 80 % sprint. Opponents see a generic lean — the same as a Burst's first frames. | 6, 0.7 s cooldown | Defenders who wait for actual displacement instead of the lean aren't fooled, but are a beat late on real bursts. |
-| **Burst Step** | Burst on the ground | 0.2 s locked burst at max(speed, sprint) × 1.2 (29–32.5) | *Perfect* within 0.15 s of a Snap Cut; out of a plant window it is free and Perfect/Clean by the plant timing | 22, 1.6 s cooldown | Direction is locked for 0.2 s; read it and take the lane. |
-| **Slide** | Slide while ≥ 14 studs/s | low slide, friction 13, steer 50°/s, ≤ 0.9 s; +3 speed (never past 29) | — | 8, 0.7 s | Low catch zone; you can't burst or dive out of it; slide hops can't exceed 29. |
-| **Slide Cut** | Cut during a slide (after 0.15 s), ≤ 120° | leave the slide on a new line | 0.3–0.6 s into the slide = *Perfect* (94 %), else *Clean* (84 %) | 8 | — |
-| **Jump** | Jump on ground/slide (0.1 s coyote time) | 44 + up to 5 with speed | slide hop keeps slide speed | — | — |
-| **Air Redirect** | Cut in the air | rotate up to 80°, keep 92 %/82 %, arrest a fall to ≥ −6 | near the apex (\|vy\| < 9) = *Perfect* | 12, once per airtime (refreshed by a rebound) | Only one per jump; still committed after it. |
-| **Layout (Dive)** | Dive on the ground or once in the air | ground: speed+4 clamped 24–32 with a 20 studs/s hop; air: +9 (≤ 31) | *Perfect* within 0.25 s of a Snap Cut/Burst/Slide Cut/Air Redirect/Recovery Chain | 18, 1.1 s cooldown | You slide 0.5–0.8 s and recover 0.5 s if you miss. |
-| **Precision Landing** | Slide pressed ≤ 0.15 s before touchdown (or ≤ 0.06 s after) | no landing penalty, keep 100 %/96 % | offset ≤ 0.05 s = *Perfect*. Pressing earlier than 0.15 s locks it for 0.3 s. | free | Missing it costs 12 % speed and 0.12 s of reduced steering. |
-| **Roll-out** | Precision Landing out of a dive | 0.16 s recovery keeping 72 %/58 % | as above | free | — |
-| **Recovery Chain** | Cut / Burst / Jump in the 0.2 s pop window when a dive slide stops | skip the remaining recovery and leave at 75 %/55 % sprint (or pop-up jump) | first 0.09 s = *Perfect*. Pressing while still sliding locks out 0.25 s. | — | — |
-| **Wall Rebound** | Jump in the air within 3 studs of a `Rebound`-tagged wall | reflect + push off (×0.9), 36 up | within 1.2 studs = *Perfect* | 10, 2 per airtime, never the same wall twice | Only in special arenas and the Combo Lab. |
-| **Aerial Reach** | Primary while airborne | Catch Adjustment: hand extends toward your aim | — | once per airtime for combo credit | — |
-
-**Holding the disc** (no running): after a catch you may only decelerate
-(52 studs/s², ≤ 0.65 s, direction locked); then a pivot is set and you may move
-within 3.2 studs of it at 10 studs/s. A hop (Jump) allows a high release but you
-must release before landing ("travel" otherwise). All techniques are disabled.
-
-### 3.4 Combinations
-
-Techniques chain because each one's *exit state* is another's *entry
-condition*, and several have explicit chain windows:
-
-* Sprint → Snap Cut → Burst (≤ 0.15 s = Perfect) → separation catch.
-* Fake Commit → Snap Cut (Sold, always Perfect).
-* Sprint → Momentum Cancel → Restart Cut / Explosive Burst (0.10–0.21 s).
-* Jump → Air Redirect (at apex) → Precision Landing → immediate Snap Cut.
-* Slide → Slide Cut (0.3–0.6 s) → Burst → end-zone run.
-* Snap Cut → Layout (≤ 0.25 s = Perfect) → Roll-out or Recovery Chain → mark.
-* Wall Rebound → Air Redirect → Layout (Rebound arenas).
-
-Nothing is a canned animation; every link is a separate input you can choose
-to make or skip.
-
-### 3.5 Anti-exploit invariants (tested)
-
-* Horizontal speed is clamped to 34 every step. `tests/movement_spec` runs
-  40 × 3000 random frames of random inputs, techniques, wall contacts and
-  holding toggles and asserts the cap, no NaN and exertion bounds.
-* Slide-hop chains are proven not to exceed the 29 slide ceiling.
-* Every timing window has an early-press lockout (plant restart, precision
-  landing, recovery pop) so mashing performs worse than timing.
-* Cooldowns and costs are mirrored on the server (§11).
+* **Fixed hitbox** (`Config/Hitbox`). Every player's avatar is rescaled to
+  standard proportions when it spawns (HumanoidDescription scales: height,
+  width, depth and head 1, body type and proportions 0; clothes, colours and
+  accessories are kept). Bots spawn with the same scales. Gameplay never
+  reads the avatar's parts: catch zones are built from a fixed capsule
+  measured from the feet (`Hitbox.root`: the root moved so it stands 3 studs
+  above the same ground), mark boxes are measured from the ground, and only
+  the 2 × 2 × 1 HumanoidRootPart collides (limbs and accessories collide with
+  nothing; players never collide with each other). **Settings → Show
+  hitboxes** draws everyone's capsule (radius 1.2, height 5.4).
 
 ---
 
-## 4. Disc physics (`Disc/DiscPhysics.luau`)
+## 3. Movement (`Movement/MovementSim.luau`)
 
-State: position, velocity, spin-axis normal **n**, spin rate. Fixed step 1/120 s,
-semi-implicit Euler, plain doubles (not float32 `Vector3`) so the server and every
-client compute bit-identical flights from the same replicated launch values.
+### 3.1 How the body moves
 
-* **Lift** `K·|v|²·CL(α)` along n minus its airflow component: tilting (banking)
-  the disc tilts lift, which curves the flight. `CL = 0.15 + 1.4α`, stalling past 0.45 rad.
-* **Drag** `K·|v|²·(0.08 + 2.72(α + 0.07)²)`, capped at 1.2.
-* **Precession**: the pitching moment `CM = −0.01 + 1.0α` rolls the spin axis at a
-  rate ∝ |v|²·CM / spin. Low α (fast, flat) rolls one way (*turn*), high α (slow,
-  descending) the other (*fade*). The spin sign decides which way is which, so a
-  right-handed backhand turns slightly right and fades left, a forehand mirrors
-  it, and low spin (an overcharged release) rolls more.
-* **Wind** enters through the airflow (velocity relative to the air). It is
-  constant per arena, shown on the HUD, and teams switch ends every point.
-* Real-world frisbee coefficients (Hummel 2003) converted to studs
-  (K = 0.0665/stud, g = 29.4 studs/s²), then tuned so that flights read well;
-  see `tests/disc_spec.luau` for the shape assertions.
+The pure sim decides the velocity; the client's Humanoid moves the body:
+every frame `WalkSpeed = |v|` and `Move(v.Unit)`. On *impulse* frames
+(technique starts, jumps, any jump in the output of more than 4 studs/s) it
+also writes `AssemblyLinearVelocity` directly. Jumps set `JumpPower` and
+`ChangeState(Jumping)`. Facing is an AlignOrientation (AutoRotate off). The
+sim only adopts the body's real velocity when a ray says something solid is
+in the way (`env.blocked`) and the body has lagged for 0.08 s. If the frame
+ever errors, the body is stopped rather than left running.
 
-### 4.1 Throws (`Disc/ThrowModel.luau`, right-handed, flat aim, no wind)
+Bots run the same sim on the server and drive their Humanoids the same way.
 
-| Throw | Hold | Bank | Release | Speed | Range | Hang | Apex | Lateral |
-|---|---|---|---|---|---|---|---|---|
-| Backhand | 0.15 s | 0 | Clean | 45 | 57 | 2.3 s | 8 | −7 (fades left) |
-| Backhand | 0.35 s | 0 | Clean | 62 | 96 | 3.6 s | 16 | −14 |
-| Backhand | 0.60 s | 0 | **Perfect** | 82 | 136 | 4.8 s | 27 | −2 (S-curve) |
-| Forehand | 0.60 s | 0 | Over (charges 1.2× faster) | 74 | 123 | 4.3 s | 22 | +11 (fades right) |
-| Hammer | 0.60 s | 0 | Perfect | 70 | 106 | 2.6 s | 20 | inverts, drops steeply |
-| Scoober | 0.50 s | 0 | Perfect | 49 | 55 | 1.4 s | 10 | +5, inverted flip |
-| Blade | 0.60 s | 0 | Perfect | 78 | 106 | 1.9 s | 8 | −20, fast edge dive |
-| Backhand | 0.60 s | right | Perfect | 82 | 119 | 2.5 s | 15 | +42 |
-| Backhand | 0.60 s | left | Perfect | 82 | 136 | 3.4 s | 16 | −61 |
+### 3.2 Locomotion
 
-(units: studs, studs/s.) Regenerate with the snippet in `docs/TESTING.md`.
+| | |
+|---|---|
+| Acceleration | 95 % of sprint in ~0.32 s (Accel 70, from rest 140) |
+| Stopping | from sprint in ~0.28 s (Coast 100, Brake 130) |
+| Turning | sideways accel 260 at jog → 130 at sprint: ~1.2-stud turn radius at jog, ~6 at sprint |
+| Plain reversal at sprint | ~0.45 s (a Perfect plant-restart: < 0.2 s) |
+| Air | AirAccel 30; air control can add at most 4 over takeoff speed |
+| Landing | keeps 96 % of speed, 0.08 s recovery |
+| Sprint | **AutoSprint** (default): sprint after holding one direction for 0.3 s; Shift sprints at once; ToggleSprint optional |
+| Exertion | 100. Sprinting is effectively free (drain 2/s, regen 8/s); techniques spend it. *Gassed* only below half a technique's cost |
 
-### 4.2 Throwing skill — every input matters, nothing is rolled
+### 3.3 Techniques: every press does something
 
-* **Charge** — power rises linearly to full at 0.55 s (scaled by the type's
-  charge rate). Releasing inside the 0.10 s window right after full charge is a
-  **Perfect** release: +5 % speed, +15 % spin (a tighter, more stable line).
-  Holding longer is *Over*: spin decays 0.8/s to a floor of 0.6, so the disc
-  rolls more. Short holds are clean touch passes.
-* **Aim** — camera yaw/pitch (+ each type's elevation offset).
-* **Bank** — 7 steps (±35°) with Q/E: the disc goes where it is tilted, then
-  fades by spin. Inside-out / outside-in emerge from bank + type.
-* **Release height** — *Mid*; *Low* (hold Slide: a step-out at knee height up
-  to 2.4 studs wide of the body, under a high mark); *High* (hop with Jump and
-  release in the air, over a low mark).
-* **Balance** — throwing airborne (other than a hop), off a layout from the
-  ground, or while still moving > 12 studs/s costs power cap and spin.
-* **Carry** — 45 % of the thrower's horizontal velocity is added (quick
-  releases out of a running catch).
-* **Fake** — Secondary plays the identical windup defenders see on a real
-  throw, then cancels (0.3 s cooldown).
-* **Lead Pass assist** (optional, R) — solves aim for the teammate nearest the
-  crosshair using their *current* velocity and marks the ideal power on the
-  meter. It cannot predict a cut, and you still have to release on the mark.
-* **Preview arc** — shows the first fraction of the predicted flight: 100 % in
-  training, 50 % casual, 35 % clutch, 20 % ranked.
+`MovementSim.press` returns `(ok, reason)`. Presses that are a little early,
+in a short cooldown or about to become valid are **buffered for 0.15 s** and
+retried every step; there are no lockouts. A refused press says why on the
+HUD ("NEED SPEED", "ONE PER JUMP", "BURST READY IN 0.8s"). The HUD's context
+line shows what each key does right now.
 
----
-
-## 5. Catching and defense
-
-### 5.1 Catch zones (`Rules/CatchGeometry.luau`)
-
-* **Secure**: 2.4-stud sphere at the chest (drops 1.4 studs while sliding).
-* **Reach**: Primary opens a 0.28 s window; a 3.6-stud capsule from the near
-  shoulder along your aim (a soft assist bends it toward a disc within 8 studs
-  and 55°). Airborne reaches are the *Aerial Catch Adjustment*.
-* **Dive**: during a layout, a 5.2-stud capsule along the dive direction.
-
-Inside 60 % of a zone's radius is a **Clean** catch; near the rim is a
-**Fingertip** catch.
-
-### 5.2 Contests, bobbles, blocks — explainable outcomes
-
-* The earliest touch wins. Touches within 0.06 s of each other are a contest,
-  won by the cleaner hand (smaller depth into the zone).
-* A **fingertip** winner of a contest, or a fingertip catch of a disc moving
-  faster than 70 studs/s relative to the hand, **bobbles**: the disc pops up and
-  stays live (anyone can catch it). Clean catches never bobble.
-* A defender's **fingertip** contact is a **block** (knocked down, live).
-  A defender's clean contact is an **interception**.
-* Nobody can catch in the first 0.15 s of a throw; the thrower can't catch
-  their own throw unless someone else touched it.
-
-### 5.3 The mark
-
-* **Stall count**: one count per second (configurable) while an opponent is
-  within 9 studs; 10 is a turnover (7/8 in Rush/Clutch). Pauses on a double
-  team (a second defender in range who isn't guarding anyone else) and on a
-  disc-space violation (marker inside 2.6 studs for 0.4 s); resets after 1.5 s
-  unmarked.
-* **Mark stance** (hold Secondary): *Low* = wide hands, knees to chest
-  (±3.2 studs, 0.6–4.4 up); *High* (aim up) = narrower (±2.6), 4.6–8.6 up. Jumping
-  lifts the zone. The stance is visible on the defender's body.
-* **Hand blocks**: on every release the first 0.3 s of the flight is tested
-  against nearby defenders' hand zones. Counter: pivot (3.2 studs), fake to
-  move the hands, step-out low under a high mark, hop high over a low one, or
-  throw the hammer over a low mark.
-
-### 5.4 Defensive depth
-
-Defenders use the full movement toolkit: anticipating a throw, cutting into
-the lane, laying out (*Layout D*), and Recovery-Chaining back to their man.
-The interception drill teaches lane positioning and reports your distance from
-the throwing lane at the moment of release. Players never collide (non-contact
-sport; collision groups), so there are no body-blocking stun locks.
-
----
-
-## 6. The sport (`Rules/RulesEngine.luau`)
-
-* Pull to start each point (or the offense starts with the disc at its goal
-  line in Rush/Clutch). Receivers take it where it stops, or at the brick if
-  it lands out; touching and dropping the pull is a turnover.
-* No running with the disc (deceleration + pivot, enforced client and server).
-* Turnovers: incomplete, dropped, blocked, out of bounds, stalled out.
-  Turnover spots inside an end zone move to its goal line.
-* A catch counts where the receiver first touches down. Airborne receivers
-  must have left the ground in bounds. Catch in the end zone you attack: goal.
-  A defender who intercepts in the end zone they defend: **Callahan** (goal).
-* Catch airborne past a line and release before landing: **the Greatest**.
-* Teams switch direction after every goal; the scored-on team receives.
-* First to N; time cap finishes the current point; tied after the cap (or
-  both teams at game point) → **universe point**.
-* Line itself counts as in bounds (readability on a Roblox field).
-* Not modelled: contact fouls (players do not collide), picks, injury calls.
-
-Every rule above is unit tested in `tests/rules_spec.luau`.
-
----
-
-## 7. Combos and highlights
-
-`Rules/ComboEvaluator.luau`:
-`event = base × quality (Perfect 1.5 / Clean 1 / Sloppy 0.5 / Gassed 0.3) ×
-variety (repeat 0.25, in last three 0.6, new 1)`,
-`chain = Σ × length bonus (1 + 0.2 per scoring tech, max 3) × unique bonus
-(+0.08 per distinct tech, max 1.4)`. Chains end after 1 s without a technique.
-
-Chains only pay out (XP, highlight tags, ×2) when **converted** into a catch,
-interception or block during the chain or within 1.25 s of it. Pure movement
-spam shows labels and nothing else. Tiers: NICE 400, SLICK 900, FILTHY 1600,
-BREAKPOINT 2600.
-
-`HighlightService` tags plays from server-validated facts only: LAYOUT, SKY
-(airborne catch with a defender within 4.5 studs), HUCK (≥ 120 studs),
-CONTESTED, FLOW ×N (consecutive quick releases), tiered COMBO, INTERCEPTION,
-LAYOUT D, HAND BLOCK, BLOCK, CALLAHAN, GREATEST, HAMMER/BLADE/SCOOBER goals,
-FLOW STATE (10+ pass point), CLUTCH, UNIVERSE. A highlight is a 2.6 s banner
-and a crowd reaction; play never pauses and the camera is never taken away.
-
----
-
-## 8. Training (`TrainingService.luau`)
-
-A separate hall (built at `Arenas.TrainingOrigin`). Walk to a terminal and
-press G (or use the menu):
-
-| Drill | What it measures | Feedback you get |
+| Key (KBM) | Context | Technique |
 |---|---|---|
-| Movement School | every technique once, then a catch and a Perfect throw | step prompts; "released early / held too long" |
-| Cutting Course | 8-gate slalom time trial (+2 s per missed gate) | splits, the slowest section and its speed, a technique suggestion, techniques used, PB |
-| Momentum Shuttle | A→B→A→B→A | each reversal time graded, with "plant + restart 0.1–0.3 s later" advice when slow, PB |
-| Aerial Catch | 10 scripted launches: floaters, skimmers, hammers, blades, layouts | miss distance, whether it was above/below/beyond you, whether your reach was early or late |
-| Throwing Range | 10 throws at 4 rings + a moving ring | hit/miss distance, left/right + short/long with the fix, release quality, power, spin, bank |
-| Interception Drill | bot thrower leads a bot receiver on 8 routes | INT/BLOCK/completion and your distance from the lane at release |
-| Combo Lab | 8 named chains (with rebound walls) | completion checklist |
-| Free Launcher | custom type, power, angle, curve, offset | catch quality and zone |
+| Q | ground, input 25–120° off your line | **Snap Cut**: instant redirect. Judged against the line from *before* the steer started (0.2 s memory), so holding D then Q is still a Perfect cut. Exit ≥ 0.7 × sprint |
+| Q | ground, input along your line | 0.1 s look-ahead: a steer inside it makes a Snap Cut, otherwise a **Fake Commit** (jab, then a Sold cut within 0.6 s) |
+| Q | ground, no input / > 120° back, at speed | **Plant** (Momentum Cancel): stop in 0.12 s; hold a direction to auto-restart at 0.8 × sprint, or Q/F/Space in the window for 0.95 × (Perfect) |
+| Q | below 5.4 studs/s | quick **side step** |
+| Q | air | **Air Redirect** (bend up to 80°; no-op and not used up if you already go that way) |
+| Q | slide | **Slide Cut** (up to 160°) |
+| F | ground / slide | **Burst Step**: +20 % for 0.2 s (1.2 s cooldown; free out of a plant). Above jog it bends your line at most 45° |
+| C (or Ctrl) | ground, fast | **Slide** |
+| C | air, ≤ 0.35 s before touchdown | **Precision Landing** (Perfect ≤ 0.08 s keeps all speed) / **Roll-out** after a dive |
+| E | ground or air | **Layout** dive (above jog it leaves at most 40° off your line) |
+| Space / Q / F | as the dive slide stops | **Recovery Chain** pop-up (Perfect within 0.1 s of the slide stopping) |
+| Space | air, next to a Rebound wall | **Wall Rebound** (2 per jump, different walls) |
+| RMB | air, disc at your hands | **Tip Reset** (§4) |
+
+### 3.4 Resets (the flip-reset family)
+
+Each jump gives **one Air Redirect and one air Layout** (a ground layout
+uses the air layout too). A **reset** gives them back mid-air:
+
+* **Tip Reset**: in the air, press **RMB** (gamepad L2, mobile TIP) as the
+  disc reaches your hands. Judged on the disc's *closest pass* within
+  ±0.12 s of the press against your catch zones plus a hands-up sphere over
+  your head; Perfect within ±0.05 s. The disc pops up ~1.5 studs and comes
+  back down in ~0.4 s; you get your air moves back, the Layout cooldown is
+  refunded, and you get a lift (22, Perfect 28 studs/s up) so you have the
+  ~0.4 s you need to use them. Two tips per jump at most, 0.25 s apart. You
+  can catch the tipped disc yourself after a 0.25 s touch lock.
+* **Wall Reset**: a Wall Rebound also gives both air moves back.
+* **Charged**: the first air move after any reset is Charged: an Air
+  Redirect keeps all of its speed; an air Layout leaves 4 studs/s faster.
+* **Landing Reset**: a Perfect Precision Landing refunds Burst and Layout at
+  once (a Perfect Roll-out refunds the Layout).
+* **Recovery Reset**: a Perfect pop-up refunds the Layout (→ Double Layout).
+
+The HUD shows your air moves while airborne: `Q AIR CUT · E AIR LAYOUT`, dim
+when used, cyan when Charged, plus tips used. A reset flashes cyan round the
+body for everyone.
+
+### 3.5 Invariants (tested)
+
+The 120,000-frame fuzz test (random inputs, presses, swings, marking,
+holding, walls, blocked bodies and random tip resets) proves: never above
+the 36 studs/s cap, no NaN, exertion in range, no vertical impulse above 60,
+and the root never strays from the pivot.
 
 ---
 
-## 9. Progression (cosmetic only)
+## 4. Combos and signature moves
 
-XP from playing, winning, catches, completions, goals, assists, blocks,
-layouts, highlights, converted combos and drills; level curve `300 + 75·level`.
-Unlocks: disc skins, movement trails (thin, translucent, only while > 18 studs/s),
-celebrations (procedural poses), banners, titles; achievement-gated items
-(Callahan Crest, Layout Artist, Hammer Time…). Stats, technique mastery
-(count and Perfect %), personal bests and achievements are persistent.
-Ranked: team Elo (K 40 for 10 placement games, then 24, small margin factor),
-divisions Bronze → Breakpoint, seasonal OrderedDataStore leaderboard.
+### 4.1 Chains (`Rules/ComboEvaluator.luau`)
+
+event = base × quality (Perfect 1.5, Clean 1, Sloppy 0.5, Gassed 0.3) ×
+variety (repeat 0.25, in last three 0.6). Chain = sum × length bonus (up to
+×3) × unique bonus (up to ×1.4). A chain ends 1.5 s after its last
+technique. **Converted** into a catch, interception or block within 2 s:
+×2 score, XP and a highlight; unconverted chains pay 25 % as XP. The HUD
+shows the chain from the first technique (count, points, tier word, a
+draining bar) and a card when it ends.
+
+### 4.2 Signature moves (`Rules/Signatures.luau`, `Config/Signatures.luau`)
+
+Hard, named plays built from the resets. Recognised from validated events on
+the server (the client recognises them too, for an instant banner); points
+go into the chain, so a catch doubles them. Announced to everyone (practice
+in Training stays private), XP by tier, counted per move.
+
+| Move | What | Points |
+|---|---|---|
+| **Double Tip** | two tips in one jump, then catch it before you land | 3000 |
+| **Wall Tip** | Wall Rebound + tip reset in one jump, then the catch | 2500 |
+| **The Greatest** | jump from in bounds, catch a disc flying out, throw it back in before landing | 2500 |
+| **Reset Grab** | tip, use the reset (air cut or air layout), catch the same disc before landing | 2000 |
+| **Self-D** | as a defender, tip it out of the air, then catch it yourself | 2000 |
+| **Double Layout** | layout → Perfect pop-up → air layout catch | 1800 |
+| **Reset Loop** | Perfect landing reset → burst → Perfect snap cut, twice in one chain | 1500 |
+| **Skyball** | catch with your feet > 5 studs off the ground | 800 |
+| **Tip Reset** | tip in the air, then use the air move it gave back | 500 |
+
+When one catch completes several, only the highest in that order pays. A
+catch confirmed after the landing that ended its airtime still counts in
+that airtime (judged by timestamp). Achievements: Reset Artist (10
+signatures), Flip Reset (a Double Tip), Self-Made (a Self-D).
 
 ---
 
-## 10. Arenas
+## 5. Disc physics (`Disc/DiscPhysics.luau`)
 
-Six themes on the same field: **Championship Stadium** (floodlights, packed
-stands), **Coastal Sunset** (sea breeze 2.5), **Neon Rooftop** (skyline,
-neon lines, breeze 1.5), **The Lab** (indoor, still), **Community Park**
-(trees, playground) and **Windy Beach** (7 studs/s crosswind, casual only),
-plus **Neon Rooftop: Rebound** with glowing sideline walls (special rules,
-never ranked). End zones glow in the colour of the team attacking them.
+Deterministic flight (plain doubles, fixed 1/120 s step) with lift, drag,
+gyroscopic precession (turn and fade) and wind; real-frisbee coefficients
+(Hummel 2003) in studs. **Tempo 1.5**: every flight runs 1.5× faster than
+the real-time model (same shapes and ranges; speeds and spin ×1.5,
+accelerations ×2.25), so a mid-range throw outpaces a sprinter about 1.4×
+and hucks about 1.6×. Clients re-simulate the identical flight on server
+time; nothing is streamed per frame.
+
+### 5.1 Throws (right-handed, flat aim, no wind; `lune run tests/flight_table.luau`)
+
+| Throw | Hold | Bank | Release | Speed | Range | Hang | Apex | Lateral | Best aim |
+|---|---|---|---|---|---|---|---|---|---|
+| Backhand | 0.15 s | +0 | Clean | 72 | 65 | 1.7 s | 9 | -8 | 67 (+0°) |
+| Backhand | 0.35 s | +0 | Clean | 103 | 110 | 2.7 s | 20 | -13 | 126 (-5°) |
+| Backhand | 0.60 s | +0 | Perfect | 139 | 157 | 3.5 s | 32 | +13 | 185 (-5°) |
+| Forehand | 0.60 s | +0 | Over | 125 | 142 | 3.2 s | 26 | +1 | 165 (-5°) |
+| Hammer | 0.60 s | +0 | Perfect | 118 | 132 | 2.2 s | 23 | +3 | 134 (+3°) |
+| Scoober | 0.50 s | +0 | Perfect | 83 | 65 | 1.0 s | 11 | +6 | 78 (+18°) |
+| Blade | 0.60 s | +0 | Perfect | 132 | 139 | 1.7 s | 9 | -30 | 158 (+11°) |
+| Backhand | 0.60 s | +1 | Perfect | 139 | 131 | 1.6 s | 17 | +42 | 138 (+13°) |
+| Backhand | 0.60 s | -1 | Perfect | 139 | 160 | 2.8 s | 21 | -75 | 164 (+0°) |
+
+Field fit: a full Perfect backhand (171 flat / 185 best aim) pulled from a
+Normal goal line lands around the receivers' brick (176); a Mini pull can
+reach the end zone.
+
+### 5.2 Throwing skill
+
+* **Charge**: power rises to full at 0.55 s; release within 0.1 s after full
+  = Perfect (+5 % speed, +15 % spin); longer = Over (spin decays).
+* **Aim**: the throw converges on what the crosshair points at (the camera's
+  centre ray, up to 220 studs), not the camera's own yaw, so over-the-shoulder
+  aiming never misses to one side. Pitch comes from the camera.
+* **Bank** Z / X (7 steps, ±35°); **type** 1–5, T or the wheel (backhand,
+  forehand, hammer, scoober, blade).
+* **Release height**: Mid; Low (hold C: knee height, extended toward the
+  step); High (hop with Space, release before landing, over a low mark).
+* **Fake**: RMB plays the real windup, then cancels (0.45 s apart).
+* **Lead Pass assist** (R): solves aim for the teammate nearest the
+  crosshair from their current velocity; you still release on the mark.
+* **Preview arc**: the first 50 % of the flight (Mini), 35 % (Normal), 20 %
+  (ranked); it turns red where it would cross a marker's hands.
 
 ---
 
-## 11. Networking and architecture
+## 6. Holding the disc: the pivot
 
-### Authority
+* After a catch the slow-down starts on your *claim* (predicted): you keep
+  facing your travel while you slide and turn to the camera as you stop. The
+  pivot foot **P** plants when speed drops below 4 studs/s (or after
+  0.45 s). P is authoritative on the server (`UBPivot`); the client proposes
+  it and always adopts the server's value.
+* **Step**: WASD (relative to your aim) steps the free foot around P up to
+  R = 3.6 studs (lunge forward ≤ 0.75R, drop step ≤ 0.9R) on a critically
+  damped spring. The body sits at P + 0.55 × step. The pivot foot stays
+  pinned to P on screen; the free leg never swaps.
+* **Quick Swing**: Q swings to the left side, E to the right (gamepad X: the
+  other side), ~0.18 s, 0.4 s cooldown. Within 0.35 s of a fake it is a
+  *Sold* swing; releasing within 0.3 s after a Sold swing is a **Break**
+  (250 points).
+* **Fake step**: RMB with a direction held lunges the foot 0.6R that way and
+  back.
+* **Hop**: Space, once per possession: a high release over a low mark. Land
+  before releasing and the charge is lost.
+* The **release point** is P + step + the type's side and height offsets, so
+  a full step-out releases outside a marker's hands. The server validates the
+  step against its view of the body (with latency and drive-lag slack).
+
+---
+
+## 7. Catching and defence
+
+### 7.1 Catching (`Rules/CatchGeometry.luau`)
+
+Zones from the fixed hitbox: **Secure** sphere at the chest (radius 2.4;
+lower while sliding, on the turf while lying flat after a layout), **Reach**
+capsule along your aim for 0.28 s after LMB, **Dive** capsule along the dive.
+The client detects contact where your body really is and claims at the
+disc's *closest approach* (≤ 0.08 s of tracking). Quality = the minimum depth
+over 0.1 s: inside 80 % = Clean, beyond = Fingertip. Fingertip catches of a
+very fast disc, or contested ones, bobble. A defender's touch is a Block
+only right at the rim (depth > 0.9); deeper is an interception. Claims are
+pooled 0.04 s so near-simultaneous touches are a fair contest; every claim is
+answered (Denied → the client retries at once).
+
+### 7.2 The mark
+
+A human marker holds **RMB within 8 studs** of the holder's pivot: a mark
+shuffle (15 studs/s, quick accel and brake, no turn radius, no drain) with
+hands up; **C** toggles Low / High. The hand box faces the marker's facing
+blended halfway toward P (at most 35° off): Low ±2.8 wide, 0.8–4.6 up; High
+±2.2, 4.4–8.2 up; Relaxed (no stance) a small chest sphere. Jumping lifts it.
+Stall range (9) and disc space (2.4) are measured from P, so a lunge can't
+cause a disc-space call. Hand blocks rewind markers to where the thrower saw
+them (round trip + interpolation, ≤ 0.25 s). Each team's markers force one
+side per point (UBState ForceA/ForceB).
+
+**Counterplay.** A shaded marker covers the force side; the break side needs
+a full Low step-out or a step plus a little outward aim; a High release
+clears Low hands; a hammer clears Low hands unless the marker jumps. A fake
+that bites the marker, then a Quick Swing to the other side, beats a human's
+reaction time (~3.5 studs to cover in 0.18 s).
+
+**Bots** shade the force side, mirror the step with a reaction lag, switch
+stance only on a live windup, jump-block hops and sometimes bite on fakes.
+A human who steps up to mark takes over from a bot.
+
+---
+
+## 8. The sport (`Rules/RulesEngine.luau`)
+
+Pulls (out of bounds → brick), no running with the disc (pivot + travel
+check), stall count while marked within range (8 in Mini, 10 in Normal),
+turnovers (incomplete, out of bounds, drop, block, stall), interceptions,
+Callahans, goals only where you land, airborne catches resolved on landing,
+the Greatest, time cap (leader wins between points; tie → universe point),
+target score (5) with universe point at 4–4. Tips by the throwing team keep
+the disc live; a defensive tip is a block (and can be caught for a Self-D).
+
+---
+
+## 9. Training (`TrainingService.luau`)
+
+**Menu → Training** or walk to a terminal (G).
+
+* **Movement School**: 18 steps (run, snap cut, plant, restart, burst, jab,
+  sold cut, slide, slide cut, air redirect, precision landing, layout,
+  recovery chain, catch, throw, pivot, quick swing, break).
+* **Cutting Course**, **Momentum Shuttle**, **Aerial Catch**, **Throwing
+  Range**, **Interception Drill**, **Combo Lab** (eight chains, rebound walls).
+* **Break the Mark**: 8 reps against a bot marker whose skill ramps 0.5 → 0.85;
+  feedback on which side was open.
+* **Reset Lab**: high floaters keep arriving over your head at the Combo Lab;
+  tip, reset, chase and catch. Ticks off Tip Reset, Reset Grab, Skyball,
+  Double Layout, Wall Tip and Double Tip; scores their points (personal best).
+* **Free Launcher**: set type, power, angle, curve and offset, then launch.
+
+The Training menu also lists every signature move, how to do it and how many
+you have landed.
+
+---
+
+## 10. Modes, teams and PvP (`Config/Modes.luau`, `Rules/MatchPlan.luau`)
+
+| | Mini | Normal |
+|---|---|---|
+| Players | 3v3 | 7v7 |
+| Field | Mini | Normal |
+| To win / time cap | 5 / 7 min | 5 / 12 min |
+| Stall | 8 | 10 |
+| Throw preview | 50 % | 35 % |
+
+* **Which mode**: by head count. Up to 6 humans → Mini; 10 or more → Normal;
+  7–9 → players vote between them (default Mini at 7, Normal at 8–9). In a
+  private server or Studio the host chooses. The vote list refreshes as
+  people join and leave. Countdown 20 s with ≥ 2 humans, 30 s alone
+  ("practice vs bots").
+* **Teams**: humans are split with rating balance (counts within 1). At most
+  TeamSize per team play each point; extras sit on the team **bench**
+  (sideline) and rotate in (those who sat out longest first). **Bots fill
+  empty spots** so the field is always exactly 3v3 or 7v7; a joining human
+  takes a bot's place at the next point; a leaver is replaced by a bot.
+* **Ranked** is automatic: a public server, an eligible mode and all-human
+  lines (substitutes allowed). Ranked uses a 20 % preview and no special
+  arenas, never takes private rules; a ranked leaver takes a loss and the
+  result is voided for the others.
+* **Private servers**: the host sets mode, bot fill, points, time cap, stall,
+  pull, preview and landing shadow, and can start at once.
+* **Line-ups**: frozen only 0.6 s after the line-up teleport, then free
+  behind your own goal line until the pull (pulled back if offside).
+
+---
+
+## 11. Arenas and progression
+
+Six themes on the same field sizes (Championship Stadium, Coastal Sunset,
+Neon Rooftop, The Lab, Community Park, Windy Beach) plus **Neon Rooftop:
+Rebound** with glowing walls (special rules, never ranked). Benches on every
+sideline. Progression is cosmetic only: XP and levels, titles, trails, disc
+skins, celebrations, achievements; ranked rating with divisions and a
+leaderboard.
+
+---
+
+## 12. Networking and server authority
 
 | Server decides | Client owns (validated) |
 |---|---|
-| possession, scoring, turnovers, rules, stall count | its character's physics and movement techniques |
+| possession, scoring, rules, stall, pivot P | its character's physics and techniques |
 | every disc launch (from the thrower's *inputs*) | camera / aim |
-| every catch, block, bobble, hand block | catch *claims* (timestamped) |
-| match state, teams, bots, progression, data | visual prediction of its own throw/catch |
+| every catch, tip, block, bobble, hand block | catch and tip *claims* (timestamped) |
+| match state, teams, bots, progression, data | visual prediction of its own throws, catches and tips |
 
-### Per action
-
-* **Movement**: simulated locally (zero latency). Technique events go to the
-  server in one small batch per frame *only when something happened*. The
-  server checks names, rate (≤ 12/s), mirrored cooldowns and an exertion
-  budget, and replicates accepted ones as character attributes so every
-  client poses that character. Speed is checked over 0.2 s windows against
-  the cap + slack; repeated violations snap back. A holder leaving their pivot
-  is snapped back (travel).
-* **Throws**: the client sends type, aim, hold time, bank, height. The server
-  measures the charge itself, decides balance from its own grounded check,
-  recomputes the launch from its view of the thrower and checks hand blocks.
-* **Flights**: the server writes launch values into the disc's attributes;
-  every client re-simulates the identical deterministic flight on server time.
-  No per-frame disc replication at all.
-* **Catches**: the client detects contact where its body really is and claims
-  with a server timestamp. The server rewinds the *disc* (≤ 0.3 s history),
-  builds catch zones from its view of the claimer (which lags by about the
-  same latency) and adds ping-scaled slack (≤ 3.5 studs). Claims are pooled
-  for 0.1 s so simultaneous touches are a fair contest. Ground contact waits
-  0.2 s for late claims. The claimer's disc snaps to the hand immediately and
-  corrects if the server decides otherwise.
+* **Techniques**: sent in one small batch per frame only when something
+  happened, each with its timestamp (clamped to 0.35 s old). The server checks
+  names, rate (≤ 12/s), mirrored cooldowns (including reset refunds) and an
+  exertion budget, allows one Air Redirect and one air Layout per airtime
+  **plus one per validated reset** (a TipReset only counts right after a tip
+  claim it is resolving), and replicates accepted ones as pose attributes.
+* **Speed**: a 1 s sliding window against HardCap × 1.15 + 8; a snap only
+  after two flagged seconds in a row, keeping rotation; grace after teleports.
+* **Pivot / travel**: the root may stray PivotRadius + 1.5 + latency from P on
+  two samples 0.1 s apart before a travel reset.
+* **Teleports** are an explicit protocol (`UBTeleportPos/Yaw/Face`, then the
+  `UBTeleport` counter); the client re-applies them and keeps its state.
+* **Ping**: `Player:GetNetworkPing()` is a round trip; the server halves it
+  once, and every latency allowance uses that one-way value.
+* **Throws**: the server measures the charge, validates the pivot step and
+  release point, accepts High only with recent airborne evidence, and checks
+  hand blocks against rewound markers.
+* **Flights**: launch values in the disc's attributes; every client
+  re-simulates the same flight. Deflections are back-dated to the contact.
 
 ### Code map
 
 ```
-src/shared   pure modules (MovementSim, DiscPhysics, ThrowModel, Solver,
-             CatchGeometry, FieldGeometry, RulesEngine, ComboEvaluator,
-             Rating), configs, Net (remote names), Actors (player/bot ids),
-             Locomotion animation
+src/shared   pure modules: MovementSim, DiscPhysics, ThrowModel, Solver,
+             CatchGeometry, FieldGeometry, RulesEngine, MatchPlan,
+             ComboEvaluator, Signatures, Rating; Config/* (incl. Hitbox,
+             Signatures); Net, Actors, Locomotion, Util/*
 src/server   Main + Services: Player, Data, Arena, Movement (validation),
              Disc, Catching, Defense, Throw, Leaderboard, Progression,
              Highlight, Team, Bot, Training, Match; Arena builders
 src/client   Main + Controllers: Settings, Input, Camera, DiscRenderer,
              Movement, Catch, Throw, Pose, Audio, Effects, UI; UI modules
-src/character  Animate (replaces Roblox's default, velocity-driven)
+src/character  Animate (blended walk/run, replaces Roblox's default)
 ```
 
-### Performance budget
-
-Server: ≤ 14 root raycasts per frame, one 120 Hz disc sim per active disc, bot
-AI at 10 Hz. Client: one disc sim per visible disc, one preview sim while
-holding, BulkMoveTo for discs and the crowd (20 Hz), procedural poses within
-300 studs. Network: event-driven only; the single stream is the defender's
-optional 10 Hz `MarkAim` on an `UnreliableRemoteEvent`.
-
 ---
 
-## 12. Controls
+## 13. Controls (defaults; rebind in Menu → Controls)
 
-| Action | Keyboard / mouse | Gamepad | Touch |
+| | Keyboard / mouse | Gamepad | Touch |
 |---|---|---|---|
-| Move / sprint | WASD / hold Shift | left stick / L1 | stick (push fully) / SPRINT |
-| Jump · Cut · Slide · Dive · Burst | Space · Q · Ctrl or C · E · F | A · X · B · Y · R1 | buttons |
-| Reach / throw (hold) | LMB | R2 | THROW/REACH |
-| Mark stance / fake | RMB | L2 | FAKE/MARK |
-| Bank · type | Q/E · 1–5, Z/X, wheel | D-pad | BANK, TYPE |
-| Lead assist · celebrate · menu · mouse lock | R · B · M · LeftAlt | R3 · D-pad down · Select | LEAD · MENU |
-
-Everything is rebindable (Menu → Controls) and saved with the profile.
-Sensitivities, FOV, invert Y, camera shake, toggle sprint, left-handed
-throwing, touch button size and audio levels are in Menu → Settings.
-
----
-
-## 13. Modes
-
-Casual (first to 5, 8 min cap, bots fill to 3 per team), Ranked (first to 7,
-12 min, no bots, ≥ 2 humans per side for the result to count), Rush (small
-field, stall 7, no pulls, 5 min), Clutch Point (one point, universe from the
-start, 90 s). Private servers: the owner (or the first player in Studio) can
-edit points, cap, stall count/interval, pulls, bots, preview length, shadows
-and field size, and start immediately.
-
----
-
-## 14. Quality bar — honest self-assessment
-
-| Question | Answer |
-|---|---|
-| Fun to move without the disc? | Designed for it: the Combo Lab, Cutting Course and Shuttle are movement toys with PBs. **Needs playtesting** to confirm feel. |
-| Can a skilled player outperform by movement alone? | Yes, measurably: a plain reversal takes ~0.75 s, a Perfect plant-restart ~0.2 s (tested). |
-| Creative chains? | Yes: chains are open-ended inputs with windows, not canned sequences. |
-| Throwing rewards execution? | Yes: deterministic, five types × bank × height × timing × balance. |
-| Defense can counter? | Mark stances, hand blocks, layouts, lane reading, stall pressure. Needs balance testing with humans. |
-| Catches exciting, not random? | Zones are geometric, bobbles follow stated rules. |
-| Team strategy matters? | No running with the disc + stall + Flow bonus. Bots are basic, so this needs human playtests. |
-| Readable for beginners? | Run into the disc to catch, glowing end zone shows where to score, attack arrow, Movement School. |
-| Multiplayer responsive and fair? | Architecture is built for it (client-side movement, deterministic flights, rewind-validated claims). **Not yet measured under real latency.** |
-| Long-term depth? | Technique mastery stats, PBs, ranked, tiers. Content beyond this vertical slice is on the roadmap. |
+| Move · sprint | WASD · auto (or hold Shift) | left stick · auto (L1 / L3) | stick (auto) · SPRINT |
+| Jump · Cut · Slide · Layout · Burst | Space · Q · C / Ctrl · E · F | A · X · B · Y · R1 | buttons |
+| Throw (hold) / reach | LMB | R2 | THROW |
+| Fake / mark (hold near holder) / **tip** (in the air) | RMB | L2 | MARK · FAKE · TIP |
+| With the disc | WASD step · Q / E swing · Space hop · C low · Z / X bank · 1–5, T, wheel type · R lead | stick · X swing · A hop · B low · D-pad bank / type · R3 lead | SWING L / R · HOP · LOW · BANK · TYPE · LEAD |
+| Menu · free mouse · celebrate | M · LeftAlt · B | Select · — · D-pad down | MENU |
