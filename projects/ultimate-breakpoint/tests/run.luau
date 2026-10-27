@@ -30,9 +30,12 @@ local specs = {
 	signatures = function()
 		return require("./signatures_spec")
 	end,
+	tech = function()
+		return require("./tech_spec")
+	end,
 }
 
-local order = { "movement", "disc", "throw", "catch", "rules", "combo", "misc", "modes", "signatures" }
+local order = { "movement", "disc", "throw", "catch", "rules", "combo", "misc", "modes", "signatures", "tech" }
 local only = process.args[1]
 
 for _, name in order do
