@@ -37,6 +37,7 @@ local Actors = require(Shared.Actors)
 local MovementConfig = require(Shared.Config.Movement)
 local ProgressionConfig = require(Shared.Config.Progression)
 local TeamsConfig = require(Shared.Config.Teams)
+local Hitbox = require(Shared.Config.Hitbox)
 local Theme = require(script.Parent.Parent.UI.Theme)
 
 local EffectsController = {}
@@ -197,6 +198,17 @@ end
 -- Visual for a technique performed by `model` (local or remote). Sloppy and
 -- Gassed techniques get none: the movement itself and the combo widget
 -- already show them, and the effects stay meaningful.
+-- A reset (Tip Reset, Wall Rebound): a cyan pulse round the body so you
+-- and everyone else can see the air moves came back.
+local RESET_COLOR = Color3.fromRGB(90, 230, 255)
+local function resetFlash(root: BasePart, isLocal: boolean)
+	EffectsController.ring(root.Position, RESET_COLOR, 3.6, 0.35)
+	EffectsController.burst(root.Position + Vector3.new(0, 1.5, 0), RESET_COLOR, 12, 10)
+	if isLocal then
+		controllers.AudioController.play("Reset")
+	end
+end
+
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
@@ -235,6 +247,9 @@ function EffectsController.tech(model: Model, tech: string, quality: string, dir
 		EffectsController.dust(feet, 6)
 	elseif tech == "WallRebound" then
 		EffectsController.burst(root.Position - dir * 1.5, color, 16, 14)
+		resetFlash(root, isLocal)
+	elseif tech == "TipReset" then
+		resetFlash(root, isLocal)
 	elseif tech == "RecoveryChain" then
 		EffectsController.burst(feet + Vector3.new(0, 1, 0), color, 10, 8)
 	elseif tech == "PivotSwing" then
@@ -659,7 +674,121 @@ function EffectsController.Init(c: any)
 	fx = f
 end
 
+---------------------------------------------------------------------------
+-- hitbox overlay (Settings: Show hitboxes)
+---------------------------------------------------------------------------
+
+-- The fixed gameplay body of every character as a see-through capsule from
+-- the feet (Config/Hitbox), so players can check that everyone's body is the
+-- same whatever their avatar. Client-only adornments, refreshed at 10 Hz.
+type HitboxDraw = { parts: { HandleAdornment }, root: BasePart }
+local hitboxDraws: { [Model]: HitboxDraw } = {}
+local hitboxNextRefresh = 0
+
+local function clearHitboxes()
+	for model, d in hitboxDraws do
+		for _, a in d.parts do
+			a:Destroy()
+		end
+		hitboxDraws[model] = nil
+	end
+end
+
+local function hitboxColor(model: Model): Color3
+	local team = model:GetAttribute("UBTeam")
+	if team == "A" then
+		return TeamsConfig.A.Color
+	elseif team == "B" then
+		return TeamsConfig.B.Color
+	end
+	return TeamsConfig.Neutral.Color
+end
+
+local function drawHitbox(model: Model, root: BasePart): HitboxDraw
+	local r, h = Hitbox.Radius, Hitbox.Height
+	local function adorn(a: HandleAdornment)
+		a.Adornee = root
+		a.AlwaysOnTop = false
+		a.ZIndex = 0
+		a.Transparency = 0.75
+		a.Color3 = hitboxColor(model)
+		a.Parent = fx
+	end
+	local body = Instance.new("CylinderHandleAdornment")
+	body.Radius = r
+	body.Height = math.max(h - 2 * r, 0.1)
+	adorn(body)
+	local top = Instance.new("SphereHandleAdornment")
+	top.Radius = r
+	adorn(top)
+	local bottom = Instance.new("SphereHandleAdornment")
+	bottom.Radius = r
+	adorn(bottom)
+	return { parts = { body, top, bottom }, root = root }
+end
+
+local function placeHitbox(model: Model, d: HitboxDraw)
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local feet = -Hitbox.standHeightOf(humanoid, d.root)
+	local r, h = Hitbox.Radius, Hitbox.Height
+	local mid = feet + h / 2
+	-- adornment offsets are in the root's space; keep the capsule upright
+	-- (CylinderHandleAdornment's axis is its local Z)
+	local upright = CFrame.Angles(math.rad(90), 0, 0)
+	d.parts[1].CFrame = CFrame.new(0, mid, 0) * upright
+	d.parts[2].CFrame = CFrame.new(0, feet + h - r, 0)
+	d.parts[3].CFrame = CFrame.new(0, feet + r, 0)
+	local color = hitboxColor(model)
+	for _, a in d.parts do
+		a.Color3 = color
+	end
+end
+
+local function updateHitboxes()
+	if controllers.SettingsController.get("ShowHitboxes") ~= true then
+		if next(hitboxDraws) ~= nil then
+			clearHitboxes()
+		end
+		return
+	end
+	local seen: { [Model]: boolean } = {}
+	for _, model in Actors.characters() do
+		local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if root then
+			seen[model] = true
+			local d: HitboxDraw? = hitboxDraws[model]
+			if d and d.root ~= root then
+				for _, a in d.parts do
+					a:Destroy()
+				end
+				d = nil
+			end
+			if not d then
+				d = drawHitbox(model, root)
+				hitboxDraws[model] = d
+			end
+			placeHitbox(model, d :: HitboxDraw)
+		end
+	end
+	for model, d in hitboxDraws do
+		if not seen[model] then
+			for _, a in d.parts do
+				a:Destroy()
+			end
+			hitboxDraws[model] = nil
+		end
+	end
+end
+
 function EffectsController.Start()
+	RunService.Heartbeat:Connect(function()
+		local t = os.clock()
+		if t >= hitboxNextRefresh then
+			hitboxNextRefresh = t + 0.1
+			updateHitboxes()
+		end
+	end)
+
 	controllers.MovementController.Tech:Connect(function(e)
 		local c = player.Character
 		if c then
@@ -709,6 +838,12 @@ function EffectsController.Start()
 		elseif kind == "Bobble" then
 			EffectsController.burst(pos, Theme.Colors.Gold, 14, 9)
 			controllers.AudioController.playAt("Bobble", pos)
+		elseif kind == "Tip" then
+			-- your own tip already played its burst and sound (CatchController)
+			if not mine then
+				EffectsController.burst(pos, RESET_COLOR, 10, 12)
+				controllers.AudioController.playAt("Tip", pos)
+			end
 		elseif kind == "TargetHit" then
 			EffectsController.burst(pos, Theme.Colors.Good, 40, 18, nil, 20)
 			EffectsController.ring(pos, Theme.Colors.Good, 6, 0.4, Vector3.new(0, 0, 1))

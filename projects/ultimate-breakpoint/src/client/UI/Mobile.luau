@@ -257,6 +257,16 @@ function Mobile.update()
 			b.Visible = text ~= ""
 		end
 	end
+	-- in the air (not holding) Secondary is the Tip Reset
+	local airTip = not holding and not controllers.MovementController.isGrounded()
+	if airTip ~= refs.airTip then
+		refs.airTip = airTip
+		for _, entry in refs.labelled do
+			if entry[4] == "Secondary" and not holding then
+				(entry[1] :: TextButton).Text = if airTip then "TIP" else entry[2]
+			end
+		end
+	end
 	if not refs.discRow.Visible and refs.discHeld ~= false then
 		refs.discHeld = false
 		for _, action in refs.discActions do

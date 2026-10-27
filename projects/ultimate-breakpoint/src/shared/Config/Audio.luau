@@ -37,6 +37,9 @@ Audio.Cues = {
 	ComboTick = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.2, pitch = 1.25 },
 	ComboEnd = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.3, pitch = 1.05 },
 	ComboConvert = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.55, pitch = 1.7 },
+	Tip = { id = "rbxasset://sounds/clickfast.wav", volume = 0.8, pitch = 1.5 },
+	Reset = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.45, pitch = 2.0 },
+	Signature = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.8, pitch = 0.9 },
 	-- Supply your own looping crowd ambience and cheer to enable these.
 	CrowdLoop = { id = "", volume = 0.35, pitch = 1.0, looped = true },
 	CrowdCheer = { id = "", volume = 0.7, pitch = 1.0 },

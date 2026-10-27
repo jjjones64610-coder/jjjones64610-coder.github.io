@@ -810,6 +810,9 @@ Audio.Cues = {
 	ComboTick = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.2, pitch = 1.25 },
 	ComboEnd = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.3, pitch = 1.05 },
 	ComboConvert = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.55, pitch = 1.7 },
+	Tip = { id = "rbxasset://sounds/clickfast.wav", volume = 0.8, pitch = 1.5 },
+	Reset = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.45, pitch = 2.0 },
+	Signature = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.8, pitch = 0.9 },
 	-- Supply your own looping crowd ambience and cheer to enable these.
 	CrowdLoop = { id = "", volume = 0.35, pitch = 1.0, looped = true },
 	CrowdCheer = { id = "", volume = 0.7, pitch = 1.0 },
@@ -837,11 +840,20 @@ return Audio
 -- the goal line lands around the receivers' brick, a Mini pull can reach the
 -- end zone, and light touches (~0.1-0.2 s holds) stay short. tests/disc_spec
 -- encodes this; tests/flight_table prints the numbers.
+--
+-- Tempo: the real-world model above flies a mid-range throw at about a
+-- sprinter's speed, which reads as a floaty balloon. Every flight therefore
+-- runs TEMPO times faster: the same shapes and ranges in studs, flight times
+-- divided by TEMPO (speeds and spin x TEMPO, accelerations x TEMPO^2). Wind,
+-- deflection and bobble velocities scale the same way, so nothing changes
+-- shape - a 110-stud backhand just arrives in ~2.7 s instead of ~4.1 s.
+local TEMPO = 1.5
 
 local Disc = {
+	Tempo = TEMPO,
 	Physics = {
 		Dt = 1 / 120, -- fixed simulation step, identical on client and server
-		Gravity = 29.4, -- studs/s^2 (9.81 m/s^2 * 3)
+		Gravity = 29.4 * TEMPO * TEMPO, -- studs/s^2 (9.81 m/s^2 * 3, at TEMPO)
 		AirK = 0.0665, -- 0.5 * rho * area / mass, per stud
 		CL0 = 0.15,
 		CLa = 1.4, -- per radian
@@ -853,8 +865,8 @@ local Disc = {
 		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
 		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
 		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
-		SpinDecay = 0.04, -- per second
-		MinSpin = 8,
+		SpinDecay = 0.04 * TEMPO, -- per second
+		MinSpin = 8 * TEMPO,
 		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
 		GroundContact = 0.14, -- disc centre height that counts as touching the ground
 		MaxFlightTime = 9,
@@ -862,7 +874,7 @@ local Disc = {
 	},
 
 	Throw = {
-		SpinBase = 50, -- rad/s (~8 rev/s)
+		SpinBase = 50 * TEMPO, -- rad/s (~8 rev/s at real tempo)
 		ChargeTime = 0.55, -- seconds of holding to reach full power
 		PerfectWindow = 0.10, -- release within [ChargeTime, ChargeTime + PerfectWindow] = Perfect
 		OverchargeDecay = 0.8, -- spin factor lost per second held beyond the window
@@ -876,8 +888,8 @@ local Disc = {
 		MovingSpinPenalty = 0.85,
 		ThrowerVelocityCarry = 0.45, -- share of the run-up added to the disc (no pivot yet)
 		SwingSpinPenalty = 0.9, -- releasing mid Quick Swing costs 10% spin (no power cap)
-		MinSpeed = 28,
-		MaxSpeed = 88, -- sized for the Normal field (see the header)
+		MinSpeed = 28 * TEMPO,
+		MaxSpeed = 88 * TEMPO, -- sized for the Normal field (see the header)
 		PowerCurve = 0.85,
 		BankRange = 35, -- degrees of player-controlled bank either side
 		BankSteps = 7, -- discrete bank positions for keyboard/gamepad (-3..3)
@@ -1010,7 +1022,7 @@ local Disc = {
 		SlideDrop = 1.4, -- slide lowers the secure zone this much
 		ShoulderHeight = 1.5,
 		ShoulderWidth = 1.0,
-		BobbleSpeed = 95, -- fingertip catch of a disc faster than this bobbles (disc speed only)
+		BobbleSpeed = 95 * TEMPO, -- fingertip catch of a disc faster than this bobbles (disc speed only)
 		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
 		ContestWindow = 0.04, -- claims this close in time are contested
 		ResolveDelay = 0.04, -- server waits this long to collect competing claims
@@ -1032,10 +1044,20 @@ local Disc = {
 		ClientRootMax = 8,
 		ClientRootLead = 0.08,
 		PickupRadius = 3.5,
-		BobbleUp = 16,
+		BobbleUp = 16 * TEMPO,
 		BobbleCarry = 0.25,
 		BlockCarry = 0.18,
-		BlockDown = -6,
+		BlockDown = -6 * TEMPO,
+		-- Tip (the Tip Reset): an airborne player taps the disc up through
+		-- their hands. The Tip zone is a hands-up sphere over the head, on top
+		-- of the normal zones. The disc pops ~1.5 studs and comes back down in
+		-- ~0.4 s - about as long as the tipper's reset lift keeps them up.
+		TipHeight = 3.1, -- Tip sphere centre above the hitbox root
+		TipRadius = 1.9,
+		TipUp = 14, -- vertical speed of the popped disc
+		TipCarry = 0.25, -- share of the disc's velocity it keeps
+		TipPush = 4, -- plus this much along the tipper's facing
+		TipSpin = 10 * TEMPO,
 	},
 
 	-- Marker hand zones (for hand blocks on release). The box is centred on the
@@ -1071,13 +1093,78 @@ return Disc
         </Item>
         <Item class="ModuleScript" referent="11">
           <Properties>
+            <string name="Name">Hitbox</string>
+            <string name="Source"><![CDATA[--!strict
+-- FIXED HITBOX
+-- Every player plays with the same body, whatever their avatar:
+--   * The server rescales every character to the standard proportions below
+--     on spawn (PlayerService), so tall, wide or Rthro avatars look the same
+--     size as everyone else. Clothes, colours and accessories are kept.
+--   * Gameplay never reads the avatar's own parts. Catch zones are built from
+--     a fixed capsule that starts at the feet (ground under the root) and
+--     uses the numbers in Config/Disc.Catch, so even if an avatar could not
+--     be rescaled (a failed load), its zones sit exactly where everyone
+--     else's do. Mark boxes are measured from the ground already.
+--   * Physics only collides the HumanoidRootPart (2 x 2 x 1 for every
+--     standard body); limbs and accessories collide with nothing.
+-- The optional "Show hitboxes" setting draws this capsule for every player.
+
+local Hitbox = {
+	-- standard avatar scales applied on spawn (HumanoidDescription fields)
+	Scales = {
+		HeightScale = 1,
+		WidthScale = 1,
+		DepthScale = 1,
+		HeadScale = 1,
+		BodyTypeScale = 0,
+		ProportionScale = 0,
+	},
+	NormalizeAvatars = true,
+
+	-- the gameplay body: a vertical capsule from the feet
+	RootHeight = 3, -- standard root centre above the ground (HipHeight 2 + half the 2-stud root)
+	Height = 5.4, -- feet to the top of the head
+	Radius = 1.2, -- body capsule radius (drawn by the overlay)
+
+	-- lying flat after a layout (DiveSlide, start of Recover): zones drop to the turf
+	ProneDrop = 1.8, -- the chest zone sits this much lower than standing
+	ProneDiveHeight = -1.6, -- the dive zone runs this far below the standing root (along the ground)
+}
+
+-- The root position every gameplay volume is built from: the real root moved
+-- so it stands RootHeight above the same ground. `standHeight` is how far
+-- this character's real root sits above its feet (HipHeight + half the root
+-- height; 3 for a standard R15 body).
+function Hitbox.root(rootPos: Vector3, standHeight: number): Vector3
+	local sh = if standHeight == standHeight
+			and standHeight > 0
+			and standHeight < 20
+		then standHeight
+		else Hitbox.RootHeight
+	return rootPos - Vector3.new(0, sh - Hitbox.RootHeight, 0)
+end
+
+-- How far a character's real root sits above its feet.
+function Hitbox.standHeightOf(humanoid: Humanoid?, root: BasePart?): number
+	if humanoid and root and humanoid.RigType == Enum.HumanoidRigType.R15 then
+		return humanoid.HipHeight + root.Size.Y / 2
+	end
+	return Hitbox.RootHeight
+end
+
+return Hitbox
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
             <string name="Name">Input</string>
             <string name="Source"><![CDATA[--!strict
 -- DEFAULT BINDINGS
 -- One small vocabulary. Advanced techniques come from pressing these in
 -- context and on time (see MovementSim header), not from extra keys.
 --   Movement actions: Sprint, Jump, Cut, Slide, Dive, Burst
---   Disc actions:     Primary (throw / reach), Secondary (fake / mark)
+--   Disc actions:     Primary (throw / reach), Secondary (fake / mark; in the air: tip)
 --   With the disc:    Q / E quick swing left / right (the Cut / Dive keys),
 --                     Space hop (high release), C low release, Z / X bank,
 --                     mouse wheel or 1-5 throw type (T cycles too), R lead
@@ -1123,7 +1210,7 @@ Input.Display = {
 	Dive = "Layout Dive · Swing Right (with disc)",
 	Burst = "Burst Step (also restarts a plant)",
 	Primary = "Throw (hold) / Reach",
-	Secondary = "Fake Throw / Mark (hold near the holder)",
+	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
 	BankLeft = "Bank Left (with disc)",
 	BankRight = "Bank Right (with disc)",
 	TypeNext = "Next Throw Type",
@@ -1277,6 +1364,7 @@ Input.DefaultSettings = {
 	CameraShake = true,
 	ShowComboFeed = true,
 	ShowTechLabels = false,
+	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	AutoSprint = true,
 	ToggleSprint = false,
 	AutoSprintTouch = true,
@@ -1292,7 +1380,7 @@ return Input
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">Modes</string>
             <string name="Source"><![CDATA[--!strict
@@ -1558,7 +1646,7 @@ return Modes
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="14">
           <Properties>
             <string name="Name">Movement</string>
             <string name="Source"><![CDATA[--!strict
@@ -1698,6 +1786,8 @@ local Movement = {
 		MaxSpeed = 35,
 		GassedMult = 1.12,
 		CutChainWindow = 0.25, -- Perfect within this of a Snap Cut / Slide Cut / pop / plant
+		MaxTurn = 45, -- above jog speed a burst bends the running line at most this far (plants turn freely)
+		TurnPenalty = 0.1, -- burst speed lost as the bend approaches MaxTurn
 	},
 
 	Slide = {
@@ -1735,6 +1825,7 @@ local Movement = {
 		AirVertical = 4,
 		MaxVertical = 24,
 		ChainWindow = 0.4, -- Perfect layout within this of a Snap Cut, Burst, Slide, ...
+		MaxTurn = 40, -- above jog speed a ground layout leaves at most this far off the running line
 	},
 
 	DiveSlide = {
@@ -1786,6 +1877,31 @@ local Movement = {
 		DetectDistance = 3.5, -- client ray length (along velocity, look, and both sides)
 	},
 
+	-- Resets: the flip-reset family. Each jump gives one air move of each kind
+	-- (Air Redirect, air Layout). A reset gives them back mid-air; the next
+	-- air move after a reset is Charged. See Config/Signatures for the named
+	-- plays built on them.
+	Reset = {
+		-- Tip Reset: tip the disc (Secondary in the air, RMB) as it passes your
+		-- hands. The disc pops up a little, your air moves come back, and you
+		-- get a lift to use them. Judged on the disc's closest pass.
+		TipWindow = 0.12, -- the disc's closest pass must be within this of the press
+		TipPerfect = 0.05, -- ... within this = Perfect
+		TipLift = 22, -- you rise at least this fast after a tip reset ...
+		TipLiftPerfect = 28, -- ... or this after a Perfect one
+		MaxTipsPerAir = 2,
+		TipCooldown = 0.25,
+		-- Charged: the first air move after any reset
+		ChargedRetention = 1.0, -- a Charged Air Redirect keeps all its speed
+		ChargedLayoutBoost = 4, -- a Charged air Layout leaves this much faster
+		-- Landing Reset: a Perfect Precision Landing (or roll-out) refunds
+		-- these cooldowns at once; a Perfect recovery pop-up refunds the Layout.
+		LandingRefund = { "BurstStep", "Dive" },
+		AirRefund = { "Dive" }, -- a Tip Reset or Wall Rebound also readies the Layout
+		RollOutRefund = { "Dive" },
+		RecoveryRefund = { "Dive" },
+	},
+
 	-- Holding the disc: the pivot. A planted pivot foot P and a free-foot step
 	-- vector s in the throw frame (forward = aim yaw). The root follows
 	-- P + BodyShare * s.
@@ -1801,6 +1917,7 @@ local Movement = {
 		BodyShare = 0.55, -- the root sits at P + BodyShare * s
 		DriveGain = 14, -- root velocity = gain x distance to its target ...
 		DriveMax = 18, -- ... capped here (Humanoid WalkSpeed while pivoting)
+		DriveMaxFast = 34, -- cap during a Quick Swing or fake step, so the body keeps up with the foot
 		SwingLateral = 0.95, -- Quick Swing target = (side x 0.95R, +0.25R)
 		SwingForward = 0.25,
 		SwingAngular = 1100,
@@ -1841,6 +1958,7 @@ local Movement = {
 		Jump = 20,
 		PivotSwing = 120,
 		Break = 250,
+		TipReset = 220,
 	},
 
 	-- Display names for UI / feedback.
@@ -1860,6 +1978,8 @@ local Movement = {
 		Jump = "Jump",
 		PivotSwing = "Pivot Swing",
 		Break = "Break",
+		TipReset = "Tip Reset",
+		Signature = "Signature",
 	},
 }
 
@@ -1885,6 +2005,7 @@ Movement.TechCosts = {
 	AerialReach = 0,
 	Jump = 0,
 	Break = 0,
+	TipReset = 0,
 }
 
 Movement.TechCooldowns = {
@@ -1903,13 +2024,14 @@ Movement.TechCooldowns = {
 	AerialReach = 0,
 	Jump = 0,
 	Break = 0,
+	TipReset = Movement.Reset.TipCooldown,
 }
 
 return Movement
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">Progression</string>
             <string name="Source"><![CDATA[--!strict
@@ -1941,6 +2063,7 @@ Progression.XP = {
 	UnconvertedMatchCap = 120, -- unconverted chains, per player per match (match play only)
 	TrainingDrill = 15,
 	PersonalBest = 25,
+	SignatureTier = { 40, 90, 160 }, -- per signature move, by Config/Signatures tier
 }
 
 function Progression.xpForLevel(level: number): number
@@ -2097,6 +2220,27 @@ Progression.Titles = {
 Progression.Achievements = {
 	{ id = "FirstGoal", name = "On the Board", description = "Score your first goal.", stat = "goals", goal = 1 },
 	{
+		id = "ResetArtist",
+		name = "Reset Artist",
+		description = "Pull off 10 signature moves.",
+		stat = "signatures",
+		goal = 10,
+	},
+	{
+		id = "FlipReset",
+		name = "Flip Reset",
+		description = "Land a Double Tip: two tips in one jump, then the catch.",
+		stat = "sigDoubleTip",
+		goal = 1,
+	},
+	{
+		id = "SelfMade",
+		name = "Self-Made",
+		description = "Get a Self-D: tip it as a defender, then catch it yourself.",
+		stat = "sigSelfD",
+		goal = 1,
+	},
+	{
 		id = "LayoutArtist",
 		name = "Layout Artist",
 		description = "Make 25 diving (layout) catches.",
@@ -2165,7 +2309,7 @@ Progression.Achievements = {
 		name = "Student of the Game",
 		description = "Finish every training drill once.",
 		stat = "drillsCompleted",
-		goal = 8,
+		goal = 9,
 	},
 } :: { any }
 
@@ -2183,7 +2327,120 @@ return Progression
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">Signatures</string>
+            <string name="Source"><![CDATA[--!strict
+-- SIGNATURE MOVES
+-- Hard, named plays built from the reset mechanics (see Config/Movement.Reset
+-- and docs/DESIGN.md "Resets and signature moves"). Each one is recognised
+-- by Rules/Signatures from the stream of techniques, tips, landings and
+-- catches, pays its points into the combo chain (x2 again when the chain is
+-- converted, which a catch always does), and is announced to the whole
+-- server. Order matters: when one airborne catch completes several, only the
+-- first match in Order pays.
+
+export type Def = {
+	id: string,
+	name: string,
+	points: number,
+	how: string, -- one line for the Training menu
+	tier: number, -- 1 = hard, 2 = very hard, 3 = insane (banner style)
+}
+
+local Signatures = {}
+
+Signatures.List = {
+	DoubleTip = {
+		id = "DoubleTip",
+		name = "DOUBLE TIP",
+		points = 3000,
+		how = "Tip the disc twice in one jump, then catch it before you land.",
+		tier = 3,
+	},
+	WallTip = {
+		id = "WallTip",
+		name = "WALL TIP",
+		points = 2500,
+		how = "Wall rebound and tip reset in the same jump, then catch it in the air.",
+		tier = 3,
+	},
+	ResetGrab = {
+		id = "ResetGrab",
+		name = "RESET GRAB",
+		points = 2000,
+		how = "Tip the disc in the air, use the reset (air cut or air layout), catch it before you land.",
+		tier = 2,
+	},
+	SelfD = {
+		id = "SelfD",
+		name = "SELF-D",
+		points = 2000,
+		how = "As a defender, tip the disc out of the air, then catch it yourself.",
+		tier = 2,
+	},
+	DoubleLayout = {
+		id = "DoubleLayout",
+		name = "DOUBLE LAYOUT",
+		points = 1800,
+		how = "Layout, Perfect pop-up (recovery reset), then layout again in the air and catch.",
+		tier = 2,
+	},
+	ResetLoop = {
+		id = "ResetLoop",
+		name = "RESET LOOP",
+		points = 1500,
+		how = "Perfect landing reset, burst, Perfect snap cut - twice in one chain.",
+		tier = 2,
+	},
+	Greatest = {
+		id = "Greatest",
+		name = "THE GREATEST",
+		points = 2500,
+		how = "Jump from in bounds, catch a disc that is flying out, and throw it back in before you land.",
+		tier = 3,
+	},
+	Skyball = {
+		id = "Skyball",
+		name = "SKYBALL",
+		points = 800,
+		how = "Catch with your feet more than 5 studs off the ground.",
+		tier = 1,
+	},
+	TipReset = {
+		id = "TipReset",
+		name = "TIP RESET",
+		points = 500,
+		how = "Tip the disc in the air (RMB as it reaches your hands), then use the air move it gives back.",
+		tier = 1,
+	},
+} :: { [string]: Def }
+
+-- Priority when one event completes several.
+Signatures.Order = {
+	"DoubleTip",
+	"WallTip",
+	"ResetGrab",
+	"SelfD",
+	"DoubleLayout",
+	"ResetLoop",
+	"Greatest",
+	"Skyball",
+	"TipReset",
+}
+
+-- Recognition windows.
+Signatures.SkyHeight = 5 -- feet above the ground for a Skyball
+Signatures.LoopStep = 0.7 -- Reset Loop: each step within this of the previous
+Signatures.LoopGap = 2.0 -- ... and the second loop within this of the first
+Signatures.SelfDWindow = 2.5 -- Self-D: the catch within this of the defender's tip
+Signatures.LayoutWindow = 2.5 -- Double Layout: pop-up -> air layout -> catch within this
+
+return Signatures
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">Teams</string>
             <string name="Source"><![CDATA[--!strict
@@ -2215,11 +2472,11 @@ return Teams
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="16">
+      <Item class="Folder" referent="18">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -2532,7 +2789,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -2755,7 +3012,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -2916,7 +3173,9 @@ function ThrowModel.resolveStep(
 	local s = ThrowModel.clampStep(claimed, yaw)
 	local expected = pivot + s * HD.BodyShare
 	local lag = if finite(ping) then math.clamp(ping, 0, T.StepCheckMaxPing) else 0
-	local tolerance = T.StepCheckBase + T.StepCheckPing * lag
+	-- plus the distance a body driven toward P + BodyShare*step can still be
+	-- behind its target (DriveMax / DriveGain) when the step just moved
+	local tolerance = T.StepCheckBase + T.StepCheckPing * lag + HD.DriveMax / HD.DriveGain
 	local off = serverRoot - expected
 	if Vector3.new(off.X, 0, off.Z).Magnitude <= tolerance then
 		return s, true
@@ -3092,11 +3351,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="20">
+      <Item class="Folder" referent="22">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -3291,10 +3550,13 @@ export type State = {
 	groundLostAt: number?,
 	takeoffSpeed: number,
 	airRedirectUsed: boolean,
-	airDiveUsed: boolean,
+	airDiveUsed: boolean, -- also set by a ground layout: another layout before landing needs a reset
 	aerialReachUsed: boolean,
 	rebounds: number,
 	lastWall: string?,
+	tipsThisAir: number, -- tip resets this airtime (Reset.MaxTipsPerAir)
+	charged: boolean, -- the next air move follows a reset (Charged)
+	lastResetAt: number,
 
 	landingUntil: number,
 	landedAt: number,
@@ -3355,6 +3617,7 @@ local RO = Config.RollOut
 local AR = Config.AirRedirect
 local PL = Config.PrecisionLanding
 local WR = Config.WallRebound
+local RS = Config.Reset
 local HD = Config.Holding
 local MK = Config.Marking
 
@@ -3370,6 +3633,7 @@ local SHORT: { [string]: string } = {
 	Slide = "SLIDE",
 	FakeCommit = "FAKE",
 	PivotSwing = "SWING",
+	TipReset = "TIP",
 }
 
 -- Techniques whose follow-up Burst / Layout counts as a Perfect chain.
@@ -3461,6 +3725,9 @@ function MovementSim.new(now: number?): State
 		aerialReachUsed = false,
 		rebounds = 0,
 		lastWall = nil,
+		tipsThisAir = 0,
+		charged = false,
+		lastResetAt = -math.huge,
 
 		landingUntil = 0,
 		landedAt = -math.huge,
@@ -3555,6 +3822,13 @@ end
 local function setCooldown(s: State, tech: string)
 	local cd = (Config.TechCooldowns :: any)[tech] or 0
 	s.ready[tech] = s.now + cd
+end
+
+-- A reset refunds these techniques' cooldowns at once.
+local function refund(s: State, techs: { string })
+	for _, tech in techs do
+		s.ready[tech] = s.now
+	end
 end
 
 local function spend(s: State, cost: number)
@@ -3672,6 +3946,23 @@ local function velDirOr(s: State, fallback: Vector3): Vector3
 		return s.vel / speed
 	end
 	return fallback
+end
+
+-- Above jog speed, momentum limits how far an explosive technique can bend
+-- the running line: returns the direction actually taken (at most maxTurn
+-- degrees from the current velocity) and how much of maxTurn it used (0..1).
+-- At low speed (standing, inside a plant) any direction is allowed.
+local function bendLine(s: State, want: Vector3, maxTurn: number): (Vector3, number)
+	local speed = VecMath.flat(s.vel).Magnitude
+	if speed <= Config.JogSpeed then
+		return want, 0
+	end
+	local cur = VecMath.flat(s.vel) / speed
+	local angle = VecMath.flatAngle(cur, want)
+	if angle <= maxTurn then
+		return want, angle / maxTurn
+	end
+	return VecMath.rotateToward(cur, want, maxTurn), 1
 end
 
 local function facingOr(env: Env): Vector3
@@ -3975,7 +4266,10 @@ local function updateHolding(s: State, input: Input, env: Env, dt: number)
 	if dist < 1e-3 then
 		s.vel = Vector3.zero
 	else
-		local sp = math.min(dist * HD.DriveGain, HD.DriveMax, dist / math.max(dt, 1e-3))
+		local now = s.now
+		local fast = now < s.swingUntil or now < s.fakeUntil + HD.FakeStepBack
+		local cap = if fast then HD.DriveMaxFast else HD.DriveMax
+		local sp = math.min(dist * HD.DriveGain, cap, dist / math.max(dt, 1e-3))
 		s.vel = d * (sp / dist)
 	end
 end
@@ -4000,13 +4294,15 @@ local function land(s: State)
 	s.aerialReachUsed = false
 	s.rebounds = 0
 	s.lastWall = nil
+	s.tipsThisAir = 0
+	s.charged = false
 	s.landedAt = now
 	s.landedFromDive = fromDive
 	s.landingVel = s.vel
 	s.groundLostAt = nil
 
 	if s.holding and s.holdHopped then
-		feedback(s, "HopLanded", nil, "TRAVEL — RELEASE BEFORE YOU LAND")
+		feedback(s, "HopLanded", nil, "CHARGE LOST — RELEASE BEFORE YOU LAND")
 	end
 
 	local armed = s.precisionArmedAt
@@ -4019,12 +4315,27 @@ local function land(s: State)
 				s.vel = s.vel * (RO.Retention :: any)[q]
 				enterRecover(s, RO.RecoverTime)
 				emit(s, "PrecisionLanding", q, velDirOr(s, s.diveDir), "RollOut")
+				if q == Q.Perfect then
+					refund(s, RS.RollOutRefund)
+				end
 			else
 				s.vel = s.vel * (PL.Retention :: any)[q]
 				setMode(s, "Ground")
-				emit(s, "PrecisionLanding", q, velDirOr(s, FORWARD), nil)
+				-- Landing Reset: a Perfect landing refunds Burst and Layout
+				emit(s, "PrecisionLanding", q, velDirOr(s, FORWARD), if q == Q.Perfect then "Reset" else nil)
+				if q == Q.Perfect then
+					refund(s, RS.LandingRefund)
+				end
 			end
 			feedback(s, "LandingOffset", offset, landingText(offset))
+			if q == Q.Perfect then
+				feedback(
+					s,
+					"Reset",
+					nil,
+					if fromDive then "LANDING RESET — LAYOUT READY" else "LANDING RESET — BURST + LAYOUT READY"
+				)
+			end
 			return
 		elseif offset <= PL.ArmWindow + 0.1 and not fromDive then
 			-- armed early: an unlabelled soft landing (no steering penalty)
@@ -4180,7 +4491,7 @@ local function cutAgainstLine(
 	since: number,
 	gradeSpeed: number
 ): (boolean, string?)
-	if s.now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+	if s.now < s.soldUntil and angle <= SC.MaxAngle and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
 		return pressSnapCut(s, dir, angle, since, math.max(gradeSpeed, SC.MinSpeed), true)
 	end
 	if angle <= SC.MaxAngle then
@@ -4224,6 +4535,13 @@ local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: str
 		bs = math.clamp(base * BS.SpeedMult, BS.MinSpeed, BS.MaxSpeed)
 	end
 	if not free then
+		-- a burst accelerates along (or slightly off) the line; reversing a
+		-- sprint takes a plant first
+		local used: number
+		dir, used = bendLine(s, dir, BS.MaxTurn)
+		bs *= 1 - BS.TurnPenalty * used
+	end
+	if not free then
 		spend(s, BS.Cost)
 	end
 	setCooldown(s, "BurstStep")
@@ -4255,6 +4573,11 @@ local function tryPop(s: State, action: Action, dir: Vector3, hasDir: boolean, e
 	setMode(s, "Ground")
 	s.recoverUntil = 0
 	emit(s, "RecoveryChain", q, d, action)
+	if q == Q.Perfect then
+		-- Recovery Reset: a Perfect pop-up refunds the Layout (Double Layout)
+		refund(s, RS.RecoveryRefund)
+		feedback(s, "Reset", nil, "RECOVERY RESET — LAYOUT READY")
+	end
 	if action == "Jump" then
 		s.vel = if hasDir then d * out else Vector3.zero
 		enterAir(s)
@@ -4352,7 +4675,12 @@ local function pressJump(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 			s.vel = nv
 			s.rebounds += 1
 			s.lastWall = env.wallId
+			-- Wall Reset: both air moves come back, the next one Charged
 			s.airRedirectUsed = false
+			s.airDiveUsed = false
+			s.charged = true
+			s.lastResetAt = s.now
+			refund(s, RS.AirRefund)
 			enterAir(s)
 			queueJump(s, WR.Vertical)
 			emit(s, "WallRebound", q, velDirOr(s, n), nil)
@@ -4389,15 +4717,18 @@ local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: En
 	else
 		q = Q.Clean
 	end
+	local charged = s.charged
 	local newVel: Vector3
 	if speed < AR.MinSpeed then
 		newVel = dir * AR.StillSpeed
 	else
 		local nd = VecMath.rotateToward(s.vel / speed, dir, AR.MaxAngle)
-		newVel = nd * (speed * (AR.Retention :: any)[q])
+		local keep = if charged then RS.ChargedRetention else (AR.Retention :: any)[q]
+		newVel = nd * (speed * keep)
 	end
 	spend(s, AR.Cost)
 	s.airRedirectUsed = true
+	s.charged = false
 	s.vel = newVel
 	if s.mode == "Dive" then
 		s.diveDir = velDirOr(s, s.diveDir)
@@ -4405,7 +4736,7 @@ local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: En
 	if vy < AR.MinVertical then
 		queueVertical(s, AR.MinVertical)
 	end
-	emit(s, "AirRedirect", q, velDirOr(s, dir), nil)
+	emit(s, "AirRedirect", q, velDirOr(s, dir), if charged then "Charged" else nil)
 	return true, nil
 end
 
@@ -4482,8 +4813,9 @@ local function pressCut(s: State, dir: Vector3, hasDir: boolean, env: Env): (boo
 		return refuse(s, "Speed", "NEED SPEED", MC.MinSpeed)
 	end
 	local angle = VecMath.flatAngle(lineDir, dir)
-	-- A cut out of a Fake Commit's sold window is always allowed.
-	if now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+	-- A cut out of a Fake Commit's sold window is allowed up to the normal
+	-- cut angle (further back is a plant, below).
+	if now < s.soldUntil and angle <= SC.MaxAngle and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
 		return pressSnapCut(s, dir, angle, since, math.max(gradeSpeed, SC.MinSpeed), true)
 	end
 	if gradeSpeed < SC.MinSpeed then
@@ -4620,11 +4952,11 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 	if s.mode == "DiveSlide" then
 		return refuse(s, "Context", "GET UP FIRST")
 	end
-	if s.mode == "Dive" or (s.mode == "Air" and s.airDiveUsed) then
+	if (s.mode == "Dive" or s.mode == "Air") and s.airDiveUsed then
 		return refuse(s, "Used", "ONE PER JUMP")
 	end
 	local groundish = isGrounded(s) or s.mode == "Slide"
-	local air = s.mode == "Air"
+	local air = s.mode == "Air" or s.mode == "Dive"
 	if not groundish and not air then
 		return refuse(s, "Context")
 	end
@@ -4637,6 +4969,9 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 	end
 	local speed = s.vel.Magnitude
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
+	if groundish then
+		d = bendLine(s, d, DV.MaxTurn)
+	end
 	local key = s.lastKeyTech
 	local chained = key ~= nil and DIVE_CHAIN[key :: string] == true and now - s.lastKeyAt <= DV.ChainWindow
 	local q: string
@@ -4661,17 +4996,22 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 		setMode(s, "Dive")
 		s.airStart = now
 		s.groundLostAt = nil
+		s.airDiveUsed = true -- a second layout before landing needs a reset
 		queueJump(s, DV.GroundVertical)
 	else
-		local nv = VecMath.clampMagnitude(s.vel + d * DV.AirBoost, math.max(DV.AirMax, speed))
+		local charged = s.charged
+		local boost = DV.AirBoost + (if charged then RS.ChargedLayoutBoost else 0)
+		local cap = math.max(DV.AirMax + (if charged then RS.ChargedLayoutBoost else 0), speed)
+		local nv = VecMath.clampMagnitude(s.vel + d * boost, math.min(cap, Config.HardCap))
 		s.vel = nv
 		s.airDiveUsed = true
+		s.charged = false
 		setMode(s, "Dive")
 		queueVertical(s, math.min(env.actualVel.Y + DV.AirVertical, DV.MaxVertical))
 	end
 	s.takeoffSpeed = s.vel.Magnitude
 	s.diveDir = velDirOr(s, d)
-	emit(s, "Dive", q, s.diveDir, if air then "Air" else nil)
+	emit(s, "Dive", q, s.diveDir, if groundish then nil else "Air")
 	return true, nil
 end
 
@@ -4890,6 +5230,41 @@ function MovementSim.noteAerialReach(s: State, dir: Vector3): boolean
 	return false
 end
 
+-- Tip Reset: the catch controller saw the player tip a disc in the air
+-- (judged on the disc's closest pass, Reset.TipWindow / TipPerfect). Both air
+-- moves come back, the next one is Charged, and the player gets a lift so
+-- there is time to use them. Returns false (+ reason) when no reset is
+-- allowed (on the ground, two tips already this airtime, cooldown).
+function MovementSim.tipReset(s: State, env: Env, quality: string, dir: Vector3?): (boolean, string?)
+	if s.holding or s.frozen then
+		return false, "Context"
+	end
+	if not (s.mode == "Air" or s.mode == "Dive") then
+		return refuse(s, "Context", "TIP IN THE AIR")
+	end
+	if s.tipsThisAir >= RS.MaxTipsPerAir then
+		return refuse(s, "Used", "TWO TIPS PER JUMP")
+	end
+	local left = cooldownLeft(s, "TipReset")
+	if left > 0 then
+		return refuse(s, "Cooldown", cooldownText("TipReset", left), left, "TipReset")
+	end
+	local q = if quality == Q.Perfect then Q.Perfect else Q.Clean
+	setCooldown(s, "TipReset")
+	s.tipsThisAir += 1
+	s.airRedirectUsed = false
+	s.airDiveUsed = false
+	refund(s, RS.AirRefund)
+	s.aerialReachUsed = false
+	s.charged = true
+	s.lastResetAt = s.now
+	local lift = if q == Q.Perfect then RS.TipLiftPerfect else RS.TipLift
+	queueVertical(s, math.max(env.actualVel.Y, lift))
+	emit(s, "TipReset", q, velDirOr(s, dir or facingOr(env)), nil)
+	feedback(s, "Reset", nil, if q == Q.Perfect then "PERFECT TIP — RESET" else "TIP RESET — AIR MOVES BACK")
+	return true, nil
+end
+
 function MovementSim.setFrozen(s: State, frozen: boolean)
 	s.frozen = frozen
 	if frozen then
@@ -5027,13 +5402,13 @@ local function cutHint(s: State, input: Input, env: Env): string?
 	if not hasDir then
 		return if gradeSpeed >= MC.MinSpeed then "PLANT" else nil
 	end
-	if s.now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+	local angle = VecMath.flatAngle(lineDir, dir)
+	if s.now < s.soldUntil and angle <= SC.MaxAngle and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
 		return "SOLD CUT"
 	end
 	if gradeSpeed < SC.MinSpeed then
 		return "SIDE STEP"
 	end
-	local angle = VecMath.flatAngle(lineDir, dir)
 	if angle < FC.MaxAngle then
 		return "FAKE COMMIT"
 	end
@@ -5320,7 +5695,7 @@ return MovementSim
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="24">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -5456,11 +5831,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="23">
+      <Item class="Folder" referent="25">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -5468,7 +5843,8 @@ return Net
 	CatchGeometry — readable, deterministic catch and block volumes.
 
 	A player's catch envelope is a small set of capsules derived from their
-	root position, facing and movement state:
+	fixed-hitbox root (Config/Hitbox: the same body for every avatar, measured
+	from the feet), facing and movement state:
 	  Secure   sphere at the chest (always on; drops low while sliding)
 	  Reach    capsule from the shoulder along the aim direction, active for a
 	           short window after pressing Reach (also used airborne for the
@@ -5489,6 +5865,10 @@ return Net
 	speed; claimRoot decides whether the zones are built from the body
 	position the client sent or from the server's (led) view.
 
+	Tip (the Tip Reset): tipZones adds a hands-up sphere over the head;
+	bestTip judges a tip press on the disc's closest pass within a window
+	around the press; tipVelocity pops the disc up out of the hands.
+
 	Mark: a box of hands in front of the marker, oriented by the marker's
 	facing blended toward the thrower's pivot P (markForward), with Low/High
 	bands and a Relaxed chest sphere. Jumping lifts it. Disc space and stall
@@ -5498,6 +5878,7 @@ return Net
 
 local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
+local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 
 local C = DiscConfig.Catch
@@ -5513,13 +5894,14 @@ export type Zone = {
 }
 
 export type BodyState = {
-	root: Vector3,
+	root: Vector3, -- the fixed-hitbox root (Config/Hitbox.root), not the avatar's own
 	facing: Vector3, -- horizontal unit
 	reaching: boolean,
 	reachDir: Vector3?,
 	diving: boolean,
 	diveDir: Vector3?,
 	sliding: boolean,
+	prone: boolean?, -- lying flat after a layout (DiveSlide / early Recover)
 }
 
 local UP = Vector3.new(0, 1, 0)
@@ -5535,7 +5917,9 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 		facing = Vector3.new(0, 0, -1)
 	end
 	local chest = body.root + UP * C.ChestHeight + facing * 0.4
-	if body.sliding then
+	if body.prone then
+		chest -= UP * Hitbox.ProneDrop
+	elseif body.sliding then
 		chest -= UP * C.SlideDrop
 	end
 	table.insert(zones, { kind = "Secure", a = chest, b = chest, radius = C.SecureRadius })
@@ -5555,7 +5939,8 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 
 	if body.diving and body.diveDir then
 		local dir = VecMath.safeUnit(body.diveDir, facing)
-		local start = body.root + UP * 0.2
+		-- flying: from the chest line; lying flat: along the turf
+		local start = body.root + UP * (if body.prone then Hitbox.ProneDiveHeight else 0.2)
 		table.insert(zones, {
 			kind = "Dive",
 			a = start,
@@ -5564,6 +5949,49 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 		})
 	end
 	return zones
+end
+
+-- The zones a Tip is judged against: the normal zones plus a hands-up
+-- sphere over the head (kind "Tip").
+function CatchGeometry.tipZones(body: BodyState): { Zone }
+	local zones = CatchGeometry.zones(body)
+	local hands = body.root + UP * C.TipHeight
+	table.insert(zones, { kind = "Tip", a = hands, b = hands, radius = C.TipRadius })
+	return zones
+end
+
+-- The best moment to tip along a stretch of the disc's path around a press
+-- at `tPress`: the deepest sample (the closest pass) inside the zones.
+-- Returns the evaluation (with `t`) and the tip quality, "Perfect" when the
+-- closest pass is within `perfect` seconds of the press, else "Clean"; nil
+-- when the disc never comes within the zones.
+function CatchGeometry.bestTip(
+	zones: { Zone },
+	samples: { PathSample },
+	tPress: number,
+	perfect: number,
+	slack: number?
+): (Evaluation?, string)
+	local best: Evaluation? = nil
+	for _, sample in samples do
+		local ev = CatchGeometry.evaluate(zones, sample.pos, slack)
+		if ev and (best == nil or ev.depth < (best :: Evaluation).depth - 1e-6) then
+			ev.t = sample.t
+			best = ev
+		end
+	end
+	if best == nil then
+		return nil, "Clean"
+	end
+	local dt = math.abs(((best :: Evaluation).t or tPress) - tPress)
+	return best, if dt <= perfect + 1e-6 then "Perfect" else "Clean"
+end
+
+-- The disc's new velocity after a tip: a little of its old velocity, a push
+-- along the tipper's facing, and a pop upward.
+function CatchGeometry.tipVelocity(discVel: Vector3, facing: Vector3): Vector3
+	local f = VecMath.flatUnit(facing)
+	return discVel * C.TipCarry + f * C.TipPush + UP * C.TipUp
 end
 
 function CatchGeometry.coreDistance(zone: Zone, p: Vector3): (number, Vector3)
@@ -5867,7 +6295,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -5894,6 +6322,9 @@ return CatchGeometry
 	The thrower's "Break" link (fake -> swing -> release) is scored by the throw
 	path: release() adds it when the chain's last technique is a Sold
 	PivotSwing that finished within BreakWindow of the release.
+
+	Signature moves (Rules/Signatures) add their fixed points with
+	signature(); they count as scoring techniques for the chain bonuses.
 ]]
 
 local Shared = script.Parent.Parent
@@ -5930,6 +6361,7 @@ export type Entry = {
 	quality: string,
 	t: number,
 	score: number,
+	name: string?, -- signature moves: the move's name (tech is "Signature")
 }
 
 export type Chain = {
@@ -6137,6 +6569,30 @@ function ComboEvaluator.add(tr: Tracker, tech: string, quality: string, t: numbe
 	return score, ComboEvaluator.total(chain)
 end
 
+-- A signature move (Rules/Signatures) pays its points straight into the
+-- chain: no quality or variety scaling, but it counts as a scoring
+-- technique for the chain's length and variety bonuses. Returns the points
+-- added and the chain total.
+function ComboEvaluator.signature(tr: Tracker, name: string, pts: number, t: number): (number, number)
+	ComboEvaluator.expire(tr, t)
+	local c = tr.chain
+	if c == nil then
+		c = newChain(t)
+		tr.chain = c
+	end
+	local chain = c :: Chain
+	table.insert(chain.entries, { tech = "Signature", quality = "Perfect", t = t, score = pts, name = name })
+	chain.scoring += 1
+	local key = "Signature:" .. name
+	if not chain.unique[key] then
+		chain.unique[key] = true
+		chain.uniqueCount += 1
+	end
+	chain.raw += pts
+	chain.lastT = t
+	return pts, ComboEvaluator.total(chain)
+end
+
 -- The Break link quality for a release at time t, or nil: the chain's last
 -- technique must be a Sold (Perfect) PivotSwing that finished at most
 -- BreakWindow before the release.
@@ -6215,7 +6671,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -6488,7 +6944,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -7031,7 +7487,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -7249,7 +7705,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -7733,12 +8189,262 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
+        <Item class="ModuleScript" referent="32">
+          <Properties>
+            <string name="Name">Signatures</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Signatures — recognises the signature moves (Config/Signatures) from one
+	player's stream of events. Pure and deterministic; the client runs it for
+	instant feedback and the server runs it on validated events to pay out.
+
+	Feed it, in time order:
+	  Tech      an accepted technique { tech, quality, info }
+	  Land      the player touched down (ends the airtime)
+	  Tip       the player tipped a disc in the air (a tip reset), with the
+	            disc id and whether they were the defending team (a block)
+	  Catch     the player caught a disc { discId, airborne, height,
+	            interception }
+	  Greatest  the rules called a Greatest for this player
+
+	A catch is judged against the airtime it happened in by its timestamp: a
+	catch confirmed after the Land that ended its airtime (the server answers
+	a round trip later) still counts in that airtime.
+
+	An airtime runs from one Land to the next. Within it the tracker counts
+	tips (and which discs were tipped), wall rebounds, air moves used after a
+	tip, and a Perfect recovery pop followed by an air layout. A catch in the
+	air completes the best matching move in Config/Signatures.Order; Tip Reset
+	pays as soon as the reset is used (first air move after a tip). Reset
+	Loop and Self-D are tracked across airtimes.
+]]
+
+local Shared = script.Parent.Parent
+local Config = require(Shared.Config.Signatures)
+
+local Signatures = {}
+
+export type Event = {
+	kind: string, -- "Tech" | "Land" | "Tip" | "Catch" | "Greatest"
+	t: number,
+	tech: string?,
+	quality: string?,
+	info: string?,
+	discId: string?,
+	airborne: boolean?,
+	height: number?, -- feet above the ground at the catch
+	defender: boolean?, -- Tip: by the defending team
+	interception: boolean?, -- Catch: by the defending team
+}
+
+export type Hit = {
+	id: string,
+	name: string,
+	points: number,
+	tier: number,
+	t: number,
+}
+
+type Air = {
+	tips: number,
+	tipDiscs: { [string]: boolean },
+	walls: number,
+	movesAfterTip: number,
+	tipResetPaid: boolean,
+	popAt: number?, -- a Perfect recovery pop-up started this airtime
+	popLayout: boolean, -- ... and an air layout followed it
+}
+
+export type Tracker = {
+	air: Air,
+	prevAir: Air?, -- the airtime the last Land ended ...
+	prevLandAt: number, -- ... and when
+	-- Reset Loop: landing reset -> burst -> Perfect snap cut
+	loopStage: number, -- 0 none, 1 landing reset, 2 burst
+	loopAt: number,
+	loops: { number }, -- completion times of recent loops
+	defenderTips: { [string]: number }, -- discId -> time of this player's defensive tip
+}
+
+local function newAir(): Air
+	return {
+		tips = 0,
+		tipDiscs = {},
+		walls = 0,
+		movesAfterTip = 0,
+		tipResetPaid = false,
+		popAt = nil,
+		popLayout = false,
+	}
+end
+
+function Signatures.new(): Tracker
+	return {
+		air = newAir(),
+		prevAir = nil,
+		prevLandAt = -math.huge,
+		loopStage = 0,
+		loopAt = -math.huge,
+		loops = {},
+		defenderTips = {},
+	}
+end
+
+local function hit(id: string, t: number): Hit
+	local d = Config.List[id]
+	return { id = id, name = d.name, points = d.points, tier = d.tier, t = t }
+end
+
+local function isAirMove(e: Event): boolean
+	return e.tech == "AirRedirect" or (e.tech == "Dive" and e.info == "Air")
+end
+
+local function onTech(tr: Tracker, e: Event, out: { Hit })
+	local air = tr.air
+	local tech = e.tech
+	if tech == "WallRebound" then
+		air.walls += 1
+	elseif tech == "RecoveryChain" and e.quality == "Perfect" and e.info == "Jump" then
+		-- a Perfect pop-up out of a layout: the next airtime can hold a second layout
+		air.popAt = e.t
+		air.popLayout = false
+	end
+	if isAirMove(e) then
+		if air.tips > 0 then
+			air.movesAfterTip += 1
+			if not air.tipResetPaid then
+				air.tipResetPaid = true
+				table.insert(out, hit("TipReset", e.t))
+			end
+		end
+		if e.tech == "Dive" and air.popAt ~= nil and e.t - (air.popAt :: number) <= Config.LayoutWindow then
+			air.popLayout = true
+		end
+	end
+
+	-- Reset Loop
+	if tech == "PrecisionLanding" and e.info == "Reset" then
+		tr.loopStage = 1
+		tr.loopAt = e.t
+	elseif tech == "BurstStep" and tr.loopStage == 1 and e.t - tr.loopAt <= Config.LoopStep then
+		tr.loopStage = 2
+		tr.loopAt = e.t
+	elseif tech == "SnapCut" and tr.loopStage == 2 and e.t - tr.loopAt <= Config.LoopStep then
+		tr.loopStage = 0
+		if e.quality == "Perfect" then
+			local prev = tr.loops[#tr.loops]
+			if prev ~= nil and e.t - prev <= Config.LoopGap then
+				tr.loops = {}
+				table.insert(out, hit("ResetLoop", e.t))
+			else
+				tr.loops = { e.t }
+			end
+		end
+	elseif tr.loopStage > 0 and e.t - tr.loopAt > Config.LoopStep then
+		tr.loopStage = 0
+	end
+end
+
+local function onCatch(tr: Tracker, e: Event, out: { Hit })
+	-- a catch from before the last landing belongs to that airtime
+	local prev = tr.prevAir
+	local air = if prev ~= nil and e.t <= tr.prevLandAt + 1e-3 then prev else tr.air
+	local disc = e.discId
+	local tipped = disc ~= nil and air.tipDiscs[disc :: string] == true
+	local done: { [string]: boolean } = {}
+	if e.airborne then
+		if air.tips >= 2 and tipped then
+			done.DoubleTip = true
+		end
+		if air.walls >= 1 and air.tips >= 1 and tipped then
+			done.WallTip = true
+		end
+		if air.tips >= 1 and tipped and air.movesAfterTip >= 1 then
+			done.ResetGrab = true
+		end
+		if air.popLayout and air.popAt ~= nil and e.t - (air.popAt :: number) <= Config.LayoutWindow then
+			done.DoubleLayout = true
+		end
+		if (e.height or 0) >= Config.SkyHeight then
+			done.Skyball = true
+		end
+	end
+	if e.interception and disc ~= nil then
+		local at = tr.defenderTips[disc :: string]
+		if at ~= nil and e.t - at <= Config.SelfDWindow then
+			done.SelfD = true
+		end
+	end
+	if disc ~= nil then
+		tr.defenderTips[disc :: string] = nil
+	end
+	for _, id in Config.Order do
+		if done[id] then
+			table.insert(out, hit(id, e.t))
+			break
+		end
+	end
+	-- the airtime's resets are spent by the catch
+	if e.airborne then
+		air.tips = 0
+		air.tipDiscs = {}
+		air.movesAfterTip = 0
+		air.walls = 0
+		air.popAt = nil
+		air.popLayout = false
+	end
+end
+
+-- Feeds one event; returns the signature moves it completed (usually none).
+function Signatures.feed(tr: Tracker, e: Event): { Hit }
+	local out: { Hit } = {}
+	local kind = e.kind
+	if kind == "Tech" then
+		onTech(tr, e, out)
+	elseif kind == "Land" then
+		local pop = tr.air.popAt
+		tr.prevAir = tr.air
+		tr.prevLandAt = e.t
+		tr.air = newAir()
+		-- the layout before a pop-up lands first: keep a pop that has not
+		-- left the ground yet
+		if pop ~= nil and e.t - pop < 0.05 then
+			tr.air.popAt = pop
+		end
+	elseif kind == "Tip" then
+		local disc = e.discId
+		if e.defender then
+			if disc then
+				tr.defenderTips[disc] = e.t
+			end
+		end
+		tr.air.tips += 1
+		if disc then
+			tr.air.tipDiscs[disc] = true
+		end
+	elseif kind == "Catch" then
+		onCatch(tr, e, out)
+	elseif kind == "Greatest" then
+		table.insert(out, hit("Greatest", e.t))
+	end
+	return out
+end
+
+-- Definition of a signature move by id (for UI).
+function Signatures.def(id: string): Config.Def?
+	return Config.List[id]
+end
+
+return Signatures
+]]></string>
+          </Properties>
+        </Item>
       </Item>
-      <Item class="Folder" referent="30">
+      <Item class="Folder" referent="33">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -7785,7 +8491,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -7833,7 +8539,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -7947,19 +8653,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="34">
+  <Item class="ServerScriptService" referent="37">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="35">
+    <Item class="Folder" referent="38">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="36">
+      <Item class="Folder" referent="39">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -8986,7 +9692,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -9110,7 +9816,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -9608,7 +10314,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="40">
+      <Item class="Script" referent="43">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -9673,11 +10379,11 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="41">
+      <Item class="Folder" referent="44">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -9697,6 +10403,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local ArenasConfig = require(Shared.Config.Arenas)
 local ModesConfig = require(Shared.Config.Modes)
+local DiscConfig = require(Shared.Config.Disc)
 local FieldGeometry = require(Shared.Rules.FieldGeometry)
 local Net = require(Shared.Net)
 local ArenaBuilder = require(script.Parent.Parent.Arena.ArenaBuilder)
@@ -9755,13 +10462,15 @@ function ArenaService.arena(): any
 	return current
 end
 
-function ArenaService.wind(): { x: number, y: number, z: number }
-	local w = if current then current.Wind else Vector3.zero
-	return { x = w.X, y = w.Y, z = w.Z }
+-- The arena's wind as the disc feels it (Config/Arenas values are at the
+-- real-world tempo; flights run at Config/Disc.Tempo, so wind scales too).
+function ArenaService.windVector(): Vector3
+	return (if current then current.Wind else Vector3.zero) * DiscConfig.Tempo
 end
 
-function ArenaService.windVector(): Vector3
-	return if current then current.Wind else Vector3.zero
+function ArenaService.wind(): { x: number, y: number, z: number }
+	local w = ArenaService.windVector()
+	return { x = w.X, y = w.Y, z = w.Z }
 end
 
 function ArenaService.endZone(side: string): BasePart?
@@ -9802,7 +10511,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -10157,6 +10866,8 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 	desc.TorsoColor = shirt
 	desc.LeftLegColor = shorts
 	desc.RightLegColor = shorts
+	-- the same standard body as every player (fixed hitbox)
+	services.PlayerService.standardize(desc)
 
 	local ok, model = pcall(function()
 		return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
@@ -12207,7 +12918,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -12245,6 +12956,15 @@ return BotService
 	contact time (DiscService.deflect), so every client sees it continue from
 	the touch instead of rewinding. The disc stays live; the toucher may not
 	re-claim it for a moment.
+
+	Tips (the Tip Reset): an airborne player presses Secondary as the disc
+	passes their hands; the client sends a claim of kind "Tip" with the press
+	time. The server judges it on the disc's closest pass within
+	Reset.TipWindow of the press (CatchGeometry.bestTip, tip zones incl. the
+	hands-up sphere) and resolves it with the other claims. A winning tip pops
+	the disc up out of the tipper's hands (CatchGeometry.tipVelocity), counts
+	as a touch for the rules (a Tip for the throwing team, a Block for the
+	defence) and lets MovementService accept the tipper's TipReset technique.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12253,11 +12973,13 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 local Actors = require(Shared.Actors)
 local Net = require(Shared.Net)
 
 local C = DiscConfig.Catch
+local RS = MovementConfig.Reset
 
 -- quality window sampling: first contact + QualitySamples steps
 local SAMPLE_DT = C.QualityWindow / math.max(C.QualitySamples, 1)
@@ -12273,6 +12995,9 @@ local services: any
 type ReachState = { at: number, dir: Vector3 }
 local reaches: { [number]: ReachState } = {}
 local lastClaim: { [number]: number } = {}
+-- the latest tip claim per actor: "pending" until resolved, then "ok" / "denied"
+type TipState = { t: number, discId: string, state: string }
+local tips: { [number]: TipState } = {}
 
 local function now(): number
 	return Net.now()
@@ -12318,13 +13043,14 @@ local function bodyFor(
 		diveDir = if typeof(td) == "Vector3" and (td :: Vector3).Magnitude > 0.5 then td :: Vector3 else facing
 	end
 	return {
-		root = body,
+		root = Hitbox.root(body, services.MovementService.standHeight(actorId)),
 		facing = facing,
 		reaching = reaching,
 		reachDir = dir,
 		diving = diving,
 		diveDir = diveDir,
 		sliding = services.MovementService.isSliding(actorId),
+		prone = services.MovementService.isOnGroundAfterLayout(actorId),
 	}
 end
 
@@ -12349,6 +13075,20 @@ local function pathAfter(d: any, t: number): { CatchGeometry.PathSample }
 	return samples
 end
 
+-- The disc's path from t0 to t1 at the simulation step.
+local function pathWindow(d: any, t0: number, t1: number): { CatchGeometry.PathSample }
+	local samples: { CatchGeometry.PathSample } = {}
+	local n = math.clamp(math.ceil((t1 - t0) / SAMPLE_DT), 1, 64)
+	for k = 0, n do
+		local tk = t0 + (t1 - t0) * k / n
+		local p = services.DiscService.positionAt(d, tk)
+		if p then
+			table.insert(samples, { t = tk, pos = p })
+		end
+	end
+	return samples
+end
+
 -- Disc velocity at the start of a sampled path (falls back to the live flight).
 local function velocityOf(d: any, samples: { CatchGeometry.PathSample }): Vector3
 	local a, b = samples[1], samples[2]
@@ -12365,11 +13105,16 @@ local function addClaim(
 	t: number,
 	ev: CatchGeometry.Evaluation,
 	discVel: Vector3,
-	body: Vector3
+	body: Vector3,
+	tip: boolean?
 )
 	local discPos = services.DiscService.positionAt(d, t)
 	for _, c in d.claims do
 		if c.id == actorId then
+			if tip then
+				-- the player chose to tip: that intent wins over a catch claim
+				c.tip = true
+			end
 			-- a repeated claim: the earliest touch orders it, the deepest
 			-- point of either window is its quality
 			if ev.depth < c.depth - 1e-6 then
@@ -12395,6 +13140,7 @@ local function addClaim(
 		discVel = discVel,
 		discPos = discPos,
 		body = body,
+		tip = tip == true,
 	})
 	if d.resolveAt == nil then
 		d.resolveAt = now() + C.ResolveDelay
@@ -12454,8 +13200,34 @@ function CatchingService.claim(
 			bodyVel = cv
 		end
 	end
-	local zones = CatchGeometry.zones(bodyFor(actorId, body, facingOf(root), reachDir, t, ping))
 	local slack = if actor.isBot then 0 else CatchGeometry.slack(ping, serverVel.Magnitude)
+	if _kind == "Tip" then
+		-- airborne only: the client says it is in the air (its jump reached
+		-- us before this claim), or our own lagging view agrees
+		local track = services.MovementService.track(actorId)
+		local airborne = track ~= nil
+			and (
+				track.mode == "Air"
+				or track.mode == "Dive"
+				or not track.grounded
+				or t - track.lastAirborneAt <= 0.25 + ping
+			)
+		if not airborne then
+			return false
+		end
+		local tipZones = CatchGeometry.tipZones(bodyFor(actorId, body, facingOf(root), reachDir, t, ping))
+		local window = pathWindow(d, t - RS.TipWindow, t + RS.TipWindow)
+		local ev = CatchGeometry.bestTip(tipZones, window, t, RS.TipPerfect, slack)
+		if not ev then
+			return false
+		end
+		local at = ev.t or t
+		local samples = pathAfter(d, at)
+		addClaim(d, actorId, actor.team, at, ev, velocityOf(d, samples), body, true)
+		tips[actorId] = { t = t, discId = d.id, state = "pending" }
+		return true
+	end
+	local zones = CatchGeometry.zones(bodyFor(actorId, body, facingOf(root), reachDir, t, ping))
 	local samples = pathAfter(d, t)
 	local ev = CatchGeometry.bestOverPath(zones, samples, t, bodyVel, slack)
 	if not ev then
@@ -12500,10 +13272,20 @@ local function answer(actorId: number, d: any, accepted: boolean, result: string
 	end
 end
 
+local function settleTip(actorId: number, d: any, ok: boolean)
+	local tip = tips[actorId]
+	if tip and tip.discId == d.id and tip.state == "pending" then
+		tip.state = if ok then "ok" else "denied"
+	end
+end
+
 local function notifyClaimers(d: any, winnerId: number?, result: string)
 	for _, c in d.claims do
 		local mine = c.id == winnerId
 		answer(c.id, d, mine and result == "Catch", if mine then result else "Lost")
+		if c.tip then
+			settleTip(c.id, d, mine and result == "Tip")
+		end
 	end
 end
 
@@ -12515,6 +13297,9 @@ function CatchingService.discard(d: any)
 	d.resolveAt = nil
 	for _, c in claims do
 		answer(c.id, d, false, "Denied")
+		if c.tip then
+			settleTip(c.id, d, false)
+		end
 	end
 end
 
@@ -12542,12 +13327,32 @@ function CatchingService.resolve(d: any)
 	local discPos: Vector3 = w.discPos or services.DiscService.positionAt(d, w.t) or body
 	local discVel: Vector3 = w.discVel or services.DiscService.velocity(d)
 	local isDefender = d.throwerTeam ~= nil and d.throwerTeam ~= "" and w.team ~= d.throwerTeam and not d.pull
-	local outcome = CatchGeometry.outcome(resolution, isDefender)
+	local outcome = if w.tip then "Tip" else CatchGeometry.outcome(resolution, isDefender)
 
 	notifyClaimers(d, w.id, outcome)
 	local claims = d.claims
 	d.claims = {}
 	d.resolveAt = nil
+
+	if outcome == "Tip" then
+		-- the disc pops up out of the tipper's hands; the tipper may re-catch
+		-- it after the toucher lock (the Reset Grab)
+		local newVel = CatchGeometry.tipVelocity(discVel, facingOf(root))
+		local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
+		services.DiscService.deflect(d, pos, newVel, Vector3.new(0, 1, 0), C.TipSpin, w.t, w.id)
+		Net.event("Effect"):FireAllClients("Tip", discPos, w.id, w.quality, "Tip")
+		services.MovementService.noteTip(w.id, d.id, isDefender, w.t)
+		d.handler.onTouched(d, {
+			id = w.id,
+			team = w.team,
+			kind = "Tip",
+			pos = discPos,
+			zone = "Tip",
+			reason = "Tip",
+			defender = isDefender,
+		})
+		return
+	end
 
 	if outcome == "Catch" then
 		local track = services.MovementService.track(w.id)
@@ -12555,6 +13360,8 @@ function CatchingService.resolve(d: any)
 		local jumpOrigin = if track then track.lastGroundedPos else body
 		services.DiscService.giveTo(d, w.id)
 		Net.event("Effect"):FireAllClients("Catch", discPos, w.id, w.quality, w.zone)
+		-- signature moves first: their points join the chain this catch converts
+		services.MovementService.noteCatch(w.id, d.id, isDefender, w.t)
 		d.handler.onCaught(d, {
 			id = w.id,
 			team = w.team,
@@ -12576,18 +13383,27 @@ function CatchingService.resolve(d: any)
 	-- deflections keep the disc alive, continuing from the contact
 	local away = VecMath.flatUnit(discPos - body)
 	local newVel: Vector3
+	local tempo = DiscConfig.Tempo
 	if outcome == "Block" then
-		newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + away * 6
+		newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + away * (6 * tempo)
 	else
-		newVel = discVel * C.BobbleCarry + Vector3.new(0, C.BobbleUp, 0) + away * 2
+		newVel = discVel * C.BobbleCarry + Vector3.new(0, C.BobbleUp, 0) + away * (2 * tempo)
 	end
 	local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
-	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12, w.t, w.id)
+	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12 * tempo, w.t, w.id)
 	Net.event("Effect"):FireAllClients(outcome, discPos, w.id, w.quality, w.zone)
 	d.handler.onTouched(
 		d,
 		{ id = w.id, team = w.team, kind = outcome, pos = discPos, zone = w.zone, reason = resolution.reason }
 	)
+end
+
+-- Did this actor send a tip claim around ts that has not been denied? (The
+-- TipReset technique usually arrives right behind the claim, before it is
+-- resolved.)
+function CatchingService.recentTip(actorId: number, ts: number, window: number): boolean
+	local tip = tips[actorId]
+	return tip ~= nil and tip.state ~= "denied" and math.abs(tip.t - ts) <= window
 end
 
 function CatchingService.reachState(actorId: number): ReachState?
@@ -12657,6 +13473,7 @@ function CatchingService.Start()
 	services.PlayerService.ActorRemoving:Connect(function(actor)
 		reaches[actor.id] = nil
 		lastClaim[actor.id] = nil
+		tips[actor.id] = nil
 	end)
 end
 
@@ -12664,7 +13481,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -12975,7 +13792,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13254,6 +14071,7 @@ type Candidate = { id: number, box: CatchGeometry.MarkBox }
 local function markerRewind(oneWay: number): number
 	return math.min(CatchGeometry.markerRewind(2 * oneWay) + oneWay, M.RewindMax)
 end
+DefenseService.markerRewind = markerRewind
 
 -- Returns (blockerId, timeIntoFlight, blockPosition) if the release hits a
 -- defender's hands, else nil. Defenders are taken where the thrower saw
@@ -13332,7 +14150,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13353,7 +14171,7 @@ return DefenseService
 	              hand block; 0 = none): clients hold the disc there until
 	              the deflection segment arrives instead of flying it on
 	  GroundPos   resting spot while on the ground
-	  ThrowerId, ThrowerTeam, ThrowType, Quality, Skin, Context, Owner, Pull
+	  ThrowerId, Touched, ThrowerTeam, ThrowType, Quality, Skin, Context, Owner, Pull
 
 	Flights are deterministic (DiscPhysics with a fixed step from identical
 	launch values), so clients reproduce the server's trajectory exactly
@@ -13675,6 +14493,7 @@ function DiscService.launch(
 	write(d, "Wind", windVec)
 	write(d, "GroundY", d.groundY)
 	write(d, "ThrowerId", d.thrower or 0)
+	write(d, "Touched", d.touched) -- after a touch the thrower may catch it too
 	write(d, "ThrowerTeam", d.throwerTeam or "")
 	write(d, "ThrowType", d.throwType or "")
 	write(d, "Quality", d.quality or "")
@@ -13867,7 +14686,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="51">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14016,12 +14835,16 @@ function HighlightService.onCatch(info: any, lastPass: any, outcomes: { any })
 end
 
 function HighlightService.onTouched(info: any, _lastPass: any)
-	if info.kind == "Bobble" then
+	if info.kind == "Bobble" or (info.kind == "Tip" and not info.defender) then
+		-- an attacker's tip keeps the chain alive for the catch that follows
 		return
 	end
 	local tags: { string } = {}
 	local score = 250
-	if info.kind == "HandBlock" then
+	if info.kind == "Tip" then
+		table.insert(tags, "TIP BLOCK")
+		score = 450
+	elseif info.kind == "HandBlock" then
 		table.insert(tags, "HAND BLOCK")
 		score = 600
 	elseif info.zone == "Dive" then
@@ -14080,13 +14903,23 @@ function HighlightService.Init(s: any)
 	services = s
 end
 
-function HighlightService.Start() end
+function HighlightService.Start()
+	-- signature moves (Rules/Signatures) are announced to everyone
+	services.MovementService.SignatureHit:Connect(function(id: number, hit: any)
+		-- practice stays private (the player's own banner shows locally)
+		local actor = services.PlayerService.get(id)
+		if actor and actor.role == "Training" then
+			return
+		end
+		HighlightService.broadcast("Signature", id, hit.points, hit.name, { hit.name, "SIGNATURE" })
+	end)
+end
 
 return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14185,7 +15018,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14263,6 +15096,7 @@ local LINEUP_FREEZE = 0.6 -- the line-up teleport settles, then players may move
 local OFFSIDE_PULLBACK = 3 -- studs past the line at the pull release
 local PICKUP_SPEED = 12 -- studs/s: slower than this near the disc picks it up
 local PICKUP_KEY_WINDOW = 0.35 -- a pickup key press counts this long
+local PICKUP_REACH = 1.5 -- a pickup key press reaches this much past PickupRadius (CatchController offers it there)
 local GATHER_SKIP = 0.6 -- travel checks pause while the client glides onto the disc (+ a round trip)
 local BOT_WAIT = 8 -- seconds a match start waits for its bots
 local FORCE_FH_CHANCE = 0.65
@@ -14912,6 +15746,7 @@ function applyOutcomes(outcomes: { any }, ctx: { [string]: any }?)
 		elseif kind == "Greatest" then
 			MatchService.stat(o.id, "greatests")
 			services.HighlightService.broadcast("GREATEST", o.id, 900, "The Greatest!")
+			services.MovementService.noteGreatest(o.id)
 		elseif kind == "Goal" then
 			goal(o)
 		elseif kind == "UniversePoint" then
@@ -15413,6 +16248,16 @@ local function startMatch()
 	if arena.id ~= S.arenaId or mode.Field ~= services.ArenaService.fieldName() then
 		S.arenaId = arena.id
 		services.ArenaService.build(arena.id, mode.Field)
+		-- the new field can be smaller: bring everyone who is not training
+		-- to the new sideline before the walls and the line-up arrive, so
+		-- nobody is left outside the bounds (or inside a new wall)
+		local spawn = services.ArenaService.spawnCFrame()
+		for i, a in services.PlayerService.humans() do
+			if a.role ~= "Training" and a.character then
+				local offset = Vector3.new(((i - 1) % 8 - 3.5) * 4, 0, 0)
+				services.PlayerService.teleport(a, spawn + offset, { face = true })
+			end
+		end
 	end
 	set("Mode", mode.id)
 	set("ModeName", mode.Display)
@@ -15475,18 +16320,25 @@ local function pickupCheck(d: any, allowTeam: string?)
 		return
 	end
 	local tNow = now()
-	local best, bestDist = nil, DiscConfig.Catch.PickupRadius
+	local best, bestDist = nil, math.huge
 	for _, a in services.PlayerService.all() do
 		local eligible = if allowTeam then (a.team == allowTeam and a.role == "Match") else a.role ~= "Training"
 		local root = eligible and services.PlayerService.root(a)
 		if root then
 			local pos = root.Position
 			local dist = Vector3.new(pos.X - spot.X, 0, pos.Z - spot.Z).Magnitude
-			if dist < bestDist and math.abs(pos.Y - spot.Y) < 8 then
-				local v = root.AssemblyLinearVelocity
-				local slow = Vector3.new(v.X, 0, v.Z).Magnitude < PICKUP_SPEED
-				local pressed = (S.pickupWanted[a.id] or -math.huge) >= tNow - PICKUP_KEY_WINDOW
-				if a.isBot or slow or pressed then
+			local v = root.AssemblyLinearVelocity
+			local flatSpeed = Vector3.new(v.X, 0, v.Z).Magnitude
+			local pressed = (S.pickupWanted[a.id] or -math.huge) >= tNow - PICKUP_KEY_WINDOW
+			-- walking over it picks it up within PickupRadius; a key press
+			-- reaches as far as the client offers it (PickupRadius +
+			-- PICKUP_REACH) plus how far our view of the body lags
+			local reach = DiscConfig.Catch.PickupRadius
+			if pressed then
+				reach += PICKUP_REACH + flatSpeed * services.MovementService.ping(a.id) * 2
+			end
+			if dist < reach and dist < bestDist and math.abs(pos.Y - spot.Y) < 8 then
+				if a.isBot or flatSpeed < PICKUP_SPEED or pressed then
 					best, bestDist = a, dist
 				end
 			end
@@ -15932,7 +16784,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15993,6 +16845,7 @@ local RunService = game:GetService("RunService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
 local Actors = require(Shared.Actors)
@@ -16002,10 +16855,12 @@ local MovementService = {}
 MovementService.Landed = Signal.new() -- (actorId, position)
 MovementService.TechAccepted = Signal.new() -- (actorId, tech, quality, info)
 MovementService.Travel = Signal.new() -- (actorId)
+MovementService.SignatureHit = Signal.new() -- (actorId, hit: Signatures.Hit)
 
 local services: any
 
 local HD = MovementConfig.Holding
+local RS = MovementConfig.Reset
 
 export type Track = {
 	id: number,
@@ -16020,6 +16875,7 @@ export type Track = {
 	lastAirborneAt: number, -- Net.now() of the last airborne sample
 	wasGrounded: boolean,
 	pendingLanding: boolean,
+	holdAirborne: boolean, -- the possession started in the air (slow-down starts on landing)
 	-- history (ring buffer, Net.now() times): positionAt + the speed budget
 	histT: { number },
 	histPos: { Vector3 },
@@ -16047,6 +16903,14 @@ export type Track = {
 	lastDiveAt: number,
 	lastSwingAt: number, -- timestamp of the last accepted PivotSwing
 	breakSwingAt: number, -- the PivotSwing a Break was already credited for
+	-- air moves and resets this airtime (from the client-reported mode)
+	airRedirects: number,
+	airLayouts: number,
+	airResets: number, -- accepted Tip Resets + Wall Rebounds
+	airTips: number,
+	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
+	lastLandAt: number, -- ... and of the last airborne -> grounded one
+	signatures: Signatures.Tracker,
 	-- holding
 	holding: boolean,
 	holdStart: number,
@@ -16139,6 +17003,7 @@ local function newTrack(id: number, pos: Vector3): Track
 		lastAirborneAt = -math.huge,
 		wasGrounded = true,
 		pendingLanding = false,
+		holdAirborne = false,
 		histT = table.create(HISTORY, 0),
 		histPos = table.create(HISTORY, pos),
 		histLook = table.create(HISTORY, Vector3.new(0, 0, -1)),
@@ -16163,6 +17028,13 @@ local function newTrack(id: number, pos: Vector3): Track
 		lastDiveAt = -math.huge,
 		lastSwingAt = -math.huge,
 		breakSwingAt = -math.huge,
+		airRedirects = 0,
+		airLayouts = 0,
+		airResets = 0,
+		airTips = 0,
+		lastTakeoffAt = -math.huge,
+		lastLandAt = -math.huge,
+		signatures = Signatures.new(),
 		holding = false,
 		holdStart = -math.huge,
 		holdEnd = -math.huge,
@@ -16184,8 +17056,9 @@ function MovementService.track(id: number): Track?
 	return tracks[id]
 end
 
--- One-way-ish network delay of an actor in seconds, clamped to [0, 0.35]
--- (bots: 0).
+-- One-way network delay of an actor in seconds, clamped to [0, 0.35]
+-- (bots: 0). Player:GetNetworkPing() is the client -> server -> client round
+-- trip, so it is halved here; every caller treats this value as one-way.
 function MovementService.ping(id: number): number
 	if Actors.isBotId(id) then
 		return 0
@@ -16200,7 +17073,7 @@ function MovementService.ping(id: number): number
 	if not ok or type(value) ~= "number" or not finite(value) then
 		return 0
 	end
-	return math.clamp(value, 0, 0.35)
+	return math.clamp(value / 2, 0, 0.35)
 end
 
 local function character(id: number): Model?
@@ -16375,7 +17248,7 @@ local function proposePivot(track: Track, pos: Vector3): boolean
 	end
 	-- the slow-down after a catch (including an airborne catch) can't carry
 	-- the holder further than this from where the server saw the catch
-	if flat(pos - track.holdPos).Magnitude > 20 + 40 * ping then
+	if flat(pos - track.holdPos).Magnitude > 28 + 40 * ping then
 		return false
 	end
 	plant(track, pos, "Client")
@@ -16402,16 +17275,25 @@ end
 local function updateHolding(actor: any, t: Track, root: BasePart, grounded: boolean, clock: number)
 	local tNow = now()
 	if t.pivot == nil then
-		-- server fallback plant (humans normally propose theirs first)
+		-- server fallback plant (humans normally propose theirs first). Like
+		-- the client, the slow-down of an airborne catch starts on landing.
 		if grounded then
+			if t.holdAirborne then
+				t.holdAirborne = false
+				t.holdStart = tNow
+			end
 			local held = tNow - t.holdStart
 			local speed = flat(t.vel).Magnitude
 			if actor.isBot then
 				if held >= HD.DecelMaxTime + 0.15 or (held >= 0.1 and speed < HD.PlantSpeed + 2) then
 					plant(t, t.pos, "Auto")
 				end
-			elseif held >= HD.DecelMaxTime + 0.3 + 2 * MovementService.ping(t.id) then
-				plant(t, t.pos, "Auto")
+			else
+				local due = HD.DecelMaxTime + 0.3 + 2 * MovementService.ping(t.id)
+				-- only once the body has really stopped (or long after it should have)
+				if (held >= due and speed < HD.PlantSpeed + 2) or held >= due + 0.6 then
+					plant(t, t.pos, "Auto")
+				end
 			end
 		end
 		return
@@ -16668,8 +17550,26 @@ end
 
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
-local function judge(t: Track, tech: string, quality: string, ts: number): string?
-	if tech == "PivotSwing" then
+local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
+	if tech == "TipReset" then
+		-- only right after a tip the server is resolving (or resolved)
+		if t.airTips >= RS.MaxTipsPerAir or not services.CatchingService.recentTip(t.id, ts, 0.4) then
+			return nil
+		end
+		return quality
+	elseif tech == "AirRedirect" then
+		-- one per airtime, plus one per reset
+		if t.airRedirects >= 1 + t.airResets then
+			return nil
+		end
+		return quality
+	elseif tech == "Dive" then
+		-- a ground layout or an air layout: one per airtime, plus one per reset
+		if info == "Air" and t.airLayouts >= 1 + t.airResets then
+			return nil
+		end
+		return quality
+	elseif tech == "PivotSwing" then
 		-- only while holding (or just before the release reached us)
 		if not (t.holding or ts <= t.holdEnd + 0.1) or ts < t.holdStart - 0.5 then
 			return nil
@@ -16714,7 +17614,7 @@ local function accept(t: Track, tech: string, quality: string, info: string?, ts
 	if cd > 0 and ts - (t.techAt[tech] or -math.huge) < cd - COOLDOWN_SLACK then
 		return nil
 	end
-	local q = judge(t, tech, quality, ts)
+	local q = judge(t, tech, quality, info, ts)
 	if q == nil then
 		return nil
 	end
@@ -16732,10 +17632,82 @@ local function accept(t: Track, tech: string, quality: string, info: string?, ts
 	return q
 end
 
+-- Feeds one event to the actor's signature tracker and pays what it completes.
+local function feedSignatures(id: number, t: Track, e: Signatures.Event)
+	for _, hit in Signatures.feed(t.signatures, e) do
+		ComboEvaluator.signature(t.combo, hit.name, hit.points, hit.t)
+		MovementService.SignatureHit:Fire(id, hit)
+	end
+end
+
+local GROUNDED_MODES = {
+	Ground = true,
+	Slide = true,
+	DiveSlide = true,
+	Recover = true,
+	Landing = true,
+	Pivot = true,
+	Mark = true,
+	Frozen = true,
+}
+
+-- The airtime ended (client-reported grounded mode): its air moves and
+-- resets start over.
+local function endAirtime(id: number, t: Track, ts: number)
+	feedSignatures(id, t, { kind = "Land", t = ts })
+	t.airRedirects = 0
+	t.airLayouts = 0
+	t.airResets = 0
+	t.airTips = 0
+end
+
+-- A reported movement mode change: tracks takeoffs and landings (on the
+-- client's clock, arrival minus ping) and ends the airtime on landing.
+local function modeChanged(id: number, t: Track, from: string, to: string, at: number)
+	local wasAir = from == "Air" or from == "Dive"
+	local isAir = to == "Air" or to == "Dive"
+	if isAir and not wasAir then
+		t.lastTakeoffAt = at
+	elseif wasAir and GROUNDED_MODES[to] then
+		t.lastLandAt = at
+		endAirtime(id, t, at)
+	end
+end
+
 -- Records an accepted technique: pose attributes, combo chain, listeners.
 local function record(id: number, t: Track, tech: string, quality: string, dir: Vector3, info: string?, ts: number)
 	t.lastTech = tech
 	t.lastTechAt = ts
+	-- air moves and resets this airtime
+	if tech == "AirRedirect" then
+		t.airRedirects += 1
+	elseif tech == "Dive" then
+		t.airLayouts += 1
+	elseif tech == "WallRebound" or tech == "TipReset" then
+		t.airResets += 1
+		if tech == "TipReset" then
+			t.airTips += 1
+		end
+		for _, r in RS.AirRefund do
+			t.techAt[r] = nil
+		end
+	end
+	-- reset refunds mirror the sim's (Config/Movement.Reset)
+	if quality == "Perfect" then
+		local refunds: { string }? = nil
+		if tech == "PrecisionLanding" and info == "Reset" then
+			refunds = RS.LandingRefund
+		elseif tech == "PrecisionLanding" and info == "RollOut" then
+			refunds = RS.RollOutRefund
+		elseif tech == "RecoveryChain" then
+			refunds = RS.RecoveryRefund
+		end
+		if refunds then
+			for _, r in refunds do
+				t.techAt[r] = nil
+			end
+		end
+	end
 	if tech == "Dive" then
 		t.lastDiveAt = ts
 	elseif tech == "PivotSwing" then
@@ -16746,6 +17718,7 @@ local function record(id: number, t: Track, tech: string, quality: string, dir: 
 	replicate(id, tech, quality, dir, info)
 	ComboEvaluator.add(t.combo, tech, quality, ts)
 	MovementService.TechAccepted:Fire(id, tech, quality, info)
+	feedSignatures(id, t, { kind = "Tech", t = ts, tech = tech, quality = quality, info = info })
 end
 
 local function cleanDir(v: any): Vector3
@@ -16765,10 +17738,12 @@ local function onTech(player: Player, events: any, mode: any)
 		return
 	end
 	if type(mode) == "string" and VALID_MODES[mode] and mode ~= t.mode then
+		local from = t.mode
 		t.mode = mode
 		if actor.character then
 			actor.character:SetAttribute("MS", mode)
 		end
+		modeChanged(actor.id, t, from, mode, now() - MovementService.ping(actor.id))
 	end
 	if type(events) ~= "table" then
 		return
@@ -16816,8 +17791,10 @@ function MovementService.botTech(
 	if t then
 		ts = math.max(ts, t.lastTs)
 		t.lastTs = ts
-		if mode then
+		if mode and mode ~= t.mode then
+			local from = t.mode
 			t.mode = mode
+			modeChanged(id, t, from, mode, ts)
 		end
 		if KNOWN_TECHS[tech] ~= nil then
 			t.techAt[tech] = ts
@@ -16836,8 +17813,10 @@ end
 
 function MovementService.setBotMode(id: number, mode: string)
 	local t = tracks[id]
-	if t then
+	if t and mode ~= t.mode then
+		local from = t.mode
 		t.mode = mode
+		modeChanged(id, t, from, mode, now())
 	end
 	local c = character(id)
 	if c then
@@ -16886,7 +17865,10 @@ function MovementService.setHolding(id: number, holding: boolean)
 	t.holding = holding
 	if holding then
 		t.holdStart = now()
-		t.holdPos = t.pos
+		-- given the disc in the same frame as a teleport: the server's last
+		-- sample is still the old spot, so measure from the target
+		t.holdPos = t.teleportTarget or t.pos
+		t.holdAirborne = not t.grounded
 		t.pendingLanding = not t.grounded
 		t.pivot = nil
 		t.pivotSource = "None"
@@ -16903,6 +17885,46 @@ function MovementService.setHolding(id: number, holding: boolean)
 		t.holdEnd = now()
 		t.pendingLanding = false
 		MovementService.clearPivot(id)
+	end
+end
+
+-- Signature move inputs from the catch path and the rules (server-validated).
+function MovementService.noteTip(id: number, discId: string, defender: boolean, at: number)
+	local t = tracks[id]
+	if t then
+		feedSignatures(id, t, { kind = "Tip", t = at, discId = discId, defender = defender })
+	end
+end
+
+function MovementService.noteCatch(id: number, discId: string, interception: boolean, at: number)
+	local t = tracks[id]
+	if not t then
+		return
+	end
+	-- in the air at the catch time? (the answer comes a round trip after
+	-- the catch, often after the landing was reported)
+	local tookOff = t.lastTakeoffAt <= at + 0.05
+	local landedBetween = t.lastLandAt >= t.lastTakeoffAt and t.lastLandAt <= at
+	local airborne = tookOff and not landedBetween
+	local height = 0
+	if airborne then
+		local pos = MovementService.positionAt(id, at)
+		height = math.max(0, pos.Y - t.stand - t.lastGroundedPos.Y)
+	end
+	feedSignatures(id, t, {
+		kind = "Catch",
+		t = at,
+		discId = discId,
+		airborne = airborne,
+		height = height,
+		interception = interception,
+	})
+end
+
+function MovementService.noteGreatest(id: number)
+	local t = tracks[id]
+	if t then
+		feedSignatures(id, t, { kind = "Greatest", t = now() })
 	end
 end
 
@@ -16936,7 +17958,7 @@ function MovementService.noteRelease(id: number, at: number?): string?
 	local tNow = now()
 	local when = if at and finite(at) then math.clamp(at, tNow - 0.5, tNow) else tNow
 	local ts = math.max(when, t.lastTs)
-	local q = judge(t, "Break", "Clean", ts)
+	local q = judge(t, "Break", "Clean", nil, ts)
 	if q == nil then
 		return nil
 	end
@@ -16997,7 +18019,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17030,6 +18052,11 @@ return MovementService
 
 	Line restriction (before the pull): UBLineX / UBLineSide; the character
 	must keep (pos.X - UBLineX) * UBLineSide >= 0. nil = free.
+
+	Fixed hitbox (Config/Hitbox): every player's avatar is rescaled to the
+	standard proportions when it spawns (HumanoidDescription scales; clothes,
+	colours and accessories are kept), so no avatar is bigger or smaller
+	than another. Gameplay zones are measured from the feet anyway.
 ]]
 
 local Players = game:GetService("Players")
@@ -17040,6 +18067,7 @@ local TeamsService = game:GetService("Teams")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Signal = require(Shared.Util.Signal)
 local TeamsConfig = require(Shared.Config.Teams)
+local Hitbox = require(Shared.Config.Hitbox)
 
 local PlayerService = {}
 
@@ -17132,6 +18160,61 @@ local function stampCharacter(actor: Actor, model: Model)
 	model:SetAttribute("UBLineSide", actor.lineSide)
 end
 
+-- True when a description already has the standard scales.
+local function isStandard(desc: HumanoidDescription): boolean
+	local S = Hitbox.Scales
+	local function near(a: number, b: number): boolean
+		return math.abs(a - b) < 1e-3
+	end
+	return near(desc.HeightScale, S.HeightScale)
+		and near(desc.WidthScale, S.WidthScale)
+		and near(desc.DepthScale, S.DepthScale)
+		and near(desc.HeadScale, S.HeadScale)
+		and near(desc.BodyTypeScale, S.BodyTypeScale)
+		and near(desc.ProportionScale, S.ProportionScale)
+end
+
+-- Gives a description the standard body scales (Config/Hitbox.Scales).
+function PlayerService.standardize(desc: HumanoidDescription)
+	local S = Hitbox.Scales
+	desc.HeightScale = S.HeightScale
+	desc.WidthScale = S.WidthScale
+	desc.DepthScale = S.DepthScale
+	desc.HeadScale = S.HeadScale
+	desc.BodyTypeScale = S.BodyTypeScale
+	desc.ProportionScale = S.ProportionScale
+end
+
+-- Rescales a freshly spawned player character to the standard body. Runs in
+-- its own thread (applying a description yields). Leaves the avatar as it is
+-- if the description cannot be read or applied; gameplay zones still use
+-- the fixed hitbox.
+local function normalizeAvatar(model: Model, humanoid: Humanoid)
+	-- CharacterAdded can fire before the model is parented to the workspace
+	for _ = 1, 50 do
+		if model:IsDescendantOf(workspace) then
+			break
+		end
+		task.wait(0.1)
+	end
+	if not model:IsDescendantOf(workspace) or humanoid.Parent ~= model then
+		return
+	end
+	local ok, desc = pcall(function()
+		return humanoid:GetAppliedDescription()
+	end)
+	if not ok or not desc or isStandard(desc) then
+		return
+	end
+	PlayerService.standardize(desc)
+	local applied, err = pcall(function()
+		humanoid:ApplyDescriptionAsync(desc)
+	end)
+	if not applied then
+		warn("[PlayerService] could not apply the standard body: " .. tostring(err))
+	end
+end
+
 function PlayerService.setupCharacter(actor: Actor, model: Model)
 	actor.character = model
 	applyCollision(model)
@@ -17146,6 +18229,9 @@ function PlayerService.setupCharacter(actor: Actor, model: Model)
 		humanoid.AutoRotate = false
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 		humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+		if not actor.isBot and Hitbox.NormalizeAvatars and humanoid.RigType == Enum.HumanoidRigType.R15 then
+			task.spawn(normalizeAvatar, model, humanoid)
+		end
 	end
 	PlayerService.CharacterSpawned:Fire(actor, model)
 end
@@ -17401,7 +18487,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17863,7 +18949,27 @@ function ProgressionService.Init(s: any)
 	services = s
 end
 
+-- A signature move (Rules/Signatures): counted per move and in total, with
+-- XP by its tier. Training counts too (the Reset Lab is where people learn).
+function ProgressionService.signature(actor: any, hit: any)
+	if not actor or not actor.player then
+		return
+	end
+	services.DataService.update(actor.player, function(d: { [string]: any })
+		d.stats.signatures = (d.stats.signatures or 0) + 1
+		local key = "sig" .. tostring(hit.id)
+		d.stats[key] = (d.stats[key] or 0) + 1
+	end)
+	local tierXp = (XP.SignatureTier :: { number })[hit.tier] or 40
+	ProgressionService.xp(actor.player, tierXp, "signature")
+	checkAchievements(actor.player)
+	push(actor.player)
+end
+
 function ProgressionService.Start()
+	services.MovementService.SignatureHit:Connect(function(id: number, hit: any)
+		ProgressionService.signature(services.PlayerService.get(id), hit)
+	end)
 	services.DataService.Loaded:Connect(function(player)
 		stampCharacter(player)
 		push(player)
@@ -17887,7 +18993,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18207,7 +19313,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18587,7 +19693,7 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 				return
 			end
 			local away = Vector3.new(bp.X - origin.X, 0, bp.Z - origin.Z)
-			local push = if away.Magnitude > 0.1 then away.Unit * 3 else Vector3.zero
+			local push = if away.Magnitude > 0.1 then away.Unit * (3 * DiscConfig.Tempo) else Vector3.zero
 			local newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + push
 			services.DiscService.deflect(d, bp, newVel, nil, nil, contactT, blockerId)
 			Net.event("Effect"):FireAllClients("HandBlock", bp, blockerId, "Clean", "Mark")
@@ -18664,7 +19770,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18711,6 +19817,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local ArenasConfig = require(Shared.Config.Arenas)
 local DiscConfig = require(Shared.Config.Disc)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local MovementConfig = require(Shared.Config.Movement)
 local ThrowModel = require(Shared.Disc.ThrowModel)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
@@ -19860,7 +20967,8 @@ local function markBlock(s: Session, d: any, info: any, pivot: Vector3): (number
 	if not markerId or not services.PlayerService.get(markerId) then
 		return nil, nil
 	end
-	local rewind = CatchGeometry.markerRewind(services.MovementService.ping(s.actor.id))
+	-- the same rewind as match hand blocks (DefenseService)
+	local rewind = services.DefenseService.markerRewind(services.MovementService.ping(s.actor.id))
 	local pos, facing = services.MovementService.positionAt(markerId, now() - rewind)
 	local raw = services.DefenseService.stanceOf(markerId)
 	local stance: CatchGeometry.MarkStance = if raw == "High" then "High" elseif raw == "Low" then "Low" else "Relaxed"
@@ -20134,7 +21242,7 @@ DRILLS.BreakMark = {
 					return
 				end
 				local away = flat(bp - pivot)
-				local push = if away.Magnitude > 0.1 then away.Unit * 3 else Vector3.zero
+				local push = if away.Magnitude > 0.1 then away.Unit * (3 * DiscConfig.Tempo) else Vector3.zero
 				local newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + push
 				services.DiscService.deflect(d, bp, newVel, nil, nil, contactT, markerId)
 				Net.event("Effect"):FireAllClients("HandBlock", bp, markerId, "Clean", "Mark")
@@ -20288,6 +21396,116 @@ DRILLS.Combo = {
 }
 
 ---------------------------------------------------------------------------
+-- Reset Lab: the signature moves
+---------------------------------------------------------------------------
+
+-- High floaters keep arriving a few studs over your head at the Combo Lab
+-- (it has rebound walls). Tip them in the air (Secondary as they reach your
+-- hands) to reset your air moves, then chase and catch. Every signature move
+-- you land is ticked off and scores its points; the drill ends when the
+-- list is done or after RESET_LAUNCHES discs.
+local RESET_GOALS = { "TipReset", "ResetGrab", "Skyball", "DoubleLayout", "WallTip", "DoubleTip" }
+local RESET_LAUNCHES = 40
+local RESET_LOB_HEIGHT = 7.5 -- the disc arrives this far above your feet
+local RESET_LAUNCH_DISTANCE = 34
+
+local function resetStatus(s: Session): number
+	local lines = {}
+	local done = 0
+	for _, id in RESET_GOALS do
+		local def = SignaturesConfig.List[id]
+		local ok = s.data.done[id] == true
+		if ok then
+			done += 1
+		end
+		table.insert(lines, (if ok then "[x] " else "[ ] ") .. def.name .. " — " .. def.how)
+	end
+	table.insert(lines, string.format("Disc %d / %d · score %d", s.data.launches, RESET_LAUNCHES, s.data.score))
+	hud(
+		s,
+		string.format("RESET LAB  %d/%d", done, #RESET_GOALS),
+		table.concat(lines, "\n"),
+		{ progress = done / #RESET_GOALS, list = true }
+	)
+	return done
+end
+
+local function resetFinish(s: Session, title: string)
+	local lines = { string.format("Signature points: %d", s.data.score) }
+	for _, id in RESET_GOALS do
+		if not s.data.done[id] then
+			table.insert(lines, "Still to land: " .. SignaturesConfig.List[id].name)
+		end
+	end
+	finish(s, title, lines, "ResetLab", s.data.score, false)
+end
+
+local function resetLaunch(s: Session)
+	if s.data.waiting then
+		return
+	end
+	s.data.waiting = true
+	task.delay(1.1, function()
+		if sessions[s.actor.id] ~= s or s.ended then
+			return
+		end
+		s.data.waiting = false
+		if s.data.launches >= RESET_LAUNCHES then
+			resetFinish(s, "RESET LAB")
+			return
+		end
+		local r = root(s)
+		if not r then
+			return
+		end
+		if s.disc and s.disc.mode == "Held" then
+			services.DiscService.hide(s.disc)
+		end
+		s.data.launches += 1
+		local st = layout.stations.Combo
+		local feet = r.Position - Vector3.new(0, services.MovementService.standHeight(s.actor.id), 0)
+		-- lead a moving player a little; launch from in front of them
+		local lead = flat(r.AssemblyLinearVelocity) * 0.9
+		local target = feet + lead + Vector3.new(0, RESET_LOB_HEIGHT, 0)
+		local origin = feet + st.facing * RESET_LAUNCH_DISTANCE + Vector3.new(0, 3, 0)
+		launchAt(s, origin, target, "Backhand", 0, true)
+		resetStatus(s)
+	end)
+end
+
+DRILLS.ResetLab = {
+	start = function(s: Session)
+		local st = layout.stations.Combo
+		teleport(s, st.start, st.facing)
+		s.data.done = {}
+		s.data.score = 0
+		s.data.launches = 0
+		s.data.waiting = false
+		send(s, "DrillTick", {
+			text = "Jump at the disc and press RIGHT MOUSE as it reaches your hands: a TIP gives your air moves back.",
+		})
+		resetStatus(s)
+		resetLaunch(s)
+	end,
+	onCaught = function(s: Session, _d: any, _info: any)
+		resetLaunch(s)
+	end,
+	onGrounded = function(s: Session, d: any, land: Vector3)
+		services.DiscService.placeOnGround(d, land)
+		resetLaunch(s)
+	end,
+	onSignature = function(s: Session, hit: any)
+		s.data.score += hit.points
+		local fresh = s.data.done[hit.id] ~= true and table.find(RESET_GOALS, hit.id) ~= nil
+		s.data.done[hit.id] = true
+		send(s, "DrillTick", { text = string.format("%s +%d%s", hit.name, hit.points, if fresh then "  ✓" else "") })
+		if resetStatus(s) >= #RESET_GOALS then
+			resetFinish(s, "RESET LAB COMPLETE")
+		end
+	end,
+}
+
+---------------------------------------------------------------------------
 -- session lifecycle
 ---------------------------------------------------------------------------
 
@@ -20398,6 +21616,15 @@ function TrainingService.Start()
 			TrainingService.startDrill(actor, id)
 		end)
 	end
+	services.MovementService.SignatureHit:Connect(function(actorId: number, hit: any)
+		local s = sessions[actorId]
+		if s and not s.ended then
+			local drill = DRILLS[s.drill]
+			if drill and drill.onSignature then
+				drill.onSignature(s, hit)
+			end
+		end
+	end)
 	services.MovementService.TechAccepted:Connect(function(actorId, tech, quality, info)
 		local s = sessions[actorId]
 		if s then
@@ -20433,13 +21660,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="57">
+  <Item class="SoundService" referent="60">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="58">
+  <Item class="StarterPlayer" referent="61">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -20452,11 +21679,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="59">
+    <Item class="StarterCharacterScripts" referent="62">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="60">
+      <Item class="LocalScript" referent="63">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -20532,19 +21759,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="61">
+    <Item class="StarterPlayerScripts" referent="64">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="62">
+      <Item class="Folder" referent="65">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="63">
+        <Item class="Folder" referent="66">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -20684,7 +21911,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -20965,7 +22192,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -21000,6 +22227,15 @@ return CameraController
 	is close and roughly where you are looking. Primary next to a disc lying
 	on the ground asks the server to pick it up instead (Action "Pickup").
 
+	Tip Reset (Secondary in the air, not holding): taps the disc up through
+	your hands. Judged here on the disc's closest pass within Reset.TipWindow
+	of the press against your tip zones (the normal zones plus a hands-up
+	sphere); a hit sends a claim of kind "Tip" with the press time, gives you
+	the reset at once (MovementController.tipReset) and predicts the disc's
+	pop so you can chase it. The server re-judges it and pops the disc for
+	everyone (a Denied tip just eases the disc back onto its flight). A press
+	with no disc close enough says so.
+
 	Marking: hold Secondary within Marking.Range of an opposing holder (their
 	pivot) for the mark shuffle (MovementController.setMarking) with your
 	hands up, replicated as MarkStance(on, stance). The Slide key toggles High
@@ -21017,6 +22253,7 @@ local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Hitbox = require(Shared.Config.Hitbox)
 local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
@@ -21024,12 +22261,15 @@ local Net = require(Shared.Net)
 
 local C = DiscConfig.Catch
 local MK = MovementConfig.Marking
+local RS = MovementConfig.Reset
 
 local CatchController = {}
 
 CatchController.Reached = Signal.new() -- (dir)
 CatchController.Claimed = Signal.new() -- (discId, zoneKind)
 CatchController.Denied = Signal.new() -- (discId)
+CatchController.Caught = Signal.new() -- (discId, interception) the server confirmed your catch
+CatchController.Tipped = Signal.new() -- (discId, defender, quality) you tipped a disc (predicted)
 
 local LOCAL_FX_DEPTH = 0.85 -- claims this deep play the catch feedback at once
 local LOCAL_FX_RECENT = 1.2 -- recentLocalCatch(): feedback played this recently
@@ -21292,14 +22532,159 @@ local function bodyState(root: BasePart): CatchGeometry.BodyState
 	local sim = controllers.MovementController.sim()
 	local diving = sim.mode == "Dive" or sim.mode == "DiveSlide"
 	return {
-		root = root.Position,
+		root = Hitbox.root(root.Position, controllers.MovementController.standHeight()),
 		facing = VecMath.flatUnit(root.CFrame.LookVector),
 		reaching = CatchController.reachActive(),
 		reachDir = reachDir,
 		diving = diving,
 		diveDir = sim.diveDir,
 		sliding = sim.mode == "Slide",
+		prone = sim.mode == "DiveSlide" or sim.mode == "Recover",
 	}
+end
+
+---------------------------------------------------------------------------
+-- tip reset
+---------------------------------------------------------------------------
+
+local TIP_SAMPLE = 1 / 120
+
+-- Every flying disc's path over [t0, t1] as this client displays it, with
+-- what is needed to predict a tip: { id, folder, samples, sim, launchTime }.
+type TipCandidate = {
+	id: string,
+	folder: Configuration,
+	samples: { CatchGeometry.PathSample },
+	sim: DiscPhysics.State,
+	launchTime: number,
+	wind: DiscPhysics.Wind,
+	groundY: number,
+	flightId: number,
+}
+
+local function tipCandidates(t0: number, t1: number): { TipCandidate }
+	local list: { TipCandidate } = {}
+	for _, folder in controllers.DiscRenderer.folders() do
+		local id = folder:GetAttribute("Id")
+		if type(id) == "string" and canClaim(folder) then
+			local sim, launchTime, wind, groundY, landed, flightId = controllers.DiscRenderer.flight(id)
+			local mine = folder:GetAttribute("ThrowerId") == player.UserId and folder:GetAttribute("Touched") ~= true
+			if sim and not landed and not mine and t1 > launchTime + DiscConfig.Throw.NoCatchTime then
+				local samples: { CatchGeometry.PathSample } = {}
+				local from = math.max(t0, launchTime + DiscConfig.Throw.NoCatchTime)
+				local n = math.clamp(math.ceil((t1 - from) / TIP_SAMPLE), 1, 64)
+				for k = 0, n do
+					local tk = from + (t1 - from) * k / n
+					local x, y, z = DiscPhysics.positionAt(sim, tk - launchTime)
+					table.insert(samples, { t = tk, pos = Vector3.new(x, y, z) })
+				end
+				table.insert(list, {
+					id = id,
+					folder = folder,
+					samples = samples,
+					sim = sim,
+					launchTime = launchTime,
+					wind = wind,
+					groundY = groundY,
+					flightId = flightId,
+				})
+			end
+		end
+	end
+	return list
+end
+
+-- Would a tip press right now touch a disc? (HUD context hint)
+function CatchController.tipReady(): boolean
+	local root = controllers.MovementController.root()
+	if not root or controllers.MovementController.isGrounded() or controllers.ThrowController.isHolding() then
+		return false
+	end
+	local t = now()
+	local zones = CatchGeometry.tipZones(bodyState(root))
+	for _, cand in tipCandidates(t - RS.TipWindow, t + RS.TipWindow) do
+		if CatchGeometry.bestTip(zones, cand.samples, t, RS.TipPerfect) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Secondary in the air: try to tip the disc passing your hands.
+local function attemptTip()
+	local root = controllers.MovementController.root()
+	if not root then
+		return
+	end
+	local t = now()
+	local zones = CatchGeometry.tipZones(bodyState(root))
+	local best: CatchGeometry.Evaluation? = nil
+	local bestQ = "Clean"
+	local bestCand: TipCandidate? = nil
+	for _, cand in tipCandidates(t - RS.TipWindow, t + RS.TipWindow) do
+		local ev, q = CatchGeometry.bestTip(zones, cand.samples, t, RS.TipPerfect)
+		if ev and (best == nil or math.abs((ev.t or t) - t) < math.abs(((best :: any).t or t) - t)) then
+			best, bestQ, bestCand = ev, q, cand
+		end
+	end
+	-- hands up either way (the swipe reads even on a miss)
+	local facing = VecMath.flatUnit(root.CFrame.LookVector)
+	local c = player.Character
+	if c then
+		c:SetAttribute("UB_LocalReach", t)
+		c:SetAttribute("UB_LocalReachDir", (facing + Vector3.new(0, 1.6, 0)).Unit)
+	end
+	if not best or not bestCand then
+		controllers.MovementController.Feedback:Fire({ kind = "Context", text = "NO DISC TO TIP" })
+		return
+	end
+	local ev = best :: CatchGeometry.Evaluation
+	local cand = bestCand :: TipCandidate
+	local ok = controllers.MovementController.tipReset(bestQ, facing)
+	if not ok then
+		return -- the sim said why (two tips already, cooldown)
+	end
+	local myTeam = c and c:GetAttribute("UBTeam")
+	local throwerTeam = cand.folder:GetAttribute("ThrowerTeam")
+	local defender = type(throwerTeam) == "string"
+		and throwerTeam ~= ""
+		and throwerTeam ~= myTeam
+		and cand.folder:GetAttribute("Pull") ~= true
+	Net.event("Catch"):FireServer(cand.id, t, "Tip", facing, root.Position, root.AssemblyLinearVelocity)
+	-- no catch claims on the segment you just tipped: the next touch is on
+	-- the popped disc (the server's new segment)
+	contacts[cand.id] = {
+		flightId = cand.flightId,
+		lastPos = root.Position,
+		lastT = t,
+		tFirst = nil,
+		kind = "Tip",
+		bestDepth = 1,
+		lastDepth = 1,
+		body = root.Position,
+		bodyVel = root.AssemblyLinearVelocity,
+		retry = false,
+		awaiting = false,
+		sentAt = os.clock(),
+		fxDone = true,
+		settled = true,
+	}
+	-- predict the pop so the chase starts now (the server's segment blends in)
+	local at = ev.t or t
+	local st = DiscPhysics.copy(cand.sim)
+	DiscPhysics.advanceTo(st, at - cand.launchTime, cand.wind, cand.groundY - 100)
+	local x, y, z = DiscPhysics.positionAt(cand.sim, at - cand.launchTime)
+	local pos = Vector3.new(x, math.max(y, cand.groundY + 0.6), z)
+	local popped = DiscPhysics.fromVectors(
+		pos,
+		CatchGeometry.tipVelocity(DiscPhysics.velocity(st), facing),
+		Vector3.new(0, 1, 0),
+		C.TipSpin
+	)
+	controllers.DiscRenderer.predictTip(cand.id, popped, at)
+	controllers.AudioController.playAt("Tip", pos)
+	controllers.EffectsController.burst(pos, Color3.fromRGB(90, 230, 255), if bestQ == "Perfect" then 18 else 10, 12)
+	CatchController.Tipped:Fire(cand.id, defender, bestQ)
 end
 
 -- Deepest evaluation along this frame's disc path, and the time of the
@@ -21376,7 +22761,7 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 		not sim
 		or landed
 		or not canClaim(folder)
-		or folder:GetAttribute("ThrowerId") == player.UserId
+		or (folder:GetAttribute("ThrowerId") == player.UserId and folder:GetAttribute("Touched") ~= true)
 		or tNow < launchTime + DiscConfig.Throw.NoCatchTime
 	then
 		contacts[id] = nil
@@ -21485,9 +22870,11 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 		c.bestDepth = 1
 		c.lastDepth = 1
 		if result == "Denied" then
-			-- retry at once if the disc is still in reach
+			-- retry at once if the disc is still in reach (a refused tip
+			-- gives the segment back to catching too)
 			c.sentAt = -math.huge
 			c.retry = true
+			c.settled = false
 		else
 			c.settled = true -- caught, or someone else won it
 		end
@@ -21495,6 +22882,15 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
+	else
+		local folder = controllers.DiscRenderer.folderOf(discId)
+		local me = player.Character
+		local throwerTeam = folder and folder:GetAttribute("ThrowerTeam")
+		local interception = me ~= nil
+			and type(throwerTeam) == "string"
+			and throwerTeam ~= ""
+			and throwerTeam ~= me:GetAttribute("UBTeam")
+		CatchController.Caught:Fire(discId, interception)
 	end
 end
 
@@ -21514,6 +22910,10 @@ function CatchController.Start()
 				CatchController.reach()
 			end
 		elseif action == "Secondary" then
+			if not controllers.MovementController.isGrounded() then
+				attemptTip()
+				return
+			end
 			markHeld = true
 			updateMarking()
 		elseif action == "Slide" and marking then
@@ -21545,7 +22945,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -21599,6 +22999,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Hitbox = require(Shared.Config.Hitbox)
 local ProgressionConfig = require(Shared.Config.Progression)
 local TeamsConfig = require(Shared.Config.Teams)
 local Actors = require(Shared.Actors)
@@ -21666,6 +23067,10 @@ type Visual = {
 	spin: number,
 	predicted: DiscPhysics.State?,
 	predictedT0: number,
+	tipPred: DiscPhysics.State?, -- your own tip: the disc's predicted pop (until the server's segment)
+	tipPredT0: number,
+	tipPredFlight: number,
+	tipPredUntil: number,
 	predictedStop: number,
 	predictedFlightId: number,
 	catchStart: number,
@@ -21793,6 +23198,10 @@ local function create(folder: Configuration): Visual
 		spin = 0,
 		predicted = nil,
 		predictedT0 = 0,
+		tipPred = nil,
+		tipPredT0 = 0,
+		tipPredFlight = -1,
+		tipPredUntil = 0,
 		predictedStop = math.huge,
 		predictedFlightId = -1,
 		catchStart = 0,
@@ -21997,14 +23406,16 @@ local function displayedZones(model: Model, root: BasePart, t: number): { CatchG
 	local techDir = model:GetAttribute("TechDir")
 	local facing = VecMath.flatUnit(root.CFrame.LookVector)
 	local diving = ms == "Dive" or ms == "DiveSlide"
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	return CatchGeometry.zones({
-		root = root.Position,
+		root = Hitbox.root(root.Position, Hitbox.standHeightOf(humanoid, root)),
 		facing = facing,
 		reaching = type(reachT) == "number" and t - reachT <= DiscConfig.Catch.ReachWindow + 0.1,
 		reachDir = if typeof(reachDir) == "Vector3" then reachDir else nil,
 		diving = diving,
 		diveDir = if diving and typeof(techDir) == "Vector3" and techDir.Magnitude > 0.5 then techDir else facing,
 		sliding = ms == "Slide",
+		prone = ms == "DiveSlide" or ms == "Recover",
 	})
 end
 
@@ -22014,7 +23425,7 @@ local function mayCatch(model: Model, folder: Configuration): boolean
 		return false
 	end
 	local id = Actors.idOf(model)
-	if id == nil or id == folder:GetAttribute("ThrowerId") then
+	if id == nil or (id == folder:GetAttribute("ThrowerId") and folder:GetAttribute("Touched") ~= true) then
 		return false
 	end
 	if folder:GetAttribute("Context") == "Training" then
@@ -22066,6 +23477,21 @@ local function target(v: Visual, mode: string, holder: number, t: number, dt: nu
 		local s = v.sim
 		if not s then
 			return { cf = nil, trail = false, shadow = false }
+		end
+		-- your own tip: draw the predicted pop until the server's segment
+		-- (a new FlightId) replaces it, or the tip was refused
+		local tp = v.tipPred
+		if tp then
+			if v.tipPredFlight == v.flightId and t < v.tipPredUntil then
+				local x, y, z = DiscPhysics.positionAt(tp, math.max(0, t - v.tipPredT0))
+				local pos = Vector3.new(x, math.max(y, v.groundY + DiscConfig.Physics.GroundContact), z)
+				v.spinAngle += tp.spin * dt
+				return { cf = orient(pos, DiscPhysics.normal(tp), v.spinAngle), trail = true, shadow = true }
+			end
+			v.tipPred = nil
+			if v.tipPredFlight == v.flightId then
+				v.pendingBlend = DENY_EASE -- refused: ease back onto the flight
+			end
 		end
 		local cf, landed = flightCFrame(v, s, t, dt)
 		local flightPos = cf.Position
@@ -22290,6 +23716,23 @@ function DiscRenderer.predictThrow(id: string, state: DiscPhysics.State, t0: num
 	v.wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else { x = 0, y = 0, z = 0 }
 end
 
+-- Your own tip: draw the disc's predicted pop (from contact time t0) until
+-- the server's deflection arrives, at most TIP_PREDICT + 2 x ping.
+local TIP_PREDICT = 0.35
+function DiscRenderer.predictTip(id: string, state: DiscPhysics.State, t0: number)
+	local v = visuals[id]
+	if not v or v.folder:GetAttribute("Mode") ~= "Flight" then
+		return
+	end
+	v.tipPred = DiscPhysics.copy(state)
+	v.tipPredT0 = t0
+	v.tipPredFlight = v.flightId
+	v.tipPredUntil = now() + TIP_PREDICT + 2 * myPing()
+	v.catchUntil = 0
+	v.observer = nil
+	v.pendingBlend = BLEND_TIME
+end
+
 -- Your own claim: ease the disc into your hand until the server answers.
 function DiscRenderer.predictCatch(id: string)
 	local v = visuals[id]
@@ -22368,7 +23811,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -22410,6 +23853,7 @@ local Actors = require(Shared.Actors)
 local MovementConfig = require(Shared.Config.Movement)
 local ProgressionConfig = require(Shared.Config.Progression)
 local TeamsConfig = require(Shared.Config.Teams)
+local Hitbox = require(Shared.Config.Hitbox)
 local Theme = require(script.Parent.Parent.UI.Theme)
 
 local EffectsController = {}
@@ -22570,6 +24014,17 @@ end
 -- Visual for a technique performed by `model` (local or remote). Sloppy and
 -- Gassed techniques get none: the movement itself and the combo widget
 -- already show them, and the effects stay meaningful.
+-- A reset (Tip Reset, Wall Rebound): a cyan pulse round the body so you
+-- and everyone else can see the air moves came back.
+local RESET_COLOR = Color3.fromRGB(90, 230, 255)
+local function resetFlash(root: BasePart, isLocal: boolean)
+	EffectsController.ring(root.Position, RESET_COLOR, 3.6, 0.35)
+	EffectsController.burst(root.Position + Vector3.new(0, 1.5, 0), RESET_COLOR, 12, 10)
+	if isLocal then
+		controllers.AudioController.play("Reset")
+	end
+end
+
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
@@ -22608,6 +24063,9 @@ function EffectsController.tech(model: Model, tech: string, quality: string, dir
 		EffectsController.dust(feet, 6)
 	elseif tech == "WallRebound" then
 		EffectsController.burst(root.Position - dir * 1.5, color, 16, 14)
+		resetFlash(root, isLocal)
+	elseif tech == "TipReset" then
+		resetFlash(root, isLocal)
 	elseif tech == "RecoveryChain" then
 		EffectsController.burst(feet + Vector3.new(0, 1, 0), color, 10, 8)
 	elseif tech == "PivotSwing" then
@@ -23032,7 +24490,121 @@ function EffectsController.Init(c: any)
 	fx = f
 end
 
+---------------------------------------------------------------------------
+-- hitbox overlay (Settings: Show hitboxes)
+---------------------------------------------------------------------------
+
+-- The fixed gameplay body of every character as a see-through capsule from
+-- the feet (Config/Hitbox), so players can check that everyone's body is the
+-- same whatever their avatar. Client-only adornments, refreshed at 10 Hz.
+type HitboxDraw = { parts: { HandleAdornment }, root: BasePart }
+local hitboxDraws: { [Model]: HitboxDraw } = {}
+local hitboxNextRefresh = 0
+
+local function clearHitboxes()
+	for model, d in hitboxDraws do
+		for _, a in d.parts do
+			a:Destroy()
+		end
+		hitboxDraws[model] = nil
+	end
+end
+
+local function hitboxColor(model: Model): Color3
+	local team = model:GetAttribute("UBTeam")
+	if team == "A" then
+		return TeamsConfig.A.Color
+	elseif team == "B" then
+		return TeamsConfig.B.Color
+	end
+	return TeamsConfig.Neutral.Color
+end
+
+local function drawHitbox(model: Model, root: BasePart): HitboxDraw
+	local r, h = Hitbox.Radius, Hitbox.Height
+	local function adorn(a: HandleAdornment)
+		a.Adornee = root
+		a.AlwaysOnTop = false
+		a.ZIndex = 0
+		a.Transparency = 0.75
+		a.Color3 = hitboxColor(model)
+		a.Parent = fx
+	end
+	local body = Instance.new("CylinderHandleAdornment")
+	body.Radius = r
+	body.Height = math.max(h - 2 * r, 0.1)
+	adorn(body)
+	local top = Instance.new("SphereHandleAdornment")
+	top.Radius = r
+	adorn(top)
+	local bottom = Instance.new("SphereHandleAdornment")
+	bottom.Radius = r
+	adorn(bottom)
+	return { parts = { body, top, bottom }, root = root }
+end
+
+local function placeHitbox(model: Model, d: HitboxDraw)
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local feet = -Hitbox.standHeightOf(humanoid, d.root)
+	local r, h = Hitbox.Radius, Hitbox.Height
+	local mid = feet + h / 2
+	-- adornment offsets are in the root's space; keep the capsule upright
+	-- (CylinderHandleAdornment's axis is its local Z)
+	local upright = CFrame.Angles(math.rad(90), 0, 0)
+	d.parts[1].CFrame = CFrame.new(0, mid, 0) * upright
+	d.parts[2].CFrame = CFrame.new(0, feet + h - r, 0)
+	d.parts[3].CFrame = CFrame.new(0, feet + r, 0)
+	local color = hitboxColor(model)
+	for _, a in d.parts do
+		a.Color3 = color
+	end
+end
+
+local function updateHitboxes()
+	if controllers.SettingsController.get("ShowHitboxes") ~= true then
+		if next(hitboxDraws) ~= nil then
+			clearHitboxes()
+		end
+		return
+	end
+	local seen: { [Model]: boolean } = {}
+	for _, model in Actors.characters() do
+		local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if root then
+			seen[model] = true
+			local d: HitboxDraw? = hitboxDraws[model]
+			if d and d.root ~= root then
+				for _, a in d.parts do
+					a:Destroy()
+				end
+				d = nil
+			end
+			if not d then
+				d = drawHitbox(model, root)
+				hitboxDraws[model] = d
+			end
+			placeHitbox(model, d :: HitboxDraw)
+		end
+	end
+	for model, d in hitboxDraws do
+		if not seen[model] then
+			for _, a in d.parts do
+				a:Destroy()
+			end
+			hitboxDraws[model] = nil
+		end
+	end
+end
+
 function EffectsController.Start()
+	RunService.Heartbeat:Connect(function()
+		local t = os.clock()
+		if t >= hitboxNextRefresh then
+			hitboxNextRefresh = t + 0.1
+			updateHitboxes()
+		end
+	end)
+
 	controllers.MovementController.Tech:Connect(function(e)
 		local c = player.Character
 		if c then
@@ -23082,6 +24654,12 @@ function EffectsController.Start()
 		elseif kind == "Bobble" then
 			EffectsController.burst(pos, Theme.Colors.Gold, 14, 9)
 			controllers.AudioController.playAt("Bobble", pos)
+		elseif kind == "Tip" then
+			-- your own tip already played its burst and sound (CatchController)
+			if not mine then
+				EffectsController.burst(pos, RESET_COLOR, 10, 12)
+				controllers.AudioController.playAt("Tip", pos)
+			end
 		elseif kind == "TargetHit" then
 			EffectsController.burst(pos, Theme.Colors.Good, 40, 18, nil, 20)
 			EffectsController.ring(pos, Theme.Colors.Good, 6, 0.4, Vector3.new(0, 0, 1))
@@ -23167,7 +24745,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -23581,7 +25159,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -23638,6 +25216,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementSim = require(Shared.Movement.MovementSim)
 local MovementConfig = require(Shared.Config.Movement)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local Signatures = require(Shared.Rules.Signatures)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
@@ -23649,6 +25228,7 @@ MovementController.Feedback = Signal.new() -- ({ kind, value?, text? })
 MovementController.Landed = Signal.new() -- (fromDive: boolean, speed: number)
 MovementController.ComboChanged = Signal.new() -- (chain total, last points, event)
 MovementController.ChainEnded = Signal.new() -- (ComboEvaluator.Summary)
+MovementController.SignatureHit = Signal.new() -- (Signatures.Hit) a signature move, recognised locally
 
 local controllers: any
 local player = Players.LocalPlayer
@@ -23669,6 +25249,13 @@ local modeDirty = false
 local lastTeleport: any = nil
 local pending: { any } = {}
 local combo = ComboEvaluator.newTracker()
+-- signature moves, recognised locally for instant feedback (the server
+-- recognises them again on validated events and pays out)
+local signatures = Signatures.new()
+local lastAirHeight = 0 -- feet above the ground below, while airborne
+-- whether you were in the air at each catch claim (the confirmation comes a
+-- round trip later, often after landing)
+local claimAir: { [string]: { airborne: boolean, height: number, t: number } } = {}
 local lastFacing = Vector3.new(0, 0, -1)
 local lastStep = Vector3.zero
 local lastEnv: MovementSim.Env? = nil
@@ -23803,6 +25390,7 @@ local function buildEnv(): MovementSim.Env
 		local far = workspace:Raycast(pos, Vector3.new(0, -120, 0), rayParams)
 		if far then
 			local height = math.max(0, pos.Y - standHeight - far.Position.Y)
+			lastAirHeight = height
 			local g = workspace.Gravity
 			ttl = (vel.Y + math.sqrt(math.max(vel.Y * vel.Y + 2 * g * height, 0))) / g
 		end
@@ -23860,6 +25448,20 @@ local function currentInput(): MovementSim.Input
 	}
 end
 
+-- Feeds the local signature tracker; a completed move pays into the local
+-- chain and is announced at once (the server pays the real points).
+local function feedSignatures(ev: Signatures.Event)
+	for _, hit in Signatures.feed(signatures, ev) do
+		local points, total = ComboEvaluator.signature(combo, hit.name, hit.points, hit.t)
+		MovementController.SignatureHit:Fire(hit)
+		MovementController.ComboChanged:Fire(
+			total,
+			points,
+			{ tech = "Signature", quality = "Perfect", t = hit.t, dir = Vector3.zero, chain = true, info = hit.name }
+		)
+	end
+end
+
 local function queueEvent(e: MovementSim.TechEvent)
 	table.insert(pending, { tech = e.tech, quality = e.quality, dir = e.dir, t = e.t, info = e.info })
 	-- close a timed-out chain first so its end card is never swallowed
@@ -23870,6 +25472,7 @@ local function queueEvent(e: MovementSim.TechEvent)
 	local points, total = ComboEvaluator.add(combo, e.tech, e.quality, e.t)
 	MovementController.Tech:Fire(e)
 	MovementController.ComboChanged:Fire(total, points, e)
+	feedSignatures({ kind = "Tech", t = e.t, tech = e.tech, quality = e.quality, info = e.info })
 end
 
 -- Queues a technique that another controller detected (ThrowController's
@@ -23884,6 +25487,17 @@ function MovementController.addTech(tech: string, quality: string, dir: Vector3,
 		chain = ComboEvaluator.active(combo, t) ~= nil,
 		info = info,
 	})
+end
+
+-- CatchController saw you tip a disc in the air: the Tip Reset. Returns
+-- false when the sim refuses it (it already said why).
+function MovementController.tipReset(quality: string, dir: Vector3): boolean
+	local env = lastEnv
+	if not env or not root then
+		return false
+	end
+	local ok = MovementSim.tipReset(sim, env, quality, dir)
+	return ok
 end
 
 function MovementController.noteAerialReach(dir: Vector3)
@@ -23919,7 +25533,16 @@ function MovementController.contextHint(): { [string]: string }
 	if not env or not root then
 		return {}
 	end
-	return MovementSim.contextHint(sim, currentInput(), env)
+	local hint = MovementSim.contextHint(sim, currentInput(), env)
+	-- a disc about to pass your hands in the air: the Tip Reset
+	if MovementSim.isAirborne(sim) and not sim.holding and controllers.CatchController.tipReady() then
+		hint.Secondary = "TIP RESET"
+	end
+	-- gamepad X swings to the mirror of the current step, not to the left
+	if sim.holding and hint.Cut and controllers.InputController.scheme() == "Gamepad" then
+		hint.Cut = "SWING OTHER SIDE"
+	end
+	return hint
 end
 
 ---------------------------------------------------------------------------
@@ -24091,23 +25714,43 @@ local function applyLine(c: Model, pos: Vector3, v: Vector3): Vector3
 	return v
 end
 
+-- Where the body should face. Aiming (pivoting, charging, marking) faces
+-- the camera, but never while the body is still sliding: during the catch
+-- slow-down the body keeps facing its travel and turns toward the camera as
+-- it stops, so a deep catch never runs backwards. A reach at speed twists
+-- the body at most REACH_TWIST from travel (PoseController turns the waist
+-- and arm the rest of the way).
+local REACH_TWIST = 75
+
 local function faceTarget(v: Vector3): (Vector3?, boolean)
 	local catch = controllers.CatchController
+	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
+	local speed = v.Magnitude
 	local aiming = sim.holding
 		or controllers.ThrowController.isCharging()
 		or MovementSim.isMarking(sim)
 		or catch.isMarking()
 	if aiming then
-		return controllers.CameraController.forward(), true
+		local cam = controllers.CameraController.forward()
+		local settling = sim.holding and sim.holdPhase ~= "Pivot"
+		if travel and (settling or sim.mode == "DiveSlide" or sim.mode == "Recover") then
+			-- blend toward the camera as the slide runs out of speed
+			local k = math.clamp(1 - speed / 10, 0, 1)
+			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
+			return if blend.Magnitude > 0.5 then blend else travel, true
+		end
+		return cam, true
 	end
 	if sim.mode == "Dive" or sim.mode == "DiveSlide" then
 		return sim.diveDir, false
 	end
-	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
 	if catch.reachActive() then
 		local _, reachDir = catch.reachState()
 		local r = VecMath.flatUnit(reachDir)
 		if r.Magnitude > 0.5 then
+			if travel and speed > MovementConfig.JogSpeed then
+				return VecMath.rotateToward(travel, r, REACH_TWIST), true
+			end
 			local blend = if travel then VecMath.flatUnit(r + travel) else r
 			return if blend.Magnitude > 0.5 then blend else r, true
 		end
@@ -24211,6 +25854,7 @@ local function frame(dtRaw: number)
 	end
 	if out.landed then
 		MovementController.Landed:Fire(sim.landedFromDive, sim.landingVel.Magnitude)
+		feedSignatures({ kind = "Land", t = now() })
 	end
 
 	local mode = MovementSim.poseMode(sim)
@@ -24313,6 +25957,8 @@ function MovementController.Start()
 	-- predicted hold: the slow-down starts with the claim, not a round trip later
 	local catch = controllers.CatchController
 	catch.Claimed:Connect(function(discId)
+		local airborne = MovementSim.isAirborne(sim)
+		claimAir[discId] = { airborne = airborne, height = if airborne then lastAirHeight else 0, t = now() }
 		if controllers.ThrowController.isHolding() then
 			return
 		end
@@ -24334,6 +25980,24 @@ function MovementController.Start()
 		warn("[MovementController] CatchController.Denied missing; predicted holds expire on a timer")
 	end
 
+	-- signature move inputs from the catch path
+	catch.Tipped:Connect(function(discId: string, defender: boolean)
+		feedSignatures({ kind = "Tip", t = now(), discId = discId, defender = defender })
+	end)
+	catch.Caught:Connect(function(discId: string, interception: boolean)
+		local at = claimAir[discId]
+		claimAir[discId] = nil
+		local airborne = if at then at.airborne else MovementSim.isAirborne(sim)
+		feedSignatures({
+			kind = "Catch",
+			t = if at then at.t else now(),
+			discId = discId,
+			airborne = airborne,
+			height = if at then at.height elseif airborne then lastAirHeight else 0,
+			interception = interception,
+		})
+	end)
+
 	player.CharacterAdded:Connect(setupCharacter)
 	if player.Character then
 		task.spawn(setupCharacter, player.Character)
@@ -24345,7 +26009,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -24443,7 +26107,11 @@ type Rig = {
 	history: { { t: number, p: Vector3 } },
 	smoothVel: Vector3,
 	shufflePhase: number,
+	msShown: string, -- remote rigs: the movement mode being drawn (MS, delayed)
+	msNext: string,
+	msNextAt: number,
 	freeSide: number, -- the leg that steps out in the pivot lunge (-1 left, +1 right)
+	lunging: boolean, -- in the lunge stance (freeSide is locked while true)
 	legMode: string, -- last Pose.legs (a change blends the legs briefly)
 	legSwitchAt: number,
 	seenAt: number,
@@ -24483,7 +26151,9 @@ local IDENTITY = CFrame.identity
 local DOWN = Vector3.new(0, -1, 0)
 local LEG_RATE = 26 -- blend speed when the legs switch between pose kinds
 local LEG_BLEND_TIME = 0.2
-local SHUFFLE_AMPLITUDE = 0.45
+local REMOTE_POSE_DELAY = 0.08 -- other players' poses follow their attributes this late (render interpolation)
+local SHUFFLE_STRIDE = 2.2 -- studs per step of the mark shuffle
+local SHUFFLE_MAX_CADENCE = 3 -- gait cycles per second at most
 local SHUFFLE_LIFT = 0.3
 
 local function now(): number
@@ -24663,7 +26333,11 @@ local function buildRig(model: Model): Rig?
 		history = {},
 		smoothVel = Vector3.new(vel.X, 0, vel.Z),
 		shufflePhase = 0,
+		msShown = "Ground",
+		msNext = "Ground",
+		msNextAt = 0,
 		freeSide = 1,
+		lunging = false,
 		legMode = "free",
 		legSwitchAt = -math.huge,
 		seenAt = os.clock(),
@@ -24717,6 +26391,7 @@ type Ctx = {
 	mark: string,
 	holding: boolean,
 	step: Vector3, -- body-space step of the free foot (zero unless pivoting)
+	pivot: Vector3?, -- body-space position of the pivot foot P (pivoting only)
 	celebrate: string,
 	celebrateAge: number,
 	leftHanded: boolean,
@@ -24819,6 +26494,8 @@ local function gather(rig: Rig, dt: number): Ctx
 		ctx.holding = controllers.ThrowController.isHolding() or mc.holdingDisc()
 		if ctx.mode == "Pivot" then
 			ctx.step = toLocal(root, mc.step())
+			local p = mc.pivot()
+			ctx.pivot = if p then root.CFrame:PointToObjectSpace(p) else nil
 		end
 	else
 		vel = remoteVelocity(rig, dt)
@@ -24830,11 +26507,23 @@ local function gather(rig: Rig, dt: number): Ctx
 		rig.accel = rig.accel:Lerp(raw, 1 - math.exp(-4 * dt))
 		ctx.rollLimit = 0.18
 		ctx.leanLimit = 0.12
+		-- Other bodies are drawn through Roblox's physics interpolation
+		-- buffer, a little behind the attributes that describe them, so the
+		-- pose follows the attributes REMOTE_POSE_DELAY late (a diver goes
+		-- flat as they leave the ground, not before).
 		local ms = m:GetAttribute("MS")
-		ctx.mode = if type(ms) == "string" then ms else "Ground"
+		local msNow = if type(ms) == "string" then ms else "Ground"
+		if msNow ~= rig.msNext then
+			rig.msNext = msNow
+			rig.msNextAt = t + REMOTE_POSE_DELAY
+		end
+		if t >= rig.msNextAt then
+			rig.msShown = rig.msNext
+		end
+		ctx.mode = rig.msShown
 		local tech = m:GetAttribute("Tech")
 		ctx.tech = if type(tech) == "string" then tech else ""
-		ctx.techAge = t - attrNumber(m, "TechT")
+		ctx.techAge = t - attrNumber(m, "TechT") - REMOTE_POSE_DELAY
 		local td = m:GetAttribute("TechDir")
 		ctx.techDir = if typeof(td) == "Vector3" then toLocal(root, td) else Vector3.zero
 		ctx.reachAge = t - attrNumber(m, "Reach")
@@ -24859,6 +26548,7 @@ local function gather(rig: Rig, dt: number): Ctx
 				s = s.Unit * HD.StepRadius
 			end
 			ctx.step = toLocal(root, s)
+			ctx.pivot = root.CFrame:PointToObjectSpace(pv)
 		end
 	end
 	ctx.grounded = GROUNDED_MODES[ctx.mode] == true
@@ -24903,6 +26593,7 @@ type Pose = {
 	legs: string,
 	stance: string, -- "lunge" | "wide" | "high" (with legs == "stance")
 	step: Vector3, -- body-space step for the lunge
+	pivot: Vector3?, -- body-space pivot foot position for the lunge
 	Waist: CFrame,
 	Neck: CFrame,
 	RShoulder: CFrame,
@@ -25009,6 +26700,7 @@ local function compute(ctx: Ctx): Pose
 		pose.legs = "stance"
 		pose.stance = "lunge"
 		pose.step = s
+		pose.pivot = ctx.pivot
 		pose.rate = 22
 	end
 
@@ -25169,12 +26861,23 @@ end
 local function stanceFoot(rig: Rig, leg: Leg, pose: Pose, ctx: Ctx, groundY: number): (Vector3, Vector3)
 	local base = Vector3.new(leg.restFoot.X, groundY, leg.restFoot.Z)
 	if pose.stance == "lunge" then
-		-- the pivot foot stays at P, the stepping foot goes to P + step (the
-		-- root sits BodyShare of the way). The stepping leg is the one on the
-		-- step's side so the legs never cross; squared up it is the throwing
-		-- side's leg.
-		local share = if leg.side == rig.freeSide then 1 - HD.BodyShare else -HD.BodyShare
-		return base + Vector3.new(pose.step.X, 0, pose.step.Z) * share, Vector3.zero
+		-- the pivot foot is pinned to P and the free foot goes to P + step,
+		-- both from world points, so the planted foot never leaves P whatever
+		-- the body is doing. The legs never swap: the free leg is chosen once
+		-- per possession (the throwing side) and crosses in front of the
+		-- pivot leg (a little forward, clear of its shin) when the step goes
+		-- to the other side. Squared up the free foot sits a stance-width out.
+		local step = Vector3.new(pose.step.X, 0, pose.step.Z)
+		local pv = pose.pivot
+		local P = if pv then Vector3.new(pv.X, groundY, pv.Z) else base - step * HD.BodyShare
+		if leg.side ~= rig.freeSide then
+			return P, Vector3.zero
+		end
+		local R = HD.StepRadius
+		local spread = math.clamp(1 - step.Magnitude / (0.5 * R), 0, 1)
+		local cross = math.clamp(-step.X * rig.freeSide / R, 0, 1)
+		local foot = P + step + Vector3.new(rig.freeSide * 0.9 * spread, 0, -0.5 * cross)
+		return foot, Vector3.zero
 	end
 	local wide = if pose.stance == "wide" then 0.8 else 0.35
 	local target = base + Vector3.new(leg.side * wide, 0, 0)
@@ -25184,10 +26887,22 @@ local function stanceFoot(rig: Rig, leg: Leg, pose: Pose, ctx: Ctx, groundY: num
 	if speed <= 1 then
 		return target, Vector3.zero
 	end
+	-- stance/swing gait: during stance the foot moves back at exactly the
+	-- body's speed (planted in the world), during swing it moves forward and
+	-- lifts. The feet are half a cycle apart.
 	local k = math.clamp(speed / 4, 0, 1)
-	local phase = rig.shufflePhase + (if leg.side > 0 then 0 else math.pi)
-	local swing = v.Unit * (SHUFFLE_AMPLITUDE * k * math.sin(phase))
-	return target, Vector3.new(swing.X, SHUFFLE_LIFT * k * math.max(0, math.cos(phase)), swing.Z)
+	local phase = (rig.shufflePhase + (if leg.side > 0 then 0 else 0.5)) % 1
+	local along: number
+	local lift = 0
+	if phase < 0.5 then
+		along = SHUFFLE_STRIDE * (0.5 - 2 * phase)
+	else
+		local u = (phase - 0.5) * 2
+		along = SHUFFLE_STRIDE * (u - 0.5)
+		lift = SHUFFLE_LIFT * math.sin(math.pi * u)
+	end
+	local swing = v.Unit * (along * k)
+	return target, Vector3.new(swing.X, lift * k, swing.Z)
 end
 
 -- Keeps a foot target inside what the leg can reach from its hip at the
@@ -25226,17 +26941,18 @@ local function poseLegs(rig: Rig, pose: Pose, ctx: Ctx, rootCur: CFrame, dt: num
 	local footAlpha = 1 - math.exp(-pose.rate * dt)
 	if pose.stance == "wide" or pose.stance == "high" then
 		local speed = ctx.localVel.Magnitude
-		rig.shufflePhase = (rig.shufflePhase + speed / SHUFFLE_AMPLITUDE * dt) % (2 * math.pi)
-	elseif pose.stance == "lunge" then
-		-- which leg steps out, with hysteresis around the front
-		local sx = pose.step.X
-		if pose.step.Magnitude < 0.25 * HD.StepRadius then
+		-- one cycle per two strides, capped so fast shuffles don't buzz
+		local rate = math.min(speed / (2 * SHUFFLE_STRIDE), SHUFFLE_MAX_CADENCE)
+		rig.shufflePhase = (rig.shufflePhase + rate * dt) % 1
+	end
+	if pose.stance == "lunge" then
+		-- the free (stepping) leg is fixed for the whole possession
+		if not rig.lunging then
+			rig.lunging = true
 			rig.freeSide = if ctx.leftHanded then -1 else 1
-		elseif sx > 0.3 then
-			rig.freeSide = 1
-		elseif sx < -0.3 then
-			rig.freeSide = -1
 		end
+	else
+		rig.lunging = false
 	end
 	for _, leg in rig.legs do
 		local hip, knee, ankle = IDENTITY, IDENTITY, IDENTITY
@@ -25387,7 +27103,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25549,7 +27265,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25626,6 +27342,7 @@ local ThrowController = {}
 ThrowController.Released = Signal.new() -- (launch, params)
 ThrowController.Faked = Signal.new()
 ThrowController.Changed = Signal.new()
+ThrowController.ChargeLost = Signal.new() -- a charge was cancelled by landing from the hop
 
 local controllers: any
 local player = Players.LocalPlayer
@@ -25724,11 +27441,48 @@ local function serverPivot(): Vector3?
 	return controllers.MovementController.pivot()
 end
 
+-- Where the crosshair points: the first thing the camera's centre ray hits
+-- (field, a player, a wall) within AIM_RANGE, else a point AIM_FALLBACK
+-- ahead. The camera sits over the shoulder, so aiming along its yaw would
+-- fly the disc parallel to the crosshair and miss to one side; the throw
+-- yaw is aimed from the release point at this point instead.
+local AIM_RANGE = 220
+local AIM_FALLBACK = 60
+local aimRay = RaycastParams.new()
+aimRay.FilterType = Enum.RaycastFilterType.Exclude
+
+local function crosshairPoint(): Vector3
+	local cf = controllers.CameraController.getCFrame()
+	local list: { Instance } = {}
+	if player.Character then
+		table.insert(list, player.Character)
+	end
+	local visuals = workspace:FindFirstChild("UBVisuals")
+	if visuals then
+		table.insert(list, visuals)
+	end
+	aimRay.FilterDescendantsInstances = list
+	local hit = workspace:Raycast(cf.Position, cf.LookVector * AIM_RANGE, aimRay)
+	if hit then
+		return hit.Position
+	end
+	return cf.Position + cf.LookVector * AIM_FALLBACK
+end
+
+local function yawToward(from: Vector3, to: Vector3, fallback: number): number
+	local d = VecMath.flat(to - from)
+	if d.Magnitude < 2 then
+		return fallback
+	end
+	return math.atan2(-d.X, -d.Z)
+end
+
 local function currentParams(holdTime: number): ThrowModel.Params
 	local yaw = controllers.CameraController.getYaw()
 	local pitch = controllers.CameraController.getPitch() + AIM_OFFSET
 	local sol = state.leadSolution
-	if state.leadLock and sol then
+	local locked = state.leadLock and sol ~= nil
+	if locked and sol then
 		yaw = sol.params.yaw
 		pitch = sol.params.pitch
 	end
@@ -25736,6 +27490,29 @@ local function currentParams(holdTime: number): ThrowModel.Params
 	local sim = mc.sim()
 	local height = releaseHeight()
 	local pivot = serverPivot()
+	local root = mc.root()
+	if not locked and root then
+		-- converge on the crosshair (the release point depends on the yaw,
+		-- so two passes settle it)
+		local aim = crosshairPoint()
+		local camYaw = yaw
+		for _ = 1, 2 do
+			local probe: ThrowModel.Params = {
+				throwType = state.throwType,
+				yaw = yaw,
+				pitch = pitch,
+				holdTime = holdTime,
+				bank = 0,
+				height = height,
+				offBalance = false,
+				groundThrow = false,
+				leftHanded = leftHanded(),
+				pivot = pivot,
+				step = if pivot then mc.step() else nil,
+			}
+			yaw = yawToward(ThrowModel.releasePosition(probe, root.Position), aim, camYaw)
+		end
+	end
 	return {
 		throwType = state.throwType,
 		yaw = yaw,
@@ -25914,6 +27691,7 @@ local function cancelCharge()
 		state.charging = false
 		Net.event("ThrowCharge"):FireServer(false)
 		ThrowController.Changed:Fire()
+		ThrowController.ChargeLost:Fire()
 	end
 end
 
@@ -26319,7 +28097,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26356,6 +28134,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local TeamsConfig = require(Shared.Config.Teams)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local UI = script.Parent.Parent.UI
 local Theme = require(UI.Theme)
 local Hud = require(UI.Hud)
@@ -26509,7 +28288,8 @@ local function onMovementFeedback(fb: any)
 	if kind == "LandingOffset" then
 		Hud.chip(text, if string.find(text, "^PRECISION") then C.Perfect else C.Sloppy, 0.8)
 	elseif kind == "HopLanded" then
-		Hud.chip(text, C.Bad, 1.2)
+		-- only worth a word when it cost a charge (ThrowController.ChargeLost)
+		return
 	elseif kind == "Context" then
 		Hud.chip(text, C.Text)
 	else
@@ -26596,6 +28376,9 @@ function UIController.Init(c: any)
 end
 
 function UIController.Start()
+	controllers.ThrowController.ChargeLost:Connect(function()
+		Hud.chip("CHARGE LOST — RELEASE BEFORE YOU LAND", C.Bad, 1.2)
+	end)
 	task.spawn(function()
 		for _ = 1, 10 do
 			local ok = pcall(function()
@@ -26648,10 +28431,40 @@ function UIController.Start()
 
 	Net.event("Notify").OnClientEvent:Connect(onNotify)
 	Net.event("Feedback").OnClientEvent:Connect(onFeedback)
+	-- signature moves: yours show the moment you land them; the server's
+	-- announcement of the same move is skipped (others see its banner)
+	local mySignatures: { [string]: number } = {}
+	controllers.MovementController.SignatureHit:Connect(function(hit: any)
+		mySignatures[hit.name] = os.clock()
+		Hud.signature(hit.name, hit.points, hit.tier, nil)
+		controllers.AudioController.play("Signature")
+	end)
 	Net.event("Highlight").OnClientEvent:Connect(function(h)
-		if type(h) == "table" then
-			Hud.highlight(h.name or "", h.text or "", h.team)
+		if type(h) ~= "table" then
+			return
 		end
+		if h.kind == "Signature" then
+			local mine = h.id == player.UserId
+			local shownAt = mySignatures[tostring(h.text)]
+			if mine and shownAt and os.clock() - shownAt < 4 then
+				return
+			end
+			local def = nil
+			for _, d in SignaturesConfig.List do
+				if d.name == h.text then
+					def = d
+				end
+			end
+			Hud.signature(
+				tostring(h.text or ""),
+				tonumber(h.score) or 0,
+				if def then def.tier else 1,
+				if mine then nil else h.name
+			)
+			controllers.AudioController.play("Signature")
+			return
+		end
+		Hud.highlight(h.name or "", h.text or "", h.team)
 	end)
 	Net.event("Combo").OnClientEvent:Connect(function(summary)
 		if type(summary) == "table" and summary.converted then
@@ -26710,7 +28523,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="75">
+        <Item class="LocalScript" referent="78">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -26759,11 +28572,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="76">
+        <Item class="Folder" referent="79">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -26843,7 +28656,7 @@ local PIPS = {
 
 -- Context line: actions in display order, and the labels that are just the
 -- action's everyday meaning (left out).
-local CONTEXT_ORDER = { "Cut", "Slide", "Burst", "Jump", "Dive" }
+local CONTEXT_ORDER = { "Secondary", "Cut", "Slide", "Burst", "Jump", "Dive" }
 local PLAIN: { [string]: string } = { Jump = "JUMP", Slide = "SLIDE", Dive = "LAYOUT" }
 
 type FeedEntry = { label: TextLabel, born: number }
@@ -26904,7 +28717,11 @@ end
 -- "Snap Cut" / "Sold Cut" / "Roll-out" ... for a technique event.
 local function techName(tech: string, info: string?): string
 	local name = (MovementConfig.TechNames :: any)[tech] or tech
-	if tech == "PivotSwing" and info == "Sold" then
+	if tech == "Signature" and info then
+		return info
+	elseif info == "Charged" then
+		return "Charged " .. name
+	elseif tech == "PivotSwing" and info == "Sold" then
 		return "Sold Swing"
 	elseif info == "Restart" then
 		return "Restart Cut"
@@ -27293,6 +29110,19 @@ function Hud.build(parent: ScreenGui, c: any)
 		TextStrokeTransparency = 0.7,
 		RichText = true,
 	})
+	-- air moves left this jump (shown only in the air): dim = used, cyan = Charged
+	refs.airCharges = Theme.label("", 13, {
+		Name = "AirCharges",
+		Parent = parent,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 42),
+		Size = UDim2.fromOffset(420, 18),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextColor3 = C.Text,
+		TextStrokeTransparency = 0.6,
+		RichText = true,
+		Visible = false,
+	})
 	refs.hint = Theme.label("", 14, {
 		Name = "Hint",
 		Parent = parent,
@@ -27339,6 +29169,16 @@ function Hud.banner(text: string, sub: string?, color: Color3?, duration: number
 			tweenTo(s, TweenInfo.new(0.4), { TextTransparency = 1 })
 		end
 	end)
+end
+
+-- A signature move: a big gold banner with its points (your own, at once),
+-- with a sub-line naming who did it when it was someone else.
+function Hud.signature(name: string, points: number, tier: number, who: string?)
+	local color = if tier >= 3 then C.Perfect elseif tier >= 2 then C.Gold else C.Accent
+	local sub = if who and who ~= ""
+		then string.format("%s · SIGNATURE MOVE · +%d", string.upper(who), points)
+		else string.format("SIGNATURE MOVE · +%d", points)
+	Hud.banner(name, sub, color, if tier >= 3 then 2.6 else 2.0)
 end
 
 local feedbackToken = 0
@@ -27494,7 +29334,7 @@ end
 -- Does a chain hold anything but jumps? (A lone jump is not worth a widget.)
 local function hasKeyTech(techs: { string }): boolean
 	for _, tech in techs do
-		if tech ~= "Jump" and points(tech) > 0 then
+		if tech == "Signature" or (tech ~= "Jump" and points(tech) > 0) then
 			return true
 		end
 	end
@@ -27831,6 +29671,38 @@ function Hud.update(_dt: number)
 		refs.markText.Text = table.concat(parts, "  ·  ")
 	end
 
+	-- air moves left this jump
+	local msim = controllers.MovementController.sim()
+	local inAir = (msim.mode == "Air" or msim.mode == "Dive") and not msim.holding
+	refs.airCharges.Visible = inAir
+	if inAir then
+		local function slot(key: string, label: string, used: boolean): string
+			local color = if used then "#5A5F6E" elseif msim.charged then "#5AE6FF" else "#F2F4F8"
+			return string.format('<font color="%s">%s %s</font>', color, key, label)
+		end
+		local parts = {
+			slot(keyOf("Cut"), "AIR CUT", msim.airRedirectUsed),
+			slot(keyOf("Dive"), "AIR LAYOUT", msim.airDiveUsed),
+		}
+		if msim.charged then
+			table.insert(parts, '<font color="#5AE6FF">CHARGED</font>')
+		end
+		if msim.tipsThisAir > 0 then
+			table.insert(
+				parts,
+				string.format(
+					'<font color="#FFD25A">TIPS %d/%d</font>',
+					msim.tipsThisAir,
+					MovementConfig.Reset.MaxTipsPerAir
+				)
+			)
+		end
+		local text = table.concat(parts, "   ")
+		if refs.airCharges.Text ~= text then
+			refs.airCharges.Text = text
+		end
+	end
+
 	-- crosshair + context line
 	local locked = controllers.CameraController.isLocked()
 	refs.crosshair.Visible = locked
@@ -27849,7 +29721,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -27886,6 +29758,7 @@ local InputConfig = require(Shared.Config.Input)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -27942,6 +29815,12 @@ local DRILLS: { any } = {
 		id = "BreakMark",
 		name = "Break the Mark",
 		desc = "Beat a bot marker from your pivot: step out, fake, swing, release.",
+		pb = "score",
+	},
+	{
+		id = "ResetLab",
+		name = "Reset Lab",
+		desc = "High lobs to tip and chase, rebound walls. Land the signature moves.",
 		pb = "score",
 	},
 }
@@ -28003,6 +29882,11 @@ local function techGuide(): { string }
 			"WALL REBOUND — %s beside a glowing Rebound wall while airborne (special arenas and the Combo Lab).",
 			jump
 		),
+		string.format(
+			"TIP RESET — in the air, press %s as the disc reaches your hands: it pops up and your air cut and air layout come back (Charged). Wall Rebounds reset too; a Perfect landing or pop-up refunds Burst / Layout.",
+			k("Secondary")
+		),
+		"SIGNATURE MOVES — Reset Grab, Double Tip, Wall Tip, Double Layout, Reset Loop, Self-D, Skyball, The Greatest: hard, and worth thousands (Training lists how).",
 		"CHAINS — techniques within 1.5 s of each other chain. A catch, block or interception within 2 s converts the chain: x2 points and a highlight.",
 		string.format(
 			"WITH THE DISC — WASD steps your free foot around the pivot (the coloured disc under you). %s / %s swing left / right, RMB fakes, %s hops for a high release, hold %s to release low. Fake, swing, release fast = BREAK.",
@@ -28449,6 +30333,43 @@ function render.Training(content: Instance)
 		end)
 	end
 
+	-- the signature moves: what they are and how many you have landed
+	section(content, "SIGNATURE MOVES (hard, worth a lot)", nextOrder())
+	local intro = row(content, nextOrder(), 34)
+	Theme.label(
+		string.format(
+			"In the air, press %s as the disc reaches your hands to TIP it: your air moves come back (a reset). Chain resets into the moves below.",
+			controllers.SettingsController.keyLabel("Secondary", "keyboard")
+		),
+		13,
+		{ Parent = intro, Size = UDim2.new(1, -10, 1, 0), TextColor3 = C.Muted, TextWrapped = true }
+	)
+	for _, id in SignaturesConfig.Order do
+		local def = SignaturesConfig.List[id]
+		local sr = row(content, nextOrder(), 40)
+		local count = if profile and profile.stats then profile.stats["sig" .. id] or 0 else 0
+		local color = if def.tier >= 3 then C.Perfect elseif def.tier >= 2 then C.Gold else C.Accent
+		Theme.label(def.name, 15, {
+			Parent = sr,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(150, 30),
+			Font = Theme.Fonts.Heavy,
+			TextColor3 = color,
+		})
+		Theme.label(def.how, 12, {
+			Parent = sr,
+			LayoutOrder = 2,
+			Size = UDim2.fromOffset(400, 34),
+			TextColor3 = C.Muted,
+			TextWrapped = true,
+		})
+		Theme.label(
+			string.format("+%d  ·  x%d", def.points, count),
+			13,
+			{ Parent = sr, LayoutOrder = 3, Size = UDim2.fromOffset(110, 30), TextColor3 = C.Gold }
+		)
+	end
+
 	section(content, "FREE LAUNCHER (advanced practice)", nextOrder())
 	stepper(content, nextOrder(), "Throw type", launcher.throwType, function()
 		local i = table.find(DiscConfig.TypeOrder, launcher.throwType) or 1
@@ -28756,6 +30677,7 @@ function render.Settings(content: Instance)
 		{ key = "CameraShake", label = "Camera shake (subtle)" },
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
+		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
 	}
@@ -29037,7 +30959,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -29299,6 +31221,16 @@ function Mobile.update()
 			b.Visible = text ~= ""
 		end
 	end
+	-- in the air (not holding) Secondary is the Tip Reset
+	local airTip = not holding and not controllers.MovementController.isGrounded()
+	if airTip ~= refs.airTip then
+		refs.airTip = airTip
+		for _, entry in refs.labelled do
+			if entry[4] == "Secondary" and not holding then
+				(entry[1] :: TextButton).Text = if airTip then "TIP" else entry[2]
+			end
+		end
+	end
 	if not refs.discRow.Visible and refs.discHeld ~= false then
 		refs.discHeld = false
 		for _, action in refs.discActions do
@@ -29313,7 +31245,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -29692,7 +31624,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -29913,7 +31845,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -30377,12 +32309,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="83">
+  <Item class="Teams" referent="86">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="84">
+  <Item class="Workspace" referent="87">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

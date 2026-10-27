@@ -156,7 +156,9 @@ function ThrowModel.resolveStep(
 	local s = ThrowModel.clampStep(claimed, yaw)
 	local expected = pivot + s * HD.BodyShare
 	local lag = if finite(ping) then math.clamp(ping, 0, T.StepCheckMaxPing) else 0
-	local tolerance = T.StepCheckBase + T.StepCheckPing * lag
+	-- plus the distance a body driven toward P + BodyShare*step can still be
+	-- behind its target (DriveMax / DriveGain) when the step just moved
+	local tolerance = T.StepCheckBase + T.StepCheckPing * lag + HD.DriveMax / HD.DriveGain
 	local off = serverRoot - expected
 	if Vector3.new(off.X, 0, off.Z).Magnitude <= tolerance then
 		return s, true

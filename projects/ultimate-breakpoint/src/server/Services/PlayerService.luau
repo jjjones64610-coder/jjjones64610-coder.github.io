@@ -28,6 +28,11 @@
 
 	Line restriction (before the pull): UBLineX / UBLineSide; the character
 	must keep (pos.X - UBLineX) * UBLineSide >= 0. nil = free.
+
+	Fixed hitbox (Config/Hitbox): every player's avatar is rescaled to the
+	standard proportions when it spawns (HumanoidDescription scales; clothes,
+	colours and accessories are kept), so no avatar is bigger or smaller
+	than another. Gameplay zones are measured from the feet anyway.
 ]]
 
 local Players = game:GetService("Players")
@@ -38,6 +43,7 @@ local TeamsService = game:GetService("Teams")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Signal = require(Shared.Util.Signal)
 local TeamsConfig = require(Shared.Config.Teams)
+local Hitbox = require(Shared.Config.Hitbox)
 
 local PlayerService = {}
 
@@ -130,6 +136,61 @@ local function stampCharacter(actor: Actor, model: Model)
 	model:SetAttribute("UBLineSide", actor.lineSide)
 end
 
+-- True when a description already has the standard scales.
+local function isStandard(desc: HumanoidDescription): boolean
+	local S = Hitbox.Scales
+	local function near(a: number, b: number): boolean
+		return math.abs(a - b) < 1e-3
+	end
+	return near(desc.HeightScale, S.HeightScale)
+		and near(desc.WidthScale, S.WidthScale)
+		and near(desc.DepthScale, S.DepthScale)
+		and near(desc.HeadScale, S.HeadScale)
+		and near(desc.BodyTypeScale, S.BodyTypeScale)
+		and near(desc.ProportionScale, S.ProportionScale)
+end
+
+-- Gives a description the standard body scales (Config/Hitbox.Scales).
+function PlayerService.standardize(desc: HumanoidDescription)
+	local S = Hitbox.Scales
+	desc.HeightScale = S.HeightScale
+	desc.WidthScale = S.WidthScale
+	desc.DepthScale = S.DepthScale
+	desc.HeadScale = S.HeadScale
+	desc.BodyTypeScale = S.BodyTypeScale
+	desc.ProportionScale = S.ProportionScale
+end
+
+-- Rescales a freshly spawned player character to the standard body. Runs in
+-- its own thread (applying a description yields). Leaves the avatar as it is
+-- if the description cannot be read or applied; gameplay zones still use
+-- the fixed hitbox.
+local function normalizeAvatar(model: Model, humanoid: Humanoid)
+	-- CharacterAdded can fire before the model is parented to the workspace
+	for _ = 1, 50 do
+		if model:IsDescendantOf(workspace) then
+			break
+		end
+		task.wait(0.1)
+	end
+	if not model:IsDescendantOf(workspace) or humanoid.Parent ~= model then
+		return
+	end
+	local ok, desc = pcall(function()
+		return humanoid:GetAppliedDescription()
+	end)
+	if not ok or not desc or isStandard(desc) then
+		return
+	end
+	PlayerService.standardize(desc)
+	local applied, err = pcall(function()
+		humanoid:ApplyDescriptionAsync(desc)
+	end)
+	if not applied then
+		warn("[PlayerService] could not apply the standard body: " .. tostring(err))
+	end
+end
+
 function PlayerService.setupCharacter(actor: Actor, model: Model)
 	actor.character = model
 	applyCollision(model)
@@ -144,6 +205,9 @@ function PlayerService.setupCharacter(actor: Actor, model: Model)
 		humanoid.AutoRotate = false
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 		humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+		if not actor.isBot and Hitbox.NormalizeAvatars and humanoid.RigType == Enum.HumanoidRigType.R15 then
+			task.spawn(normalizeAvatar, model, humanoid)
+		end
 	end
 	PlayerService.CharacterSpawned:Fire(actor, model)
 end

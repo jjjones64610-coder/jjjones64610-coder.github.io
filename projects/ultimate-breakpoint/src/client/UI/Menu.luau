@@ -32,6 +32,7 @@ local InputConfig = require(Shared.Config.Input)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -88,6 +89,12 @@ local DRILLS: { any } = {
 		id = "BreakMark",
 		name = "Break the Mark",
 		desc = "Beat a bot marker from your pivot: step out, fake, swing, release.",
+		pb = "score",
+	},
+	{
+		id = "ResetLab",
+		name = "Reset Lab",
+		desc = "High lobs to tip and chase, rebound walls. Land the signature moves.",
 		pb = "score",
 	},
 }
@@ -149,6 +156,11 @@ local function techGuide(): { string }
 			"WALL REBOUND — %s beside a glowing Rebound wall while airborne (special arenas and the Combo Lab).",
 			jump
 		),
+		string.format(
+			"TIP RESET — in the air, press %s as the disc reaches your hands: it pops up and your air cut and air layout come back (Charged). Wall Rebounds reset too; a Perfect landing or pop-up refunds Burst / Layout.",
+			k("Secondary")
+		),
+		"SIGNATURE MOVES — Reset Grab, Double Tip, Wall Tip, Double Layout, Reset Loop, Self-D, Skyball, The Greatest: hard, and worth thousands (Training lists how).",
 		"CHAINS — techniques within 1.5 s of each other chain. A catch, block or interception within 2 s converts the chain: x2 points and a highlight.",
 		string.format(
 			"WITH THE DISC — WASD steps your free foot around the pivot (the coloured disc under you). %s / %s swing left / right, RMB fakes, %s hops for a high release, hold %s to release low. Fake, swing, release fast = BREAK.",
@@ -595,6 +607,43 @@ function render.Training(content: Instance)
 		end)
 	end
 
+	-- the signature moves: what they are and how many you have landed
+	section(content, "SIGNATURE MOVES (hard, worth a lot)", nextOrder())
+	local intro = row(content, nextOrder(), 34)
+	Theme.label(
+		string.format(
+			"In the air, press %s as the disc reaches your hands to TIP it: your air moves come back (a reset). Chain resets into the moves below.",
+			controllers.SettingsController.keyLabel("Secondary", "keyboard")
+		),
+		13,
+		{ Parent = intro, Size = UDim2.new(1, -10, 1, 0), TextColor3 = C.Muted, TextWrapped = true }
+	)
+	for _, id in SignaturesConfig.Order do
+		local def = SignaturesConfig.List[id]
+		local sr = row(content, nextOrder(), 40)
+		local count = if profile and profile.stats then profile.stats["sig" .. id] or 0 else 0
+		local color = if def.tier >= 3 then C.Perfect elseif def.tier >= 2 then C.Gold else C.Accent
+		Theme.label(def.name, 15, {
+			Parent = sr,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(150, 30),
+			Font = Theme.Fonts.Heavy,
+			TextColor3 = color,
+		})
+		Theme.label(def.how, 12, {
+			Parent = sr,
+			LayoutOrder = 2,
+			Size = UDim2.fromOffset(400, 34),
+			TextColor3 = C.Muted,
+			TextWrapped = true,
+		})
+		Theme.label(
+			string.format("+%d  ·  x%d", def.points, count),
+			13,
+			{ Parent = sr, LayoutOrder = 3, Size = UDim2.fromOffset(110, 30), TextColor3 = C.Gold }
+		)
+	end
+
 	section(content, "FREE LAUNCHER (advanced practice)", nextOrder())
 	stepper(content, nextOrder(), "Throw type", launcher.throwType, function()
 		local i = table.find(DiscConfig.TypeOrder, launcher.throwType) or 1
@@ -902,6 +951,7 @@ function render.Settings(content: Instance)
 		{ key = "CameraShake", label = "Camera shake (subtle)" },
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
+		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
 	}

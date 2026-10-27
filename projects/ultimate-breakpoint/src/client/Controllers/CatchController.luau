@@ -30,6 +30,15 @@
 	is close and roughly where you are looking. Primary next to a disc lying
 	on the ground asks the server to pick it up instead (Action "Pickup").
 
+	Tip Reset (Secondary in the air, not holding): taps the disc up through
+	your hands. Judged here on the disc's closest pass within Reset.TipWindow
+	of the press against your tip zones (the normal zones plus a hands-up
+	sphere); a hit sends a claim of kind "Tip" with the press time, gives you
+	the reset at once (MovementController.tipReset) and predicts the disc's
+	pop so you can chase it. The server re-judges it and pops the disc for
+	everyone (a Denied tip just eases the disc back onto its flight). A press
+	with no disc close enough says so.
+
 	Marking: hold Secondary within Marking.Range of an opposing holder (their
 	pivot) for the mark shuffle (MovementController.setMarking) with your
 	hands up, replicated as MarkStance(on, stance). The Slide key toggles High
@@ -47,6 +56,7 @@ local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Hitbox = require(Shared.Config.Hitbox)
 local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
@@ -54,12 +64,15 @@ local Net = require(Shared.Net)
 
 local C = DiscConfig.Catch
 local MK = MovementConfig.Marking
+local RS = MovementConfig.Reset
 
 local CatchController = {}
 
 CatchController.Reached = Signal.new() -- (dir)
 CatchController.Claimed = Signal.new() -- (discId, zoneKind)
 CatchController.Denied = Signal.new() -- (discId)
+CatchController.Caught = Signal.new() -- (discId, interception) the server confirmed your catch
+CatchController.Tipped = Signal.new() -- (discId, defender, quality) you tipped a disc (predicted)
 
 local LOCAL_FX_DEPTH = 0.85 -- claims this deep play the catch feedback at once
 local LOCAL_FX_RECENT = 1.2 -- recentLocalCatch(): feedback played this recently
@@ -322,14 +335,159 @@ local function bodyState(root: BasePart): CatchGeometry.BodyState
 	local sim = controllers.MovementController.sim()
 	local diving = sim.mode == "Dive" or sim.mode == "DiveSlide"
 	return {
-		root = root.Position,
+		root = Hitbox.root(root.Position, controllers.MovementController.standHeight()),
 		facing = VecMath.flatUnit(root.CFrame.LookVector),
 		reaching = CatchController.reachActive(),
 		reachDir = reachDir,
 		diving = diving,
 		diveDir = sim.diveDir,
 		sliding = sim.mode == "Slide",
+		prone = sim.mode == "DiveSlide" or sim.mode == "Recover",
 	}
+end
+
+---------------------------------------------------------------------------
+-- tip reset
+---------------------------------------------------------------------------
+
+local TIP_SAMPLE = 1 / 120
+
+-- Every flying disc's path over [t0, t1] as this client displays it, with
+-- what is needed to predict a tip: { id, folder, samples, sim, launchTime }.
+type TipCandidate = {
+	id: string,
+	folder: Configuration,
+	samples: { CatchGeometry.PathSample },
+	sim: DiscPhysics.State,
+	launchTime: number,
+	wind: DiscPhysics.Wind,
+	groundY: number,
+	flightId: number,
+}
+
+local function tipCandidates(t0: number, t1: number): { TipCandidate }
+	local list: { TipCandidate } = {}
+	for _, folder in controllers.DiscRenderer.folders() do
+		local id = folder:GetAttribute("Id")
+		if type(id) == "string" and canClaim(folder) then
+			local sim, launchTime, wind, groundY, landed, flightId = controllers.DiscRenderer.flight(id)
+			local mine = folder:GetAttribute("ThrowerId") == player.UserId and folder:GetAttribute("Touched") ~= true
+			if sim and not landed and not mine and t1 > launchTime + DiscConfig.Throw.NoCatchTime then
+				local samples: { CatchGeometry.PathSample } = {}
+				local from = math.max(t0, launchTime + DiscConfig.Throw.NoCatchTime)
+				local n = math.clamp(math.ceil((t1 - from) / TIP_SAMPLE), 1, 64)
+				for k = 0, n do
+					local tk = from + (t1 - from) * k / n
+					local x, y, z = DiscPhysics.positionAt(sim, tk - launchTime)
+					table.insert(samples, { t = tk, pos = Vector3.new(x, y, z) })
+				end
+				table.insert(list, {
+					id = id,
+					folder = folder,
+					samples = samples,
+					sim = sim,
+					launchTime = launchTime,
+					wind = wind,
+					groundY = groundY,
+					flightId = flightId,
+				})
+			end
+		end
+	end
+	return list
+end
+
+-- Would a tip press right now touch a disc? (HUD context hint)
+function CatchController.tipReady(): boolean
+	local root = controllers.MovementController.root()
+	if not root or controllers.MovementController.isGrounded() or controllers.ThrowController.isHolding() then
+		return false
+	end
+	local t = now()
+	local zones = CatchGeometry.tipZones(bodyState(root))
+	for _, cand in tipCandidates(t - RS.TipWindow, t + RS.TipWindow) do
+		if CatchGeometry.bestTip(zones, cand.samples, t, RS.TipPerfect) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Secondary in the air: try to tip the disc passing your hands.
+local function attemptTip()
+	local root = controllers.MovementController.root()
+	if not root then
+		return
+	end
+	local t = now()
+	local zones = CatchGeometry.tipZones(bodyState(root))
+	local best: CatchGeometry.Evaluation? = nil
+	local bestQ = "Clean"
+	local bestCand: TipCandidate? = nil
+	for _, cand in tipCandidates(t - RS.TipWindow, t + RS.TipWindow) do
+		local ev, q = CatchGeometry.bestTip(zones, cand.samples, t, RS.TipPerfect)
+		if ev and (best == nil or math.abs((ev.t or t) - t) < math.abs(((best :: any).t or t) - t)) then
+			best, bestQ, bestCand = ev, q, cand
+		end
+	end
+	-- hands up either way (the swipe reads even on a miss)
+	local facing = VecMath.flatUnit(root.CFrame.LookVector)
+	local c = player.Character
+	if c then
+		c:SetAttribute("UB_LocalReach", t)
+		c:SetAttribute("UB_LocalReachDir", (facing + Vector3.new(0, 1.6, 0)).Unit)
+	end
+	if not best or not bestCand then
+		controllers.MovementController.Feedback:Fire({ kind = "Context", text = "NO DISC TO TIP" })
+		return
+	end
+	local ev = best :: CatchGeometry.Evaluation
+	local cand = bestCand :: TipCandidate
+	local ok = controllers.MovementController.tipReset(bestQ, facing)
+	if not ok then
+		return -- the sim said why (two tips already, cooldown)
+	end
+	local myTeam = c and c:GetAttribute("UBTeam")
+	local throwerTeam = cand.folder:GetAttribute("ThrowerTeam")
+	local defender = type(throwerTeam) == "string"
+		and throwerTeam ~= ""
+		and throwerTeam ~= myTeam
+		and cand.folder:GetAttribute("Pull") ~= true
+	Net.event("Catch"):FireServer(cand.id, t, "Tip", facing, root.Position, root.AssemblyLinearVelocity)
+	-- no catch claims on the segment you just tipped: the next touch is on
+	-- the popped disc (the server's new segment)
+	contacts[cand.id] = {
+		flightId = cand.flightId,
+		lastPos = root.Position,
+		lastT = t,
+		tFirst = nil,
+		kind = "Tip",
+		bestDepth = 1,
+		lastDepth = 1,
+		body = root.Position,
+		bodyVel = root.AssemblyLinearVelocity,
+		retry = false,
+		awaiting = false,
+		sentAt = os.clock(),
+		fxDone = true,
+		settled = true,
+	}
+	-- predict the pop so the chase starts now (the server's segment blends in)
+	local at = ev.t or t
+	local st = DiscPhysics.copy(cand.sim)
+	DiscPhysics.advanceTo(st, at - cand.launchTime, cand.wind, cand.groundY - 100)
+	local x, y, z = DiscPhysics.positionAt(cand.sim, at - cand.launchTime)
+	local pos = Vector3.new(x, math.max(y, cand.groundY + 0.6), z)
+	local popped = DiscPhysics.fromVectors(
+		pos,
+		CatchGeometry.tipVelocity(DiscPhysics.velocity(st), facing),
+		Vector3.new(0, 1, 0),
+		C.TipSpin
+	)
+	controllers.DiscRenderer.predictTip(cand.id, popped, at)
+	controllers.AudioController.playAt("Tip", pos)
+	controllers.EffectsController.burst(pos, Color3.fromRGB(90, 230, 255), if bestQ == "Perfect" then 18 else 10, 12)
+	CatchController.Tipped:Fire(cand.id, defender, bestQ)
 end
 
 -- Deepest evaluation along this frame's disc path, and the time of the
@@ -406,7 +564,7 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 		not sim
 		or landed
 		or not canClaim(folder)
-		or folder:GetAttribute("ThrowerId") == player.UserId
+		or (folder:GetAttribute("ThrowerId") == player.UserId and folder:GetAttribute("Touched") ~= true)
 		or tNow < launchTime + DiscConfig.Throw.NoCatchTime
 	then
 		contacts[id] = nil
@@ -515,9 +673,11 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 		c.bestDepth = 1
 		c.lastDepth = 1
 		if result == "Denied" then
-			-- retry at once if the disc is still in reach
+			-- retry at once if the disc is still in reach (a refused tip
+			-- gives the segment back to catching too)
 			c.sentAt = -math.huge
 			c.retry = true
+			c.settled = false
 		else
 			c.settled = true -- caught, or someone else won it
 		end
@@ -525,6 +685,15 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
+	else
+		local folder = controllers.DiscRenderer.folderOf(discId)
+		local me = player.Character
+		local throwerTeam = folder and folder:GetAttribute("ThrowerTeam")
+		local interception = me ~= nil
+			and type(throwerTeam) == "string"
+			and throwerTeam ~= ""
+			and throwerTeam ~= me:GetAttribute("UBTeam")
+		CatchController.Caught:Fire(discId, interception)
 	end
 end
 
@@ -544,6 +713,10 @@ function CatchController.Start()
 				CatchController.reach()
 			end
 		elseif action == "Secondary" then
+			if not controllers.MovementController.isGrounded() then
+				attemptTip()
+				return
+			end
 			markHeld = true
 			updateMarking()
 		elseif action == "Slide" and marking then

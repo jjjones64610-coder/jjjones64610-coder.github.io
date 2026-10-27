@@ -32,6 +32,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local TeamsConfig = require(Shared.Config.Teams)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local UI = script.Parent.Parent.UI
 local Theme = require(UI.Theme)
 local Hud = require(UI.Hud)
@@ -185,7 +186,8 @@ local function onMovementFeedback(fb: any)
 	if kind == "LandingOffset" then
 		Hud.chip(text, if string.find(text, "^PRECISION") then C.Perfect else C.Sloppy, 0.8)
 	elseif kind == "HopLanded" then
-		Hud.chip(text, C.Bad, 1.2)
+		-- only worth a word when it cost a charge (ThrowController.ChargeLost)
+		return
 	elseif kind == "Context" then
 		Hud.chip(text, C.Text)
 	else
@@ -272,6 +274,9 @@ function UIController.Init(c: any)
 end
 
 function UIController.Start()
+	controllers.ThrowController.ChargeLost:Connect(function()
+		Hud.chip("CHARGE LOST — RELEASE BEFORE YOU LAND", C.Bad, 1.2)
+	end)
 	task.spawn(function()
 		for _ = 1, 10 do
 			local ok = pcall(function()
@@ -324,10 +329,40 @@ function UIController.Start()
 
 	Net.event("Notify").OnClientEvent:Connect(onNotify)
 	Net.event("Feedback").OnClientEvent:Connect(onFeedback)
+	-- signature moves: yours show the moment you land them; the server's
+	-- announcement of the same move is skipped (others see its banner)
+	local mySignatures: { [string]: number } = {}
+	controllers.MovementController.SignatureHit:Connect(function(hit: any)
+		mySignatures[hit.name] = os.clock()
+		Hud.signature(hit.name, hit.points, hit.tier, nil)
+		controllers.AudioController.play("Signature")
+	end)
 	Net.event("Highlight").OnClientEvent:Connect(function(h)
-		if type(h) == "table" then
-			Hud.highlight(h.name or "", h.text or "", h.team)
+		if type(h) ~= "table" then
+			return
 		end
+		if h.kind == "Signature" then
+			local mine = h.id == player.UserId
+			local shownAt = mySignatures[tostring(h.text)]
+			if mine and shownAt and os.clock() - shownAt < 4 then
+				return
+			end
+			local def = nil
+			for _, d in SignaturesConfig.List do
+				if d.name == h.text then
+					def = d
+				end
+			end
+			Hud.signature(
+				tostring(h.text or ""),
+				tonumber(h.score) or 0,
+				if def then def.tier else 1,
+				if mine then nil else h.name
+			)
+			controllers.AudioController.play("Signature")
+			return
+		end
+		Hud.highlight(h.name or "", h.text or "", h.team)
 	end)
 	Net.event("Combo").OnClientEvent:Connect(function(summary)
 		if type(summary) == "table" and summary.converted then

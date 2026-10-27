@@ -73,6 +73,7 @@ local LINEUP_FREEZE = 0.6 -- the line-up teleport settles, then players may move
 local OFFSIDE_PULLBACK = 3 -- studs past the line at the pull release
 local PICKUP_SPEED = 12 -- studs/s: slower than this near the disc picks it up
 local PICKUP_KEY_WINDOW = 0.35 -- a pickup key press counts this long
+local PICKUP_REACH = 1.5 -- a pickup key press reaches this much past PickupRadius (CatchController offers it there)
 local GATHER_SKIP = 0.6 -- travel checks pause while the client glides onto the disc (+ a round trip)
 local BOT_WAIT = 8 -- seconds a match start waits for its bots
 local FORCE_FH_CHANCE = 0.65
@@ -722,6 +723,7 @@ function applyOutcomes(outcomes: { any }, ctx: { [string]: any }?)
 		elseif kind == "Greatest" then
 			MatchService.stat(o.id, "greatests")
 			services.HighlightService.broadcast("GREATEST", o.id, 900, "The Greatest!")
+			services.MovementService.noteGreatest(o.id)
 		elseif kind == "Goal" then
 			goal(o)
 		elseif kind == "UniversePoint" then
@@ -1223,6 +1225,16 @@ local function startMatch()
 	if arena.id ~= S.arenaId or mode.Field ~= services.ArenaService.fieldName() then
 		S.arenaId = arena.id
 		services.ArenaService.build(arena.id, mode.Field)
+		-- the new field can be smaller: bring everyone who is not training
+		-- to the new sideline before the walls and the line-up arrive, so
+		-- nobody is left outside the bounds (or inside a new wall)
+		local spawn = services.ArenaService.spawnCFrame()
+		for i, a in services.PlayerService.humans() do
+			if a.role ~= "Training" and a.character then
+				local offset = Vector3.new(((i - 1) % 8 - 3.5) * 4, 0, 0)
+				services.PlayerService.teleport(a, spawn + offset, { face = true })
+			end
+		end
 	end
 	set("Mode", mode.id)
 	set("ModeName", mode.Display)
@@ -1285,18 +1297,25 @@ local function pickupCheck(d: any, allowTeam: string?)
 		return
 	end
 	local tNow = now()
-	local best, bestDist = nil, DiscConfig.Catch.PickupRadius
+	local best, bestDist = nil, math.huge
 	for _, a in services.PlayerService.all() do
 		local eligible = if allowTeam then (a.team == allowTeam and a.role == "Match") else a.role ~= "Training"
 		local root = eligible and services.PlayerService.root(a)
 		if root then
 			local pos = root.Position
 			local dist = Vector3.new(pos.X - spot.X, 0, pos.Z - spot.Z).Magnitude
-			if dist < bestDist and math.abs(pos.Y - spot.Y) < 8 then
-				local v = root.AssemblyLinearVelocity
-				local slow = Vector3.new(v.X, 0, v.Z).Magnitude < PICKUP_SPEED
-				local pressed = (S.pickupWanted[a.id] or -math.huge) >= tNow - PICKUP_KEY_WINDOW
-				if a.isBot or slow or pressed then
+			local v = root.AssemblyLinearVelocity
+			local flatSpeed = Vector3.new(v.X, 0, v.Z).Magnitude
+			local pressed = (S.pickupWanted[a.id] or -math.huge) >= tNow - PICKUP_KEY_WINDOW
+			-- walking over it picks it up within PickupRadius; a key press
+			-- reaches as far as the client offers it (PickupRadius +
+			-- PICKUP_REACH) plus how far our view of the body lags
+			local reach = DiscConfig.Catch.PickupRadius
+			if pressed then
+				reach += PICKUP_REACH + flatSpeed * services.MovementService.ping(a.id) * 2
+			end
+			if dist < reach and dist < bestDist and math.abs(pos.Y - spot.Y) < 8 then
+				if a.isBot or flatSpeed < PICKUP_SPEED or pressed then
 					best, bestDist = a, dist
 				end
 			end

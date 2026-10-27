@@ -135,6 +135,8 @@ local Movement = {
 		MaxSpeed = 35,
 		GassedMult = 1.12,
 		CutChainWindow = 0.25, -- Perfect within this of a Snap Cut / Slide Cut / pop / plant
+		MaxTurn = 45, -- above jog speed a burst bends the running line at most this far (plants turn freely)
+		TurnPenalty = 0.1, -- burst speed lost as the bend approaches MaxTurn
 	},
 
 	Slide = {
@@ -172,6 +174,7 @@ local Movement = {
 		AirVertical = 4,
 		MaxVertical = 24,
 		ChainWindow = 0.4, -- Perfect layout within this of a Snap Cut, Burst, Slide, ...
+		MaxTurn = 40, -- above jog speed a ground layout leaves at most this far off the running line
 	},
 
 	DiveSlide = {
@@ -223,6 +226,31 @@ local Movement = {
 		DetectDistance = 3.5, -- client ray length (along velocity, look, and both sides)
 	},
 
+	-- Resets: the flip-reset family. Each jump gives one air move of each kind
+	-- (Air Redirect, air Layout). A reset gives them back mid-air; the next
+	-- air move after a reset is Charged. See Config/Signatures for the named
+	-- plays built on them.
+	Reset = {
+		-- Tip Reset: tip the disc (Secondary in the air, RMB) as it passes your
+		-- hands. The disc pops up a little, your air moves come back, and you
+		-- get a lift to use them. Judged on the disc's closest pass.
+		TipWindow = 0.12, -- the disc's closest pass must be within this of the press
+		TipPerfect = 0.05, -- ... within this = Perfect
+		TipLift = 22, -- you rise at least this fast after a tip reset ...
+		TipLiftPerfect = 28, -- ... or this after a Perfect one
+		MaxTipsPerAir = 2,
+		TipCooldown = 0.25,
+		-- Charged: the first air move after any reset
+		ChargedRetention = 1.0, -- a Charged Air Redirect keeps all its speed
+		ChargedLayoutBoost = 4, -- a Charged air Layout leaves this much faster
+		-- Landing Reset: a Perfect Precision Landing (or roll-out) refunds
+		-- these cooldowns at once; a Perfect recovery pop-up refunds the Layout.
+		LandingRefund = { "BurstStep", "Dive" },
+		AirRefund = { "Dive" }, -- a Tip Reset or Wall Rebound also readies the Layout
+		RollOutRefund = { "Dive" },
+		RecoveryRefund = { "Dive" },
+	},
+
 	-- Holding the disc: the pivot. A planted pivot foot P and a free-foot step
 	-- vector s in the throw frame (forward = aim yaw). The root follows
 	-- P + BodyShare * s.
@@ -238,6 +266,7 @@ local Movement = {
 		BodyShare = 0.55, -- the root sits at P + BodyShare * s
 		DriveGain = 14, -- root velocity = gain x distance to its target ...
 		DriveMax = 18, -- ... capped here (Humanoid WalkSpeed while pivoting)
+		DriveMaxFast = 34, -- cap during a Quick Swing or fake step, so the body keeps up with the foot
 		SwingLateral = 0.95, -- Quick Swing target = (side x 0.95R, +0.25R)
 		SwingForward = 0.25,
 		SwingAngular = 1100,
@@ -278,6 +307,7 @@ local Movement = {
 		Jump = 20,
 		PivotSwing = 120,
 		Break = 250,
+		TipReset = 220,
 	},
 
 	-- Display names for UI / feedback.
@@ -297,6 +327,8 @@ local Movement = {
 		Jump = "Jump",
 		PivotSwing = "Pivot Swing",
 		Break = "Break",
+		TipReset = "Tip Reset",
+		Signature = "Signature",
 	},
 }
 
@@ -322,6 +354,7 @@ Movement.TechCosts = {
 	AerialReach = 0,
 	Jump = 0,
 	Break = 0,
+	TipReset = 0,
 }
 
 Movement.TechCooldowns = {
@@ -340,6 +373,7 @@ Movement.TechCooldowns = {
 	AerialReach = 0,
 	Jump = 0,
 	Break = 0,
+	TipReset = Movement.Reset.TipCooldown,
 }
 
 return Movement

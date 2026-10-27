@@ -75,7 +75,7 @@ local PIPS = {
 
 -- Context line: actions in display order, and the labels that are just the
 -- action's everyday meaning (left out).
-local CONTEXT_ORDER = { "Cut", "Slide", "Burst", "Jump", "Dive" }
+local CONTEXT_ORDER = { "Secondary", "Cut", "Slide", "Burst", "Jump", "Dive" }
 local PLAIN: { [string]: string } = { Jump = "JUMP", Slide = "SLIDE", Dive = "LAYOUT" }
 
 type FeedEntry = { label: TextLabel, born: number }
@@ -136,7 +136,11 @@ end
 -- "Snap Cut" / "Sold Cut" / "Roll-out" ... for a technique event.
 local function techName(tech: string, info: string?): string
 	local name = (MovementConfig.TechNames :: any)[tech] or tech
-	if tech == "PivotSwing" and info == "Sold" then
+	if tech == "Signature" and info then
+		return info
+	elseif info == "Charged" then
+		return "Charged " .. name
+	elseif tech == "PivotSwing" and info == "Sold" then
 		return "Sold Swing"
 	elseif info == "Restart" then
 		return "Restart Cut"
@@ -525,6 +529,19 @@ function Hud.build(parent: ScreenGui, c: any)
 		TextStrokeTransparency = 0.7,
 		RichText = true,
 	})
+	-- air moves left this jump (shown only in the air): dim = used, cyan = Charged
+	refs.airCharges = Theme.label("", 13, {
+		Name = "AirCharges",
+		Parent = parent,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 42),
+		Size = UDim2.fromOffset(420, 18),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextColor3 = C.Text,
+		TextStrokeTransparency = 0.6,
+		RichText = true,
+		Visible = false,
+	})
 	refs.hint = Theme.label("", 14, {
 		Name = "Hint",
 		Parent = parent,
@@ -571,6 +588,16 @@ function Hud.banner(text: string, sub: string?, color: Color3?, duration: number
 			tweenTo(s, TweenInfo.new(0.4), { TextTransparency = 1 })
 		end
 	end)
+end
+
+-- A signature move: a big gold banner with its points (your own, at once),
+-- with a sub-line naming who did it when it was someone else.
+function Hud.signature(name: string, points: number, tier: number, who: string?)
+	local color = if tier >= 3 then C.Perfect elseif tier >= 2 then C.Gold else C.Accent
+	local sub = if who and who ~= ""
+		then string.format("%s · SIGNATURE MOVE · +%d", string.upper(who), points)
+		else string.format("SIGNATURE MOVE · +%d", points)
+	Hud.banner(name, sub, color, if tier >= 3 then 2.6 else 2.0)
 end
 
 local feedbackToken = 0
@@ -726,7 +753,7 @@ end
 -- Does a chain hold anything but jumps? (A lone jump is not worth a widget.)
 local function hasKeyTech(techs: { string }): boolean
 	for _, tech in techs do
-		if tech ~= "Jump" and points(tech) > 0 then
+		if tech == "Signature" or (tech ~= "Jump" and points(tech) > 0) then
 			return true
 		end
 	end
@@ -1061,6 +1088,38 @@ function Hud.update(_dt: number)
 		end
 		table.insert(parts, Theme.keyText(keyOf("Slide"), "SWITCH"))
 		refs.markText.Text = table.concat(parts, "  ·  ")
+	end
+
+	-- air moves left this jump
+	local msim = controllers.MovementController.sim()
+	local inAir = (msim.mode == "Air" or msim.mode == "Dive") and not msim.holding
+	refs.airCharges.Visible = inAir
+	if inAir then
+		local function slot(key: string, label: string, used: boolean): string
+			local color = if used then "#5A5F6E" elseif msim.charged then "#5AE6FF" else "#F2F4F8"
+			return string.format('<font color="%s">%s %s</font>', color, key, label)
+		end
+		local parts = {
+			slot(keyOf("Cut"), "AIR CUT", msim.airRedirectUsed),
+			slot(keyOf("Dive"), "AIR LAYOUT", msim.airDiveUsed),
+		}
+		if msim.charged then
+			table.insert(parts, '<font color="#5AE6FF">CHARGED</font>')
+		end
+		if msim.tipsThisAir > 0 then
+			table.insert(
+				parts,
+				string.format(
+					'<font color="#FFD25A">TIPS %d/%d</font>',
+					msim.tipsThisAir,
+					MovementConfig.Reset.MaxTipsPerAir
+				)
+			)
+		end
+		local text = table.concat(parts, "   ")
+		if refs.airCharges.Text ~= text then
+			refs.airCharges.Text = text
+		end
 	end
 
 	-- crosshair + context line

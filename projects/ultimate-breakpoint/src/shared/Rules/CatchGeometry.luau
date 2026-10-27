@@ -3,7 +3,8 @@
 	CatchGeometry — readable, deterministic catch and block volumes.
 
 	A player's catch envelope is a small set of capsules derived from their
-	root position, facing and movement state:
+	fixed-hitbox root (Config/Hitbox: the same body for every avatar, measured
+	from the feet), facing and movement state:
 	  Secure   sphere at the chest (always on; drops low while sliding)
 	  Reach    capsule from the shoulder along the aim direction, active for a
 	           short window after pressing Reach (also used airborne for the
@@ -24,6 +25,10 @@
 	speed; claimRoot decides whether the zones are built from the body
 	position the client sent or from the server's (led) view.
 
+	Tip (the Tip Reset): tipZones adds a hands-up sphere over the head;
+	bestTip judges a tip press on the disc's closest pass within a window
+	around the press; tipVelocity pops the disc up out of the hands.
+
 	Mark: a box of hands in front of the marker, oriented by the marker's
 	facing blended toward the thrower's pivot P (markForward), with Low/High
 	bands and a Relaxed chest sphere. Jumping lifts it. Disc space and stall
@@ -33,6 +38,7 @@
 
 local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
+local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 
 local C = DiscConfig.Catch
@@ -48,13 +54,14 @@ export type Zone = {
 }
 
 export type BodyState = {
-	root: Vector3,
+	root: Vector3, -- the fixed-hitbox root (Config/Hitbox.root), not the avatar's own
 	facing: Vector3, -- horizontal unit
 	reaching: boolean,
 	reachDir: Vector3?,
 	diving: boolean,
 	diveDir: Vector3?,
 	sliding: boolean,
+	prone: boolean?, -- lying flat after a layout (DiveSlide / early Recover)
 }
 
 local UP = Vector3.new(0, 1, 0)
@@ -70,7 +77,9 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 		facing = Vector3.new(0, 0, -1)
 	end
 	local chest = body.root + UP * C.ChestHeight + facing * 0.4
-	if body.sliding then
+	if body.prone then
+		chest -= UP * Hitbox.ProneDrop
+	elseif body.sliding then
 		chest -= UP * C.SlideDrop
 	end
 	table.insert(zones, { kind = "Secure", a = chest, b = chest, radius = C.SecureRadius })
@@ -90,7 +99,8 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 
 	if body.diving and body.diveDir then
 		local dir = VecMath.safeUnit(body.diveDir, facing)
-		local start = body.root + UP * 0.2
+		-- flying: from the chest line; lying flat: along the turf
+		local start = body.root + UP * (if body.prone then Hitbox.ProneDiveHeight else 0.2)
 		table.insert(zones, {
 			kind = "Dive",
 			a = start,
@@ -99,6 +109,49 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 		})
 	end
 	return zones
+end
+
+-- The zones a Tip is judged against: the normal zones plus a hands-up
+-- sphere over the head (kind "Tip").
+function CatchGeometry.tipZones(body: BodyState): { Zone }
+	local zones = CatchGeometry.zones(body)
+	local hands = body.root + UP * C.TipHeight
+	table.insert(zones, { kind = "Tip", a = hands, b = hands, radius = C.TipRadius })
+	return zones
+end
+
+-- The best moment to tip along a stretch of the disc's path around a press
+-- at `tPress`: the deepest sample (the closest pass) inside the zones.
+-- Returns the evaluation (with `t`) and the tip quality, "Perfect" when the
+-- closest pass is within `perfect` seconds of the press, else "Clean"; nil
+-- when the disc never comes within the zones.
+function CatchGeometry.bestTip(
+	zones: { Zone },
+	samples: { PathSample },
+	tPress: number,
+	perfect: number,
+	slack: number?
+): (Evaluation?, string)
+	local best: Evaluation? = nil
+	for _, sample in samples do
+		local ev = CatchGeometry.evaluate(zones, sample.pos, slack)
+		if ev and (best == nil or ev.depth < (best :: Evaluation).depth - 1e-6) then
+			ev.t = sample.t
+			best = ev
+		end
+	end
+	if best == nil then
+		return nil, "Clean"
+	end
+	local dt = math.abs(((best :: Evaluation).t or tPress) - tPress)
+	return best, if dt <= perfect + 1e-6 then "Perfect" else "Clean"
+end
+
+-- The disc's new velocity after a tip: a little of its old velocity, a push
+-- along the tipper's facing, and a pop upward.
+function CatchGeometry.tipVelocity(discVel: Vector3, facing: Vector3): Vector3
+	local f = VecMath.flatUnit(facing)
+	return discVel * C.TipCarry + f * C.TipPush + UP * C.TipUp
 end
 
 function CatchGeometry.coreDistance(zone: Zone, p: Vector3): (number, Vector3)

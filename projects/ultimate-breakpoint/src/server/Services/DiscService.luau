@@ -16,7 +16,7 @@
 	              hand block; 0 = none): clients hold the disc there until
 	              the deflection segment arrives instead of flying it on
 	  GroundPos   resting spot while on the ground
-	  ThrowerId, ThrowerTeam, ThrowType, Quality, Skin, Context, Owner, Pull
+	  ThrowerId, Touched, ThrowerTeam, ThrowType, Quality, Skin, Context, Owner, Pull
 
 	Flights are deterministic (DiscPhysics with a fixed step from identical
 	launch values), so clients reproduce the server's trajectory exactly
@@ -338,6 +338,7 @@ function DiscService.launch(
 	write(d, "Wind", windVec)
 	write(d, "GroundY", d.groundY)
 	write(d, "ThrowerId", d.thrower or 0)
+	write(d, "Touched", d.touched) -- after a touch the thrower may catch it too
 	write(d, "ThrowerTeam", d.throwerTeam or "")
 	write(d, "ThrowType", d.throwType or "")
 	write(d, "Quality", d.quality or "")

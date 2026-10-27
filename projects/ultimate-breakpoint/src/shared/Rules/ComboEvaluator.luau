@@ -22,6 +22,9 @@
 	The thrower's "Break" link (fake -> swing -> release) is scored by the throw
 	path: release() adds it when the chain's last technique is a Sold
 	PivotSwing that finished within BreakWindow of the release.
+
+	Signature moves (Rules/Signatures) add their fixed points with
+	signature(); they count as scoring techniques for the chain bonuses.
 ]]
 
 local Shared = script.Parent.Parent
@@ -58,6 +61,7 @@ export type Entry = {
 	quality: string,
 	t: number,
 	score: number,
+	name: string?, -- signature moves: the move's name (tech is "Signature")
 }
 
 export type Chain = {
@@ -263,6 +267,30 @@ function ComboEvaluator.add(tr: Tracker, tech: string, quality: string, t: numbe
 	chain.raw += score
 	chain.lastT = t
 	return score, ComboEvaluator.total(chain)
+end
+
+-- A signature move (Rules/Signatures) pays its points straight into the
+-- chain: no quality or variety scaling, but it counts as a scoring
+-- technique for the chain's length and variety bonuses. Returns the points
+-- added and the chain total.
+function ComboEvaluator.signature(tr: Tracker, name: string, pts: number, t: number): (number, number)
+	ComboEvaluator.expire(tr, t)
+	local c = tr.chain
+	if c == nil then
+		c = newChain(t)
+		tr.chain = c
+	end
+	local chain = c :: Chain
+	table.insert(chain.entries, { tech = "Signature", quality = "Perfect", t = t, score = pts, name = name })
+	chain.scoring += 1
+	local key = "Signature:" .. name
+	if not chain.unique[key] then
+		chain.unique[key] = true
+		chain.uniqueCount += 1
+	end
+	chain.raw += pts
+	chain.lastT = t
+	return pts, ComboEvaluator.total(chain)
 end
 
 -- The Break link quality for a release at time t, or nil: the chain's last

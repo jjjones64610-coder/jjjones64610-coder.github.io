@@ -1078,7 +1078,156 @@ end)
 -- fuzz
 ---------------------------------------------------------------------------
 
-test("fuzz (120k frames): never past HardCap, no NaN, exertion in range, root target near P", function()
+---------------------------------------------------------------------------
+-- momentum limits on explosive techniques
+---------------------------------------------------------------------------
+
+test("burst and layout cannot reverse a full sprint in one frame", function()
+	local s, body = sprintFwd()
+	local before = VecMath.flatUnit(s.vel)
+	press(s, body, "Burst", { move = BACK, sprint = true })
+	local out = frame(s, body, { move = BACK, sprint = true })
+	local bent = VecMath.flatAngle(before, VecMath.flatUnit(out.vel))
+	expect(bent <= Config.BurstStep.MaxTurn + 1, "burst bends at most MaxTurn, got " .. bent)
+
+	local s2, body2 = sprintFwd()
+	local before2 = VecMath.flatUnit(s2.vel)
+	press(s2, body2, "Dive", { move = BACK, sprint = true })
+	local out2 = frame(s2, body2, { move = BACK, sprint = true })
+	local bent2 = VecMath.flatAngle(before2, VecMath.flatUnit(out2.vel))
+	expect(bent2 <= Config.Dive.MaxTurn + 1, "ground layout leaves at most MaxTurn off the line, got " .. bent2)
+end)
+
+test("a burst out of a plant still goes any direction", function()
+	local s, body = sprintFwd()
+	press(s, body, "Cut", { move = NONE, sprint = true }) -- plant
+	run(s, body, { move = NONE, sprint = true }, 0.14)
+	press(s, body, "Burst", { move = BACK, sprint = true })
+	local out = frame(s, body, { move = BACK, sprint = true })
+	expect(out.vel:Dot(BACK) > 20, "explosive restart reverses")
+end)
+
+---------------------------------------------------------------------------
+-- resets (the flip-reset family)
+---------------------------------------------------------------------------
+
+local function jumpTo(s, body, input, seconds)
+	press(s, body, "Jump", input)
+	return run(s, body, input, seconds)
+end
+
+test("tip reset: both air moves come back, the next one is Charged, with a lift", function()
+	local s, body = sprintFwd()
+	local input = { move = FWD, sprint = true }
+	jumpTo(s, body, input, 0.1)
+	-- spend the air redirect
+	local okRedirect = press(s, body, "Cut", { move = RIGHT, sprint = true })
+	run(s, body, { move = RIGHT, sprint = true }, 0.05)
+	expect(okRedirect and s.airRedirectUsed, "air redirect spent")
+	local ok2 = press(s, body, "Cut", { move = LEFT, sprint = true })
+	expect(not ok2, "only one air redirect per jump without a reset")
+
+	local tipped = MovementSim.tipReset(s, envFor(body, s), "Perfect", FWD)
+	local out = frame(s, body, { move = LEFT, sprint = true })
+	expect(tipped, "tip reset accepted in the air")
+	expect(not s.airRedirectUsed and not s.airDiveUsed and s.charged, "air moves back and Charged")
+	expect(out.setVertical ~= nil and out.setVertical >= Config.Reset.TipLiftPerfect - 1e-6, "Perfect tip lifts you")
+	expect(find(out.events, "TipReset") ~= nil, "emits TipReset")
+
+	local speed = s.vel.Magnitude
+	local ok3 = press(s, body, "Cut", { move = LEFT, sprint = true })
+	local out3 = frame(s, body, { move = LEFT, sprint = true })
+	local ev = find(out3.events, "AirRedirect")
+	expect(ok3 and ev ~= nil and ev.info == "Charged", "second air redirect after the reset is Charged")
+	expect(s.vel.Magnitude >= speed * Config.Reset.ChargedRetention - 0.5, "a Charged redirect keeps its speed")
+end)
+
+test("tip resets: on the ground no, two per jump at most, a cooldown between", function()
+	local s, body = sprintFwd()
+	local ok = MovementSim.tipReset(s, envFor(body, s), "Clean", FWD)
+	expect(not ok, "no tip reset on the ground")
+	jumpTo(s, body, { move = FWD, sprint = true }, 0.05)
+	expect(MovementSim.tipReset(s, envFor(body, s), "Clean", FWD), "first tip")
+	expect(not MovementSim.tipReset(s, envFor(body, s), "Clean", FWD), "cooldown between tips")
+	run(s, body, { move = FWD, sprint = true }, Config.Reset.TipCooldown + 0.02)
+	expect(MovementSim.tipReset(s, envFor(body, s), "Clean", FWD), "second tip after the cooldown")
+	run(s, body, { move = FWD, sprint = true }, Config.Reset.TipCooldown + 0.02)
+	if s.mode == "Air" or s.mode == "Dive" then
+		expect(not MovementSim.tipReset(s, envFor(body, s), "Clean", FWD), "never a third in one jump")
+	end
+	run(s, body, { move = FWD, sprint = true }, 1.5)
+	expect(s.tipsThisAir == 0 and not s.charged, "landing clears the tips and the charge")
+end)
+
+test("a ground layout needs a reset before an air layout in the same airtime", function()
+	local s, body = sprintFwd()
+	press(s, body, "Dive", { move = FWD, sprint = true })
+	run(s, body, { move = FWD, sprint = true }, 0.05)
+	expect(s.mode == "Dive", "diving")
+	local again = press(s, body, "Dive", { move = FWD, sprint = true })
+	expect(not again, "no second layout without a reset")
+	expect(MovementSim.tipReset(s, envFor(body, s), "Clean", FWD), "tip reset mid-dive")
+	local out = frame(s, body, { move = FWD, sprint = true })
+	local ok = press(s, body, "Dive", { move = FWD, sprint = true })
+	local out2 = frame(s, body, { move = FWD, sprint = true })
+	local ev = find(out2.events, "Dive") or find(out.events, "Dive")
+	expect(ok and ev ~= nil and ev.info == "Air", "the reset gives an air layout")
+	expect(s.vel.Magnitude <= Config.HardCap + 1e-6, "under the hard cap")
+end)
+
+test("wall rebound is a reset too: air layout and air cut come back", function()
+	local s, body = sprintFwd()
+	jumpTo(s, body, { move = FWD, sprint = true }, 0.05)
+	press(s, body, "Dive", { move = FWD, sprint = true })
+	run(s, body, { move = FWD, sprint = true }, 0.03)
+	expect(s.airDiveUsed, "air layout spent")
+	local env = envFor(body, s)
+	env.wallNormal = BACK
+	env.wallDistance = 1
+	env.wallId = "W1"
+	local ok = MovementSim.press(s, "Jump", { move = FWD, sprint = true }, env)
+	expect(ok and not s.airDiveUsed and not s.airRedirectUsed and s.charged, "wall reset")
+end)
+
+test("landing reset: a Perfect precision landing refunds Burst and Layout", function()
+	local s, body = sprintFwd()
+	press(s, body, "Burst", { move = FWD, sprint = true })
+	run(s, body, { move = FWD, sprint = true }, 0.25)
+	expect(s.ready.BurstStep > s.now, "burst on cooldown")
+	press(s, body, "Jump", { move = FWD, sprint = true })
+	local pressed = false
+	local events, fbs = {}, {}
+	for _ = 1, 120 do
+		local env = envFor(body, s)
+		if not pressed and env.timeToLand and env.timeToLand <= 0.03 and body.vy < 0 then
+			pressed = MovementSim.press(s, "Slide", { move = FWD, sprint = true }, env)
+		end
+		local out = frame(s, body, { move = FWD, sprint = true })
+		for _, e in out.events do
+			table.insert(events, e)
+		end
+		for _, f in out.feedback do
+			table.insert(fbs, f)
+		end
+		if find(events, "PrecisionLanding") then
+			break
+		end
+	end
+	local pl = find(events, "PrecisionLanding")
+	expect(pl ~= nil and pl.quality == "Perfect" and pl.info == "Reset", "Perfect landing is a Landing Reset")
+	expect(s.ready.BurstStep <= s.now + 1e-6, "burst refunded")
+	local said = false
+	for _, f in fbs do
+		if f.kind == "Reset" then
+			said = true
+		end
+	end
+	expect(said, "the reset is announced")
+	local ok = press(s, body, "Burst", { move = FWD, sprint = true })
+	expect(ok, "burst again at once")
+end)
+
+test("fuzz (120k frames, with resets): never past HardCap, no NaN, exertion in range, root target near P", function()
 	local rng = Rng.new(1234)
 	local actions = { "Jump", "Cut", "Slide", "Dive", "Burst" }
 	local worst = 0
@@ -1118,6 +1267,10 @@ test("fuzz (120k frames): never past HardCap, no NaN, exertion in range, root ta
 				MovementSim.setHolding(s, not s.holding, env.grounded)
 			elseif r < 0.249 then
 				MovementSim.reset(s)
+			elseif r < 0.27 then
+				-- tip resets whenever the fuzz feels like it (the client only
+				-- offers them in the air, near a disc)
+				MovementSim.tipReset(s, env, if rng:next() < 0.5 then "Perfect" else "Clean", input.move)
 			end
 			local dt = DT * rng:range(0.5, 2)
 			local out = MovementSim.step(s, input, env, dt)

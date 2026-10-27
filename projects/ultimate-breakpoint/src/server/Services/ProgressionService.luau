@@ -457,7 +457,27 @@ function ProgressionService.Init(s: any)
 	services = s
 end
 
+-- A signature move (Rules/Signatures): counted per move and in total, with
+-- XP by its tier. Training counts too (the Reset Lab is where people learn).
+function ProgressionService.signature(actor: any, hit: any)
+	if not actor or not actor.player then
+		return
+	end
+	services.DataService.update(actor.player, function(d: { [string]: any })
+		d.stats.signatures = (d.stats.signatures or 0) + 1
+		local key = "sig" .. tostring(hit.id)
+		d.stats[key] = (d.stats[key] or 0) + 1
+	end)
+	local tierXp = (XP.SignatureTier :: { number })[hit.tier] or 40
+	ProgressionService.xp(actor.player, tierXp, "signature")
+	checkAchievements(actor.player)
+	push(actor.player)
+end
+
 function ProgressionService.Start()
+	services.MovementService.SignatureHit:Connect(function(id: number, hit: any)
+		ProgressionService.signature(services.PlayerService.get(id), hit)
+	end)
 	services.DataService.Loaded:Connect(function(player)
 		stampCharacter(player)
 		push(player)

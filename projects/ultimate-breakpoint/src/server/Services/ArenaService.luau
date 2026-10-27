@@ -15,6 +15,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local ArenasConfig = require(Shared.Config.Arenas)
 local ModesConfig = require(Shared.Config.Modes)
+local DiscConfig = require(Shared.Config.Disc)
 local FieldGeometry = require(Shared.Rules.FieldGeometry)
 local Net = require(Shared.Net)
 local ArenaBuilder = require(script.Parent.Parent.Arena.ArenaBuilder)
@@ -73,13 +74,15 @@ function ArenaService.arena(): any
 	return current
 end
 
-function ArenaService.wind(): { x: number, y: number, z: number }
-	local w = if current then current.Wind else Vector3.zero
-	return { x = w.X, y = w.Y, z = w.Z }
+-- The arena's wind as the disc feels it (Config/Arenas values are at the
+-- real-world tempo; flights run at Config/Disc.Tempo, so wind scales too).
+function ArenaService.windVector(): Vector3
+	return (if current then current.Wind else Vector3.zero) * DiscConfig.Tempo
 end
 
-function ArenaService.windVector(): Vector3
-	return if current then current.Wind else Vector3.zero
+function ArenaService.wind(): { x: number, y: number, z: number }
+	local w = ArenaService.windVector()
+	return { x = w.X, y = w.Y, z = w.Z }
 end
 
 function ArenaService.endZone(side: string): BasePart?

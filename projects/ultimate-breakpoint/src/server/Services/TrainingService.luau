@@ -42,6 +42,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local ArenasConfig = require(Shared.Config.Arenas)
 local DiscConfig = require(Shared.Config.Disc)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local MovementConfig = require(Shared.Config.Movement)
 local ThrowModel = require(Shared.Disc.ThrowModel)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
@@ -1191,7 +1192,8 @@ local function markBlock(s: Session, d: any, info: any, pivot: Vector3): (number
 	if not markerId or not services.PlayerService.get(markerId) then
 		return nil, nil
 	end
-	local rewind = CatchGeometry.markerRewind(services.MovementService.ping(s.actor.id))
+	-- the same rewind as match hand blocks (DefenseService)
+	local rewind = services.DefenseService.markerRewind(services.MovementService.ping(s.actor.id))
 	local pos, facing = services.MovementService.positionAt(markerId, now() - rewind)
 	local raw = services.DefenseService.stanceOf(markerId)
 	local stance: CatchGeometry.MarkStance = if raw == "High" then "High" elseif raw == "Low" then "Low" else "Relaxed"
@@ -1465,7 +1467,7 @@ DRILLS.BreakMark = {
 					return
 				end
 				local away = flat(bp - pivot)
-				local push = if away.Magnitude > 0.1 then away.Unit * 3 else Vector3.zero
+				local push = if away.Magnitude > 0.1 then away.Unit * (3 * DiscConfig.Tempo) else Vector3.zero
 				local newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + push
 				services.DiscService.deflect(d, bp, newVel, nil, nil, contactT, markerId)
 				Net.event("Effect"):FireAllClients("HandBlock", bp, markerId, "Clean", "Mark")
@@ -1619,6 +1621,116 @@ DRILLS.Combo = {
 }
 
 ---------------------------------------------------------------------------
+-- Reset Lab: the signature moves
+---------------------------------------------------------------------------
+
+-- High floaters keep arriving a few studs over your head at the Combo Lab
+-- (it has rebound walls). Tip them in the air (Secondary as they reach your
+-- hands) to reset your air moves, then chase and catch. Every signature move
+-- you land is ticked off and scores its points; the drill ends when the
+-- list is done or after RESET_LAUNCHES discs.
+local RESET_GOALS = { "TipReset", "ResetGrab", "Skyball", "DoubleLayout", "WallTip", "DoubleTip" }
+local RESET_LAUNCHES = 40
+local RESET_LOB_HEIGHT = 7.5 -- the disc arrives this far above your feet
+local RESET_LAUNCH_DISTANCE = 34
+
+local function resetStatus(s: Session): number
+	local lines = {}
+	local done = 0
+	for _, id in RESET_GOALS do
+		local def = SignaturesConfig.List[id]
+		local ok = s.data.done[id] == true
+		if ok then
+			done += 1
+		end
+		table.insert(lines, (if ok then "[x] " else "[ ] ") .. def.name .. " — " .. def.how)
+	end
+	table.insert(lines, string.format("Disc %d / %d · score %d", s.data.launches, RESET_LAUNCHES, s.data.score))
+	hud(
+		s,
+		string.format("RESET LAB  %d/%d", done, #RESET_GOALS),
+		table.concat(lines, "\n"),
+		{ progress = done / #RESET_GOALS, list = true }
+	)
+	return done
+end
+
+local function resetFinish(s: Session, title: string)
+	local lines = { string.format("Signature points: %d", s.data.score) }
+	for _, id in RESET_GOALS do
+		if not s.data.done[id] then
+			table.insert(lines, "Still to land: " .. SignaturesConfig.List[id].name)
+		end
+	end
+	finish(s, title, lines, "ResetLab", s.data.score, false)
+end
+
+local function resetLaunch(s: Session)
+	if s.data.waiting then
+		return
+	end
+	s.data.waiting = true
+	task.delay(1.1, function()
+		if sessions[s.actor.id] ~= s or s.ended then
+			return
+		end
+		s.data.waiting = false
+		if s.data.launches >= RESET_LAUNCHES then
+			resetFinish(s, "RESET LAB")
+			return
+		end
+		local r = root(s)
+		if not r then
+			return
+		end
+		if s.disc and s.disc.mode == "Held" then
+			services.DiscService.hide(s.disc)
+		end
+		s.data.launches += 1
+		local st = layout.stations.Combo
+		local feet = r.Position - Vector3.new(0, services.MovementService.standHeight(s.actor.id), 0)
+		-- lead a moving player a little; launch from in front of them
+		local lead = flat(r.AssemblyLinearVelocity) * 0.9
+		local target = feet + lead + Vector3.new(0, RESET_LOB_HEIGHT, 0)
+		local origin = feet + st.facing * RESET_LAUNCH_DISTANCE + Vector3.new(0, 3, 0)
+		launchAt(s, origin, target, "Backhand", 0, true)
+		resetStatus(s)
+	end)
+end
+
+DRILLS.ResetLab = {
+	start = function(s: Session)
+		local st = layout.stations.Combo
+		teleport(s, st.start, st.facing)
+		s.data.done = {}
+		s.data.score = 0
+		s.data.launches = 0
+		s.data.waiting = false
+		send(s, "DrillTick", {
+			text = "Jump at the disc and press RIGHT MOUSE as it reaches your hands: a TIP gives your air moves back.",
+		})
+		resetStatus(s)
+		resetLaunch(s)
+	end,
+	onCaught = function(s: Session, _d: any, _info: any)
+		resetLaunch(s)
+	end,
+	onGrounded = function(s: Session, d: any, land: Vector3)
+		services.DiscService.placeOnGround(d, land)
+		resetLaunch(s)
+	end,
+	onSignature = function(s: Session, hit: any)
+		s.data.score += hit.points
+		local fresh = s.data.done[hit.id] ~= true and table.find(RESET_GOALS, hit.id) ~= nil
+		s.data.done[hit.id] = true
+		send(s, "DrillTick", { text = string.format("%s +%d%s", hit.name, hit.points, if fresh then "  ✓" else "") })
+		if resetStatus(s) >= #RESET_GOALS then
+			resetFinish(s, "RESET LAB COMPLETE")
+		end
+	end,
+}
+
+---------------------------------------------------------------------------
 -- session lifecycle
 ---------------------------------------------------------------------------
 
@@ -1729,6 +1841,15 @@ function TrainingService.Start()
 			TrainingService.startDrill(actor, id)
 		end)
 	end
+	services.MovementService.SignatureHit:Connect(function(actorId: number, hit: any)
+		local s = sessions[actorId]
+		if s and not s.ended then
+			local drill = DRILLS[s.drill]
+			if drill and drill.onSignature then
+				drill.onSignature(s, hit)
+			end
+		end
+	end)
 	services.MovementService.TechAccepted:Connect(function(actorId, tech, quality, info)
 		local s = sessions[actorId]
 		if s then

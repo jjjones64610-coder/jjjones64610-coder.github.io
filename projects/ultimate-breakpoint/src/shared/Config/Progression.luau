@@ -27,6 +27,7 @@ Progression.XP = {
 	UnconvertedMatchCap = 120, -- unconverted chains, per player per match (match play only)
 	TrainingDrill = 15,
 	PersonalBest = 25,
+	SignatureTier = { 40, 90, 160 }, -- per signature move, by Config/Signatures tier
 }
 
 function Progression.xpForLevel(level: number): number
@@ -183,6 +184,27 @@ Progression.Titles = {
 Progression.Achievements = {
 	{ id = "FirstGoal", name = "On the Board", description = "Score your first goal.", stat = "goals", goal = 1 },
 	{
+		id = "ResetArtist",
+		name = "Reset Artist",
+		description = "Pull off 10 signature moves.",
+		stat = "signatures",
+		goal = 10,
+	},
+	{
+		id = "FlipReset",
+		name = "Flip Reset",
+		description = "Land a Double Tip: two tips in one jump, then the catch.",
+		stat = "sigDoubleTip",
+		goal = 1,
+	},
+	{
+		id = "SelfMade",
+		name = "Self-Made",
+		description = "Get a Self-D: tip it as a defender, then catch it yourself.",
+		stat = "sigSelfD",
+		goal = 1,
+	},
+	{
 		id = "LayoutArtist",
 		name = "Layout Artist",
 		description = "Make 25 diving (layout) catches.",
@@ -251,7 +273,7 @@ Progression.Achievements = {
 		name = "Student of the Game",
 		description = "Finish every training drill once.",
 		stat = "drillsCompleted",
-		goal = 8,
+		goal = 9,
 	},
 } :: { any }
 

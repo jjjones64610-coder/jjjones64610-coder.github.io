@@ -375,7 +375,7 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 				return
 			end
 			local away = Vector3.new(bp.X - origin.X, 0, bp.Z - origin.Z)
-			local push = if away.Magnitude > 0.1 then away.Unit * 3 else Vector3.zero
+			local push = if away.Magnitude > 0.1 then away.Unit * (3 * DiscConfig.Tempo) else Vector3.zero
 			local newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + push
 			services.DiscService.deflect(d, bp, newVel, nil, nil, contactT, blockerId)
 			Net.event("Effect"):FireAllClients("HandBlock", bp, blockerId, "Clean", "Mark")

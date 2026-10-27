@@ -56,6 +56,7 @@ local RunService = game:GetService("RunService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
 local Actors = require(Shared.Actors)
@@ -65,10 +66,12 @@ local MovementService = {}
 MovementService.Landed = Signal.new() -- (actorId, position)
 MovementService.TechAccepted = Signal.new() -- (actorId, tech, quality, info)
 MovementService.Travel = Signal.new() -- (actorId)
+MovementService.SignatureHit = Signal.new() -- (actorId, hit: Signatures.Hit)
 
 local services: any
 
 local HD = MovementConfig.Holding
+local RS = MovementConfig.Reset
 
 export type Track = {
 	id: number,
@@ -83,6 +86,7 @@ export type Track = {
 	lastAirborneAt: number, -- Net.now() of the last airborne sample
 	wasGrounded: boolean,
 	pendingLanding: boolean,
+	holdAirborne: boolean, -- the possession started in the air (slow-down starts on landing)
 	-- history (ring buffer, Net.now() times): positionAt + the speed budget
 	histT: { number },
 	histPos: { Vector3 },
@@ -110,6 +114,14 @@ export type Track = {
 	lastDiveAt: number,
 	lastSwingAt: number, -- timestamp of the last accepted PivotSwing
 	breakSwingAt: number, -- the PivotSwing a Break was already credited for
+	-- air moves and resets this airtime (from the client-reported mode)
+	airRedirects: number,
+	airLayouts: number,
+	airResets: number, -- accepted Tip Resets + Wall Rebounds
+	airTips: number,
+	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
+	lastLandAt: number, -- ... and of the last airborne -> grounded one
+	signatures: Signatures.Tracker,
 	-- holding
 	holding: boolean,
 	holdStart: number,
@@ -202,6 +214,7 @@ local function newTrack(id: number, pos: Vector3): Track
 		lastAirborneAt = -math.huge,
 		wasGrounded = true,
 		pendingLanding = false,
+		holdAirborne = false,
 		histT = table.create(HISTORY, 0),
 		histPos = table.create(HISTORY, pos),
 		histLook = table.create(HISTORY, Vector3.new(0, 0, -1)),
@@ -226,6 +239,13 @@ local function newTrack(id: number, pos: Vector3): Track
 		lastDiveAt = -math.huge,
 		lastSwingAt = -math.huge,
 		breakSwingAt = -math.huge,
+		airRedirects = 0,
+		airLayouts = 0,
+		airResets = 0,
+		airTips = 0,
+		lastTakeoffAt = -math.huge,
+		lastLandAt = -math.huge,
+		signatures = Signatures.new(),
 		holding = false,
 		holdStart = -math.huge,
 		holdEnd = -math.huge,
@@ -247,8 +267,9 @@ function MovementService.track(id: number): Track?
 	return tracks[id]
 end
 
--- One-way-ish network delay of an actor in seconds, clamped to [0, 0.35]
--- (bots: 0).
+-- One-way network delay of an actor in seconds, clamped to [0, 0.35]
+-- (bots: 0). Player:GetNetworkPing() is the client -> server -> client round
+-- trip, so it is halved here; every caller treats this value as one-way.
 function MovementService.ping(id: number): number
 	if Actors.isBotId(id) then
 		return 0
@@ -263,7 +284,7 @@ function MovementService.ping(id: number): number
 	if not ok or type(value) ~= "number" or not finite(value) then
 		return 0
 	end
-	return math.clamp(value, 0, 0.35)
+	return math.clamp(value / 2, 0, 0.35)
 end
 
 local function character(id: number): Model?
@@ -438,7 +459,7 @@ local function proposePivot(track: Track, pos: Vector3): boolean
 	end
 	-- the slow-down after a catch (including an airborne catch) can't carry
 	-- the holder further than this from where the server saw the catch
-	if flat(pos - track.holdPos).Magnitude > 20 + 40 * ping then
+	if flat(pos - track.holdPos).Magnitude > 28 + 40 * ping then
 		return false
 	end
 	plant(track, pos, "Client")
@@ -465,16 +486,25 @@ end
 local function updateHolding(actor: any, t: Track, root: BasePart, grounded: boolean, clock: number)
 	local tNow = now()
 	if t.pivot == nil then
-		-- server fallback plant (humans normally propose theirs first)
+		-- server fallback plant (humans normally propose theirs first). Like
+		-- the client, the slow-down of an airborne catch starts on landing.
 		if grounded then
+			if t.holdAirborne then
+				t.holdAirborne = false
+				t.holdStart = tNow
+			end
 			local held = tNow - t.holdStart
 			local speed = flat(t.vel).Magnitude
 			if actor.isBot then
 				if held >= HD.DecelMaxTime + 0.15 or (held >= 0.1 and speed < HD.PlantSpeed + 2) then
 					plant(t, t.pos, "Auto")
 				end
-			elseif held >= HD.DecelMaxTime + 0.3 + 2 * MovementService.ping(t.id) then
-				plant(t, t.pos, "Auto")
+			else
+				local due = HD.DecelMaxTime + 0.3 + 2 * MovementService.ping(t.id)
+				-- only once the body has really stopped (or long after it should have)
+				if (held >= due and speed < HD.PlantSpeed + 2) or held >= due + 0.6 then
+					plant(t, t.pos, "Auto")
+				end
 			end
 		end
 		return
@@ -731,8 +761,26 @@ end
 
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
-local function judge(t: Track, tech: string, quality: string, ts: number): string?
-	if tech == "PivotSwing" then
+local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
+	if tech == "TipReset" then
+		-- only right after a tip the server is resolving (or resolved)
+		if t.airTips >= RS.MaxTipsPerAir or not services.CatchingService.recentTip(t.id, ts, 0.4) then
+			return nil
+		end
+		return quality
+	elseif tech == "AirRedirect" then
+		-- one per airtime, plus one per reset
+		if t.airRedirects >= 1 + t.airResets then
+			return nil
+		end
+		return quality
+	elseif tech == "Dive" then
+		-- a ground layout or an air layout: one per airtime, plus one per reset
+		if info == "Air" and t.airLayouts >= 1 + t.airResets then
+			return nil
+		end
+		return quality
+	elseif tech == "PivotSwing" then
 		-- only while holding (or just before the release reached us)
 		if not (t.holding or ts <= t.holdEnd + 0.1) or ts < t.holdStart - 0.5 then
 			return nil
@@ -777,7 +825,7 @@ local function accept(t: Track, tech: string, quality: string, info: string?, ts
 	if cd > 0 and ts - (t.techAt[tech] or -math.huge) < cd - COOLDOWN_SLACK then
 		return nil
 	end
-	local q = judge(t, tech, quality, ts)
+	local q = judge(t, tech, quality, info, ts)
 	if q == nil then
 		return nil
 	end
@@ -795,10 +843,82 @@ local function accept(t: Track, tech: string, quality: string, info: string?, ts
 	return q
 end
 
+-- Feeds one event to the actor's signature tracker and pays what it completes.
+local function feedSignatures(id: number, t: Track, e: Signatures.Event)
+	for _, hit in Signatures.feed(t.signatures, e) do
+		ComboEvaluator.signature(t.combo, hit.name, hit.points, hit.t)
+		MovementService.SignatureHit:Fire(id, hit)
+	end
+end
+
+local GROUNDED_MODES = {
+	Ground = true,
+	Slide = true,
+	DiveSlide = true,
+	Recover = true,
+	Landing = true,
+	Pivot = true,
+	Mark = true,
+	Frozen = true,
+}
+
+-- The airtime ended (client-reported grounded mode): its air moves and
+-- resets start over.
+local function endAirtime(id: number, t: Track, ts: number)
+	feedSignatures(id, t, { kind = "Land", t = ts })
+	t.airRedirects = 0
+	t.airLayouts = 0
+	t.airResets = 0
+	t.airTips = 0
+end
+
+-- A reported movement mode change: tracks takeoffs and landings (on the
+-- client's clock, arrival minus ping) and ends the airtime on landing.
+local function modeChanged(id: number, t: Track, from: string, to: string, at: number)
+	local wasAir = from == "Air" or from == "Dive"
+	local isAir = to == "Air" or to == "Dive"
+	if isAir and not wasAir then
+		t.lastTakeoffAt = at
+	elseif wasAir and GROUNDED_MODES[to] then
+		t.lastLandAt = at
+		endAirtime(id, t, at)
+	end
+end
+
 -- Records an accepted technique: pose attributes, combo chain, listeners.
 local function record(id: number, t: Track, tech: string, quality: string, dir: Vector3, info: string?, ts: number)
 	t.lastTech = tech
 	t.lastTechAt = ts
+	-- air moves and resets this airtime
+	if tech == "AirRedirect" then
+		t.airRedirects += 1
+	elseif tech == "Dive" then
+		t.airLayouts += 1
+	elseif tech == "WallRebound" or tech == "TipReset" then
+		t.airResets += 1
+		if tech == "TipReset" then
+			t.airTips += 1
+		end
+		for _, r in RS.AirRefund do
+			t.techAt[r] = nil
+		end
+	end
+	-- reset refunds mirror the sim's (Config/Movement.Reset)
+	if quality == "Perfect" then
+		local refunds: { string }? = nil
+		if tech == "PrecisionLanding" and info == "Reset" then
+			refunds = RS.LandingRefund
+		elseif tech == "PrecisionLanding" and info == "RollOut" then
+			refunds = RS.RollOutRefund
+		elseif tech == "RecoveryChain" then
+			refunds = RS.RecoveryRefund
+		end
+		if refunds then
+			for _, r in refunds do
+				t.techAt[r] = nil
+			end
+		end
+	end
 	if tech == "Dive" then
 		t.lastDiveAt = ts
 	elseif tech == "PivotSwing" then
@@ -809,6 +929,7 @@ local function record(id: number, t: Track, tech: string, quality: string, dir: 
 	replicate(id, tech, quality, dir, info)
 	ComboEvaluator.add(t.combo, tech, quality, ts)
 	MovementService.TechAccepted:Fire(id, tech, quality, info)
+	feedSignatures(id, t, { kind = "Tech", t = ts, tech = tech, quality = quality, info = info })
 end
 
 local function cleanDir(v: any): Vector3
@@ -828,10 +949,12 @@ local function onTech(player: Player, events: any, mode: any)
 		return
 	end
 	if type(mode) == "string" and VALID_MODES[mode] and mode ~= t.mode then
+		local from = t.mode
 		t.mode = mode
 		if actor.character then
 			actor.character:SetAttribute("MS", mode)
 		end
+		modeChanged(actor.id, t, from, mode, now() - MovementService.ping(actor.id))
 	end
 	if type(events) ~= "table" then
 		return
@@ -879,8 +1002,10 @@ function MovementService.botTech(
 	if t then
 		ts = math.max(ts, t.lastTs)
 		t.lastTs = ts
-		if mode then
+		if mode and mode ~= t.mode then
+			local from = t.mode
 			t.mode = mode
+			modeChanged(id, t, from, mode, ts)
 		end
 		if KNOWN_TECHS[tech] ~= nil then
 			t.techAt[tech] = ts
@@ -899,8 +1024,10 @@ end
 
 function MovementService.setBotMode(id: number, mode: string)
 	local t = tracks[id]
-	if t then
+	if t and mode ~= t.mode then
+		local from = t.mode
 		t.mode = mode
+		modeChanged(id, t, from, mode, now())
 	end
 	local c = character(id)
 	if c then
@@ -949,7 +1076,10 @@ function MovementService.setHolding(id: number, holding: boolean)
 	t.holding = holding
 	if holding then
 		t.holdStart = now()
-		t.holdPos = t.pos
+		-- given the disc in the same frame as a teleport: the server's last
+		-- sample is still the old spot, so measure from the target
+		t.holdPos = t.teleportTarget or t.pos
+		t.holdAirborne = not t.grounded
 		t.pendingLanding = not t.grounded
 		t.pivot = nil
 		t.pivotSource = "None"
@@ -966,6 +1096,46 @@ function MovementService.setHolding(id: number, holding: boolean)
 		t.holdEnd = now()
 		t.pendingLanding = false
 		MovementService.clearPivot(id)
+	end
+end
+
+-- Signature move inputs from the catch path and the rules (server-validated).
+function MovementService.noteTip(id: number, discId: string, defender: boolean, at: number)
+	local t = tracks[id]
+	if t then
+		feedSignatures(id, t, { kind = "Tip", t = at, discId = discId, defender = defender })
+	end
+end
+
+function MovementService.noteCatch(id: number, discId: string, interception: boolean, at: number)
+	local t = tracks[id]
+	if not t then
+		return
+	end
+	-- in the air at the catch time? (the answer comes a round trip after
+	-- the catch, often after the landing was reported)
+	local tookOff = t.lastTakeoffAt <= at + 0.05
+	local landedBetween = t.lastLandAt >= t.lastTakeoffAt and t.lastLandAt <= at
+	local airborne = tookOff and not landedBetween
+	local height = 0
+	if airborne then
+		local pos = MovementService.positionAt(id, at)
+		height = math.max(0, pos.Y - t.stand - t.lastGroundedPos.Y)
+	end
+	feedSignatures(id, t, {
+		kind = "Catch",
+		t = at,
+		discId = discId,
+		airborne = airborne,
+		height = height,
+		interception = interception,
+	})
+end
+
+function MovementService.noteGreatest(id: number)
+	local t = tracks[id]
+	if t then
+		feedSignatures(id, t, { kind = "Greatest", t = now() })
 	end
 end
 
@@ -999,7 +1169,7 @@ function MovementService.noteRelease(id: number, at: number?): string?
 	local tNow = now()
 	local when = if at and finite(at) then math.clamp(at, tNow - 0.5, tNow) else tNow
 	local ts = math.max(when, t.lastTs)
-	local q = judge(t, "Break", "Clean", ts)
+	local q = judge(t, "Break", "Clean", nil, ts)
 	if q == nil then
 		return nil
 	end

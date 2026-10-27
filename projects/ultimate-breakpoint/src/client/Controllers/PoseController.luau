@@ -93,7 +93,11 @@ type Rig = {
 	history: { { t: number, p: Vector3 } },
 	smoothVel: Vector3,
 	shufflePhase: number,
+	msShown: string, -- remote rigs: the movement mode being drawn (MS, delayed)
+	msNext: string,
+	msNextAt: number,
 	freeSide: number, -- the leg that steps out in the pivot lunge (-1 left, +1 right)
+	lunging: boolean, -- in the lunge stance (freeSide is locked while true)
 	legMode: string, -- last Pose.legs (a change blends the legs briefly)
 	legSwitchAt: number,
 	seenAt: number,
@@ -133,7 +137,9 @@ local IDENTITY = CFrame.identity
 local DOWN = Vector3.new(0, -1, 0)
 local LEG_RATE = 26 -- blend speed when the legs switch between pose kinds
 local LEG_BLEND_TIME = 0.2
-local SHUFFLE_AMPLITUDE = 0.45
+local REMOTE_POSE_DELAY = 0.08 -- other players' poses follow their attributes this late (render interpolation)
+local SHUFFLE_STRIDE = 2.2 -- studs per step of the mark shuffle
+local SHUFFLE_MAX_CADENCE = 3 -- gait cycles per second at most
 local SHUFFLE_LIFT = 0.3
 
 local function now(): number
@@ -313,7 +319,11 @@ local function buildRig(model: Model): Rig?
 		history = {},
 		smoothVel = Vector3.new(vel.X, 0, vel.Z),
 		shufflePhase = 0,
+		msShown = "Ground",
+		msNext = "Ground",
+		msNextAt = 0,
 		freeSide = 1,
+		lunging = false,
 		legMode = "free",
 		legSwitchAt = -math.huge,
 		seenAt = os.clock(),
@@ -367,6 +377,7 @@ type Ctx = {
 	mark: string,
 	holding: boolean,
 	step: Vector3, -- body-space step of the free foot (zero unless pivoting)
+	pivot: Vector3?, -- body-space position of the pivot foot P (pivoting only)
 	celebrate: string,
 	celebrateAge: number,
 	leftHanded: boolean,
@@ -469,6 +480,8 @@ local function gather(rig: Rig, dt: number): Ctx
 		ctx.holding = controllers.ThrowController.isHolding() or mc.holdingDisc()
 		if ctx.mode == "Pivot" then
 			ctx.step = toLocal(root, mc.step())
+			local p = mc.pivot()
+			ctx.pivot = if p then root.CFrame:PointToObjectSpace(p) else nil
 		end
 	else
 		vel = remoteVelocity(rig, dt)
@@ -480,11 +493,23 @@ local function gather(rig: Rig, dt: number): Ctx
 		rig.accel = rig.accel:Lerp(raw, 1 - math.exp(-4 * dt))
 		ctx.rollLimit = 0.18
 		ctx.leanLimit = 0.12
+		-- Other bodies are drawn through Roblox's physics interpolation
+		-- buffer, a little behind the attributes that describe them, so the
+		-- pose follows the attributes REMOTE_POSE_DELAY late (a diver goes
+		-- flat as they leave the ground, not before).
 		local ms = m:GetAttribute("MS")
-		ctx.mode = if type(ms) == "string" then ms else "Ground"
+		local msNow = if type(ms) == "string" then ms else "Ground"
+		if msNow ~= rig.msNext then
+			rig.msNext = msNow
+			rig.msNextAt = t + REMOTE_POSE_DELAY
+		end
+		if t >= rig.msNextAt then
+			rig.msShown = rig.msNext
+		end
+		ctx.mode = rig.msShown
 		local tech = m:GetAttribute("Tech")
 		ctx.tech = if type(tech) == "string" then tech else ""
-		ctx.techAge = t - attrNumber(m, "TechT")
+		ctx.techAge = t - attrNumber(m, "TechT") - REMOTE_POSE_DELAY
 		local td = m:GetAttribute("TechDir")
 		ctx.techDir = if typeof(td) == "Vector3" then toLocal(root, td) else Vector3.zero
 		ctx.reachAge = t - attrNumber(m, "Reach")
@@ -509,6 +534,7 @@ local function gather(rig: Rig, dt: number): Ctx
 				s = s.Unit * HD.StepRadius
 			end
 			ctx.step = toLocal(root, s)
+			ctx.pivot = root.CFrame:PointToObjectSpace(pv)
 		end
 	end
 	ctx.grounded = GROUNDED_MODES[ctx.mode] == true
@@ -553,6 +579,7 @@ type Pose = {
 	legs: string,
 	stance: string, -- "lunge" | "wide" | "high" (with legs == "stance")
 	step: Vector3, -- body-space step for the lunge
+	pivot: Vector3?, -- body-space pivot foot position for the lunge
 	Waist: CFrame,
 	Neck: CFrame,
 	RShoulder: CFrame,
@@ -659,6 +686,7 @@ local function compute(ctx: Ctx): Pose
 		pose.legs = "stance"
 		pose.stance = "lunge"
 		pose.step = s
+		pose.pivot = ctx.pivot
 		pose.rate = 22
 	end
 
@@ -819,12 +847,23 @@ end
 local function stanceFoot(rig: Rig, leg: Leg, pose: Pose, ctx: Ctx, groundY: number): (Vector3, Vector3)
 	local base = Vector3.new(leg.restFoot.X, groundY, leg.restFoot.Z)
 	if pose.stance == "lunge" then
-		-- the pivot foot stays at P, the stepping foot goes to P + step (the
-		-- root sits BodyShare of the way). The stepping leg is the one on the
-		-- step's side so the legs never cross; squared up it is the throwing
-		-- side's leg.
-		local share = if leg.side == rig.freeSide then 1 - HD.BodyShare else -HD.BodyShare
-		return base + Vector3.new(pose.step.X, 0, pose.step.Z) * share, Vector3.zero
+		-- the pivot foot is pinned to P and the free foot goes to P + step,
+		-- both from world points, so the planted foot never leaves P whatever
+		-- the body is doing. The legs never swap: the free leg is chosen once
+		-- per possession (the throwing side) and crosses in front of the
+		-- pivot leg (a little forward, clear of its shin) when the step goes
+		-- to the other side. Squared up the free foot sits a stance-width out.
+		local step = Vector3.new(pose.step.X, 0, pose.step.Z)
+		local pv = pose.pivot
+		local P = if pv then Vector3.new(pv.X, groundY, pv.Z) else base - step * HD.BodyShare
+		if leg.side ~= rig.freeSide then
+			return P, Vector3.zero
+		end
+		local R = HD.StepRadius
+		local spread = math.clamp(1 - step.Magnitude / (0.5 * R), 0, 1)
+		local cross = math.clamp(-step.X * rig.freeSide / R, 0, 1)
+		local foot = P + step + Vector3.new(rig.freeSide * 0.9 * spread, 0, -0.5 * cross)
+		return foot, Vector3.zero
 	end
 	local wide = if pose.stance == "wide" then 0.8 else 0.35
 	local target = base + Vector3.new(leg.side * wide, 0, 0)
@@ -834,10 +873,22 @@ local function stanceFoot(rig: Rig, leg: Leg, pose: Pose, ctx: Ctx, groundY: num
 	if speed <= 1 then
 		return target, Vector3.zero
 	end
+	-- stance/swing gait: during stance the foot moves back at exactly the
+	-- body's speed (planted in the world), during swing it moves forward and
+	-- lifts. The feet are half a cycle apart.
 	local k = math.clamp(speed / 4, 0, 1)
-	local phase = rig.shufflePhase + (if leg.side > 0 then 0 else math.pi)
-	local swing = v.Unit * (SHUFFLE_AMPLITUDE * k * math.sin(phase))
-	return target, Vector3.new(swing.X, SHUFFLE_LIFT * k * math.max(0, math.cos(phase)), swing.Z)
+	local phase = (rig.shufflePhase + (if leg.side > 0 then 0 else 0.5)) % 1
+	local along: number
+	local lift = 0
+	if phase < 0.5 then
+		along = SHUFFLE_STRIDE * (0.5 - 2 * phase)
+	else
+		local u = (phase - 0.5) * 2
+		along = SHUFFLE_STRIDE * (u - 0.5)
+		lift = SHUFFLE_LIFT * math.sin(math.pi * u)
+	end
+	local swing = v.Unit * (along * k)
+	return target, Vector3.new(swing.X, lift * k, swing.Z)
 end
 
 -- Keeps a foot target inside what the leg can reach from its hip at the
@@ -876,17 +927,18 @@ local function poseLegs(rig: Rig, pose: Pose, ctx: Ctx, rootCur: CFrame, dt: num
 	local footAlpha = 1 - math.exp(-pose.rate * dt)
 	if pose.stance == "wide" or pose.stance == "high" then
 		local speed = ctx.localVel.Magnitude
-		rig.shufflePhase = (rig.shufflePhase + speed / SHUFFLE_AMPLITUDE * dt) % (2 * math.pi)
-	elseif pose.stance == "lunge" then
-		-- which leg steps out, with hysteresis around the front
-		local sx = pose.step.X
-		if pose.step.Magnitude < 0.25 * HD.StepRadius then
+		-- one cycle per two strides, capped so fast shuffles don't buzz
+		local rate = math.min(speed / (2 * SHUFFLE_STRIDE), SHUFFLE_MAX_CADENCE)
+		rig.shufflePhase = (rig.shufflePhase + rate * dt) % 1
+	end
+	if pose.stance == "lunge" then
+		-- the free (stepping) leg is fixed for the whole possession
+		if not rig.lunging then
+			rig.lunging = true
 			rig.freeSide = if ctx.leftHanded then -1 else 1
-		elseif sx > 0.3 then
-			rig.freeSide = 1
-		elseif sx < -0.3 then
-			rig.freeSide = -1
 		end
+	else
+		rig.lunging = false
 	end
 	for _, leg in rig.legs do
 		local hip, knee, ankle = IDENTITY, IDENTITY, IDENTITY

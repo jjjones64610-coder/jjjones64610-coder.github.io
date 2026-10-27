@@ -2,6 +2,8 @@ local Vector3 = require("@lune/roblox").Vector3
 local H = require("./harness")
 local CatchGeometry = H.require("Rules/CatchGeometry")
 local DiscConfig = H.require("Config/Disc")
+local Hitbox = H.require("Config/Hitbox")
+local MovementConfig = H.require("Config/Movement")
 
 local test, expect = H.test, H.expect
 local C = DiscConfig.Catch
@@ -389,6 +391,91 @@ test("mark table: release height vs stance", function()
 		not blocked({ throwType = "Backhand", stance = "Relaxed", markerX = 0, step = 0.5 }),
 		"a step beats hands-down"
 	)
+end)
+
+---------------------------------------------------------------------------
+-- fixed hitbox
+---------------------------------------------------------------------------
+
+test("fixed hitbox: a tall or short avatar gets exactly the standard zones", function()
+	local feet = Vector3.new(4, 0, -2)
+	local standard = Hitbox.root(feet + Vector3.new(0, Hitbox.RootHeight, 0), Hitbox.RootHeight)
+	for _, stand in { 2.2, 3, 3.9, 4.6 } do
+		local real = feet + Vector3.new(0, stand, 0) -- that avatar's own root
+		local normalized = Hitbox.root(real, stand)
+		expect((normalized - standard).Magnitude < 1e-9, "same hitbox root for stand height " .. stand)
+		local z1 = CatchGeometry.zones(body({ root = normalized }))
+		local z2 = CatchGeometry.zones(body({ root = standard }))
+		expect((z1[1].a - z2[1].a).Magnitude < 1e-9, "same chest zone")
+	end
+	expect(Hitbox.root(Vector3.new(0, 3, 0), 0 / 0) == Vector3.new(0, 3, 0), "junk stand height falls back")
+end)
+
+test("prone after a layout: zones drop to the turf", function()
+	local standing = CatchGeometry.zones(body({ diving = true, diveDir = FWD }))
+	local prone = CatchGeometry.zones(body({ diving = true, diveDir = FWD, prone = true }))
+	expect(prone[1].a.Y < standing[1].a.Y - 1.5, "chest zone lower when lying flat")
+	local diveStanding, diveProne
+	for _, z in standing do
+		if z.kind == "Dive" then
+			diveStanding = z
+		end
+	end
+	for _, z in prone do
+		if z.kind == "Dive" then
+			diveProne = z
+		end
+	end
+	expect(diveProne.a.Y < diveStanding.a.Y - 1, "dive zone along the ground")
+	-- a disc skimming a stud above the turf past the outstretched hands
+	local skim = Vector3.new(0, 1.2, -3)
+	expect(CatchGeometry.evaluate(prone, skim) ~= nil, "a low skimmer is in reach lying flat")
+	local high = ROOT + Vector3.new(0, 4.2, 0)
+	expect(CatchGeometry.evaluate(prone, high) == nil, "a disc well above a prone player is not")
+end)
+
+---------------------------------------------------------------------------
+-- tips (the Tip Reset)
+---------------------------------------------------------------------------
+
+local RS = MovementConfig.Reset
+
+test("tip: judged on the closest pass near the press, Perfect when on time", function()
+	local zones = CatchGeometry.tipZones(body())
+	-- a disc crossing over the head, closest at t = 0.30
+	local start = ROOT + Vector3.new(-9, C.TipHeight, 0)
+	local samples = path(start, Vector3.new(30, 0, 0), 0.6)
+	local ev, q = CatchGeometry.bestTip(zones, samples, 0.31, RS.TipPerfect)
+	expect(ev ~= nil and q == "Perfect", "pressed as it passes: Perfect")
+	expect(math.abs((ev :: any).t - 0.30) < 0.02, "at the closest pass")
+	local window = {}
+	for _, smp in samples do
+		if math.abs(smp.t - 0.42) <= RS.TipWindow then
+			table.insert(window, smp)
+		end
+	end
+	local _, late = CatchGeometry.bestTip(zones, window, 0.42, RS.TipPerfect)
+	expect(late == "Clean", "a late press inside the window is Clean")
+	local far = path(ROOT + Vector3.new(-9, 12, 0), Vector3.new(30, 0, 0), 0.6)
+	expect(CatchGeometry.bestTip(zones, far, 0.3, RS.TipPerfect) == nil, "a disc far overhead can't be tipped")
+	local plain = CatchGeometry.zones(body())
+	local over = ROOT + Vector3.new(0, C.TipHeight + 1.4, 0)
+	expect(CatchGeometry.evaluate(plain, over) == nil, "the overhead sphere is tip-only (no catch up there)")
+	expect(CatchGeometry.evaluate(zones, over) ~= nil, "... but a tip reaches it")
+end)
+
+test("tip: the disc pops up out of the hands and keeps a little of its speed", function()
+	local v = CatchGeometry.tipVelocity(Vector3.new(60, -4, 0), FWD)
+	expect(v.Y > 0, "it goes up")
+	local rise = v.Y * v.Y / (2 * DiscConfig.Physics.Gravity)
+	expect(rise > 0.8 and rise < 3, string.format("a small pop (%.2f studs)", rise))
+	expect(v.X > 0 and v.X < 60 * 0.5, "keeps some of its run")
+	-- it comes back down in about as long as the tipper's reset lift keeps them up
+	local discBack = 2 * v.Y / DiscConfig.Physics.Gravity
+	local g = MovementConfig.Gravity
+	local up = RS.TipLift
+	local bodyAir = (up + math.sqrt(up * up + 2 * g * 2)) / g -- from 2 studs up
+	expect(math.abs(discBack - bodyAir) < 0.25, string.format("disc %.2f s vs body %.2f s", discBack, bodyAir))
 end)
 
 return nil

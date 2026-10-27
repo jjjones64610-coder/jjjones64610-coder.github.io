@@ -249,7 +249,9 @@ test("server step check: trust a consistent step, else use the server root", fun
 	local root = P + step * HD.BodyShare
 	local s, ok = ThrowModel.resolveStep(step, P, root + Vector3.new(0.5, 0, 0.3), 0.05, 0)
 	expect(ok and s == step, "within tolerance")
-	local lagged = root + Vector3.new(T.StepCheckBase + 1.0, 0, 0)
+	-- the base tolerance includes how far a pivot-driven body can trail its target
+	local base = T.StepCheckBase + HD.DriveMax / HD.DriveGain
+	local lagged = root + Vector3.new(base + 1.0, 0, 0)
 	local _, noPingOk = ThrowModel.resolveStep(step, P, lagged, 0, 0)
 	local _, lagOk = ThrowModel.resolveStep(step, P, lagged, 0.2, 0)
 	expect(not noPingOk and lagOk, "ping widens the tolerance")

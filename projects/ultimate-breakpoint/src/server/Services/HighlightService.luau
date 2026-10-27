@@ -144,12 +144,16 @@ function HighlightService.onCatch(info: any, lastPass: any, outcomes: { any })
 end
 
 function HighlightService.onTouched(info: any, _lastPass: any)
-	if info.kind == "Bobble" then
+	if info.kind == "Bobble" or (info.kind == "Tip" and not info.defender) then
+		-- an attacker's tip keeps the chain alive for the catch that follows
 		return
 	end
 	local tags: { string } = {}
 	local score = 250
-	if info.kind == "HandBlock" then
+	if info.kind == "Tip" then
+		table.insert(tags, "TIP BLOCK")
+		score = 450
+	elseif info.kind == "HandBlock" then
 		table.insert(tags, "HAND BLOCK")
 		score = 600
 	elseif info.zone == "Dive" then
@@ -208,6 +212,16 @@ function HighlightService.Init(s: any)
 	services = s
 end
 
-function HighlightService.Start() end
+function HighlightService.Start()
+	-- signature moves (Rules/Signatures) are announced to everyone
+	services.MovementService.SignatureHit:Connect(function(id: number, hit: any)
+		-- practice stays private (the player's own banner shows locally)
+		local actor = services.PlayerService.get(id)
+		if actor and actor.role == "Training" then
+			return
+		end
+		HighlightService.broadcast("Signature", id, hit.points, hit.name, { hit.name, "SIGNATURE" })
+	end)
+end
 
 return HighlightService

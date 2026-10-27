@@ -274,6 +274,7 @@ type Candidate = { id: number, box: CatchGeometry.MarkBox }
 local function markerRewind(oneWay: number): number
 	return math.min(CatchGeometry.markerRewind(2 * oneWay) + oneWay, M.RewindMax)
 end
+DefenseService.markerRewind = markerRewind
 
 -- Returns (blockerId, timeIntoFlight, blockPosition) if the release hits a
 -- defender's hands, else nil. Defenders are taken where the thrower saw

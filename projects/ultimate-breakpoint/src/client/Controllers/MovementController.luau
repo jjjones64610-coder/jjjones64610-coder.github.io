@@ -52,6 +52,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementSim = require(Shared.Movement.MovementSim)
 local MovementConfig = require(Shared.Config.Movement)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local Signatures = require(Shared.Rules.Signatures)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
@@ -63,6 +64,7 @@ MovementController.Feedback = Signal.new() -- ({ kind, value?, text? })
 MovementController.Landed = Signal.new() -- (fromDive: boolean, speed: number)
 MovementController.ComboChanged = Signal.new() -- (chain total, last points, event)
 MovementController.ChainEnded = Signal.new() -- (ComboEvaluator.Summary)
+MovementController.SignatureHit = Signal.new() -- (Signatures.Hit) a signature move, recognised locally
 
 local controllers: any
 local player = Players.LocalPlayer
@@ -83,6 +85,13 @@ local modeDirty = false
 local lastTeleport: any = nil
 local pending: { any } = {}
 local combo = ComboEvaluator.newTracker()
+-- signature moves, recognised locally for instant feedback (the server
+-- recognises them again on validated events and pays out)
+local signatures = Signatures.new()
+local lastAirHeight = 0 -- feet above the ground below, while airborne
+-- whether you were in the air at each catch claim (the confirmation comes a
+-- round trip later, often after landing)
+local claimAir: { [string]: { airborne: boolean, height: number, t: number } } = {}
 local lastFacing = Vector3.new(0, 0, -1)
 local lastStep = Vector3.zero
 local lastEnv: MovementSim.Env? = nil
@@ -217,6 +226,7 @@ local function buildEnv(): MovementSim.Env
 		local far = workspace:Raycast(pos, Vector3.new(0, -120, 0), rayParams)
 		if far then
 			local height = math.max(0, pos.Y - standHeight - far.Position.Y)
+			lastAirHeight = height
 			local g = workspace.Gravity
 			ttl = (vel.Y + math.sqrt(math.max(vel.Y * vel.Y + 2 * g * height, 0))) / g
 		end
@@ -274,6 +284,20 @@ local function currentInput(): MovementSim.Input
 	}
 end
 
+-- Feeds the local signature tracker; a completed move pays into the local
+-- chain and is announced at once (the server pays the real points).
+local function feedSignatures(ev: Signatures.Event)
+	for _, hit in Signatures.feed(signatures, ev) do
+		local points, total = ComboEvaluator.signature(combo, hit.name, hit.points, hit.t)
+		MovementController.SignatureHit:Fire(hit)
+		MovementController.ComboChanged:Fire(
+			total,
+			points,
+			{ tech = "Signature", quality = "Perfect", t = hit.t, dir = Vector3.zero, chain = true, info = hit.name }
+		)
+	end
+end
+
 local function queueEvent(e: MovementSim.TechEvent)
 	table.insert(pending, { tech = e.tech, quality = e.quality, dir = e.dir, t = e.t, info = e.info })
 	-- close a timed-out chain first so its end card is never swallowed
@@ -284,6 +308,7 @@ local function queueEvent(e: MovementSim.TechEvent)
 	local points, total = ComboEvaluator.add(combo, e.tech, e.quality, e.t)
 	MovementController.Tech:Fire(e)
 	MovementController.ComboChanged:Fire(total, points, e)
+	feedSignatures({ kind = "Tech", t = e.t, tech = e.tech, quality = e.quality, info = e.info })
 end
 
 -- Queues a technique that another controller detected (ThrowController's
@@ -298,6 +323,17 @@ function MovementController.addTech(tech: string, quality: string, dir: Vector3,
 		chain = ComboEvaluator.active(combo, t) ~= nil,
 		info = info,
 	})
+end
+
+-- CatchController saw you tip a disc in the air: the Tip Reset. Returns
+-- false when the sim refuses it (it already said why).
+function MovementController.tipReset(quality: string, dir: Vector3): boolean
+	local env = lastEnv
+	if not env or not root then
+		return false
+	end
+	local ok = MovementSim.tipReset(sim, env, quality, dir)
+	return ok
 end
 
 function MovementController.noteAerialReach(dir: Vector3)
@@ -333,7 +369,16 @@ function MovementController.contextHint(): { [string]: string }
 	if not env or not root then
 		return {}
 	end
-	return MovementSim.contextHint(sim, currentInput(), env)
+	local hint = MovementSim.contextHint(sim, currentInput(), env)
+	-- a disc about to pass your hands in the air: the Tip Reset
+	if MovementSim.isAirborne(sim) and not sim.holding and controllers.CatchController.tipReady() then
+		hint.Secondary = "TIP RESET"
+	end
+	-- gamepad X swings to the mirror of the current step, not to the left
+	if sim.holding and hint.Cut and controllers.InputController.scheme() == "Gamepad" then
+		hint.Cut = "SWING OTHER SIDE"
+	end
+	return hint
 end
 
 ---------------------------------------------------------------------------
@@ -505,23 +550,43 @@ local function applyLine(c: Model, pos: Vector3, v: Vector3): Vector3
 	return v
 end
 
+-- Where the body should face. Aiming (pivoting, charging, marking) faces
+-- the camera, but never while the body is still sliding: during the catch
+-- slow-down the body keeps facing its travel and turns toward the camera as
+-- it stops, so a deep catch never runs backwards. A reach at speed twists
+-- the body at most REACH_TWIST from travel (PoseController turns the waist
+-- and arm the rest of the way).
+local REACH_TWIST = 75
+
 local function faceTarget(v: Vector3): (Vector3?, boolean)
 	local catch = controllers.CatchController
+	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
+	local speed = v.Magnitude
 	local aiming = sim.holding
 		or controllers.ThrowController.isCharging()
 		or MovementSim.isMarking(sim)
 		or catch.isMarking()
 	if aiming then
-		return controllers.CameraController.forward(), true
+		local cam = controllers.CameraController.forward()
+		local settling = sim.holding and sim.holdPhase ~= "Pivot"
+		if travel and (settling or sim.mode == "DiveSlide" or sim.mode == "Recover") then
+			-- blend toward the camera as the slide runs out of speed
+			local k = math.clamp(1 - speed / 10, 0, 1)
+			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
+			return if blend.Magnitude > 0.5 then blend else travel, true
+		end
+		return cam, true
 	end
 	if sim.mode == "Dive" or sim.mode == "DiveSlide" then
 		return sim.diveDir, false
 	end
-	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
 	if catch.reachActive() then
 		local _, reachDir = catch.reachState()
 		local r = VecMath.flatUnit(reachDir)
 		if r.Magnitude > 0.5 then
+			if travel and speed > MovementConfig.JogSpeed then
+				return VecMath.rotateToward(travel, r, REACH_TWIST), true
+			end
 			local blend = if travel then VecMath.flatUnit(r + travel) else r
 			return if blend.Magnitude > 0.5 then blend else r, true
 		end
@@ -625,6 +690,7 @@ local function frame(dtRaw: number)
 	end
 	if out.landed then
 		MovementController.Landed:Fire(sim.landedFromDive, sim.landingVel.Magnitude)
+		feedSignatures({ kind = "Land", t = now() })
 	end
 
 	local mode = MovementSim.poseMode(sim)
@@ -727,6 +793,8 @@ function MovementController.Start()
 	-- predicted hold: the slow-down starts with the claim, not a round trip later
 	local catch = controllers.CatchController
 	catch.Claimed:Connect(function(discId)
+		local airborne = MovementSim.isAirborne(sim)
+		claimAir[discId] = { airborne = airborne, height = if airborne then lastAirHeight else 0, t = now() }
 		if controllers.ThrowController.isHolding() then
 			return
 		end
@@ -747,6 +815,24 @@ function MovementController.Start()
 	else
 		warn("[MovementController] CatchController.Denied missing; predicted holds expire on a timer")
 	end
+
+	-- signature move inputs from the catch path
+	catch.Tipped:Connect(function(discId: string, defender: boolean)
+		feedSignatures({ kind = "Tip", t = now(), discId = discId, defender = defender })
+	end)
+	catch.Caught:Connect(function(discId: string, interception: boolean)
+		local at = claimAir[discId]
+		claimAir[discId] = nil
+		local airborne = if at then at.airborne else MovementSim.isAirborne(sim)
+		feedSignatures({
+			kind = "Catch",
+			t = if at then at.t else now(),
+			discId = discId,
+			airborne = airborne,
+			height = if at then at.height elseif airborne then lastAirHeight else 0,
+			interception = interception,
+		})
+	end)
 
 	player.CharacterAdded:Connect(setupCharacter)
 	if player.Character then

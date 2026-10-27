@@ -350,6 +350,8 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 	desc.TorsoColor = shirt
 	desc.LeftLegColor = shorts
 	desc.RightLegColor = shorts
+	-- the same standard body as every player (fixed hitbox)
+	services.PlayerService.standardize(desc)
 
 	local ok, model = pcall(function()
 		return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)

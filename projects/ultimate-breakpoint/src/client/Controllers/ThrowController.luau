@@ -72,6 +72,7 @@ local ThrowController = {}
 ThrowController.Released = Signal.new() -- (launch, params)
 ThrowController.Faked = Signal.new()
 ThrowController.Changed = Signal.new()
+ThrowController.ChargeLost = Signal.new() -- a charge was cancelled by landing from the hop
 
 local controllers: any
 local player = Players.LocalPlayer
@@ -170,11 +171,48 @@ local function serverPivot(): Vector3?
 	return controllers.MovementController.pivot()
 end
 
+-- Where the crosshair points: the first thing the camera's centre ray hits
+-- (field, a player, a wall) within AIM_RANGE, else a point AIM_FALLBACK
+-- ahead. The camera sits over the shoulder, so aiming along its yaw would
+-- fly the disc parallel to the crosshair and miss to one side; the throw
+-- yaw is aimed from the release point at this point instead.
+local AIM_RANGE = 220
+local AIM_FALLBACK = 60
+local aimRay = RaycastParams.new()
+aimRay.FilterType = Enum.RaycastFilterType.Exclude
+
+local function crosshairPoint(): Vector3
+	local cf = controllers.CameraController.getCFrame()
+	local list: { Instance } = {}
+	if player.Character then
+		table.insert(list, player.Character)
+	end
+	local visuals = workspace:FindFirstChild("UBVisuals")
+	if visuals then
+		table.insert(list, visuals)
+	end
+	aimRay.FilterDescendantsInstances = list
+	local hit = workspace:Raycast(cf.Position, cf.LookVector * AIM_RANGE, aimRay)
+	if hit then
+		return hit.Position
+	end
+	return cf.Position + cf.LookVector * AIM_FALLBACK
+end
+
+local function yawToward(from: Vector3, to: Vector3, fallback: number): number
+	local d = VecMath.flat(to - from)
+	if d.Magnitude < 2 then
+		return fallback
+	end
+	return math.atan2(-d.X, -d.Z)
+end
+
 local function currentParams(holdTime: number): ThrowModel.Params
 	local yaw = controllers.CameraController.getYaw()
 	local pitch = controllers.CameraController.getPitch() + AIM_OFFSET
 	local sol = state.leadSolution
-	if state.leadLock and sol then
+	local locked = state.leadLock and sol ~= nil
+	if locked and sol then
 		yaw = sol.params.yaw
 		pitch = sol.params.pitch
 	end
@@ -182,6 +220,29 @@ local function currentParams(holdTime: number): ThrowModel.Params
 	local sim = mc.sim()
 	local height = releaseHeight()
 	local pivot = serverPivot()
+	local root = mc.root()
+	if not locked and root then
+		-- converge on the crosshair (the release point depends on the yaw,
+		-- so two passes settle it)
+		local aim = crosshairPoint()
+		local camYaw = yaw
+		for _ = 1, 2 do
+			local probe: ThrowModel.Params = {
+				throwType = state.throwType,
+				yaw = yaw,
+				pitch = pitch,
+				holdTime = holdTime,
+				bank = 0,
+				height = height,
+				offBalance = false,
+				groundThrow = false,
+				leftHanded = leftHanded(),
+				pivot = pivot,
+				step = if pivot then mc.step() else nil,
+			}
+			yaw = yawToward(ThrowModel.releasePosition(probe, root.Position), aim, camYaw)
+		end
+	end
 	return {
 		throwType = state.throwType,
 		yaw = yaw,
@@ -360,6 +421,7 @@ local function cancelCharge()
 		state.charging = false
 		Net.event("ThrowCharge"):FireServer(false)
 		ThrowController.Changed:Fire()
+		ThrowController.ChargeLost:Fire()
 	end
 end
 

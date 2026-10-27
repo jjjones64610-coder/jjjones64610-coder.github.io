@@ -49,6 +49,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Hitbox = require(Shared.Config.Hitbox)
 local ProgressionConfig = require(Shared.Config.Progression)
 local TeamsConfig = require(Shared.Config.Teams)
 local Actors = require(Shared.Actors)
@@ -116,6 +117,10 @@ type Visual = {
 	spin: number,
 	predicted: DiscPhysics.State?,
 	predictedT0: number,
+	tipPred: DiscPhysics.State?, -- your own tip: the disc's predicted pop (until the server's segment)
+	tipPredT0: number,
+	tipPredFlight: number,
+	tipPredUntil: number,
 	predictedStop: number,
 	predictedFlightId: number,
 	catchStart: number,
@@ -243,6 +248,10 @@ local function create(folder: Configuration): Visual
 		spin = 0,
 		predicted = nil,
 		predictedT0 = 0,
+		tipPred = nil,
+		tipPredT0 = 0,
+		tipPredFlight = -1,
+		tipPredUntil = 0,
 		predictedStop = math.huge,
 		predictedFlightId = -1,
 		catchStart = 0,
@@ -447,14 +456,16 @@ local function displayedZones(model: Model, root: BasePart, t: number): { CatchG
 	local techDir = model:GetAttribute("TechDir")
 	local facing = VecMath.flatUnit(root.CFrame.LookVector)
 	local diving = ms == "Dive" or ms == "DiveSlide"
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	return CatchGeometry.zones({
-		root = root.Position,
+		root = Hitbox.root(root.Position, Hitbox.standHeightOf(humanoid, root)),
 		facing = facing,
 		reaching = type(reachT) == "number" and t - reachT <= DiscConfig.Catch.ReachWindow + 0.1,
 		reachDir = if typeof(reachDir) == "Vector3" then reachDir else nil,
 		diving = diving,
 		diveDir = if diving and typeof(techDir) == "Vector3" and techDir.Magnitude > 0.5 then techDir else facing,
 		sliding = ms == "Slide",
+		prone = ms == "DiveSlide" or ms == "Recover",
 	})
 end
 
@@ -464,7 +475,7 @@ local function mayCatch(model: Model, folder: Configuration): boolean
 		return false
 	end
 	local id = Actors.idOf(model)
-	if id == nil or id == folder:GetAttribute("ThrowerId") then
+	if id == nil or (id == folder:GetAttribute("ThrowerId") and folder:GetAttribute("Touched") ~= true) then
 		return false
 	end
 	if folder:GetAttribute("Context") == "Training" then
@@ -516,6 +527,21 @@ local function target(v: Visual, mode: string, holder: number, t: number, dt: nu
 		local s = v.sim
 		if not s then
 			return { cf = nil, trail = false, shadow = false }
+		end
+		-- your own tip: draw the predicted pop until the server's segment
+		-- (a new FlightId) replaces it, or the tip was refused
+		local tp = v.tipPred
+		if tp then
+			if v.tipPredFlight == v.flightId and t < v.tipPredUntil then
+				local x, y, z = DiscPhysics.positionAt(tp, math.max(0, t - v.tipPredT0))
+				local pos = Vector3.new(x, math.max(y, v.groundY + DiscConfig.Physics.GroundContact), z)
+				v.spinAngle += tp.spin * dt
+				return { cf = orient(pos, DiscPhysics.normal(tp), v.spinAngle), trail = true, shadow = true }
+			end
+			v.tipPred = nil
+			if v.tipPredFlight == v.flightId then
+				v.pendingBlend = DENY_EASE -- refused: ease back onto the flight
+			end
 		end
 		local cf, landed = flightCFrame(v, s, t, dt)
 		local flightPos = cf.Position
@@ -738,6 +764,23 @@ function DiscRenderer.predictThrow(id: string, state: DiscPhysics.State, t0: num
 	-- the server flies the throw with the disc's own wind (Wind attribute)
 	local w = v.folder:GetAttribute("Wind")
 	v.wind = if typeof(w) == "Vector3" then { x = w.X, y = w.Y, z = w.Z } else { x = 0, y = 0, z = 0 }
+end
+
+-- Your own tip: draw the disc's predicted pop (from contact time t0) until
+-- the server's deflection arrives, at most TIP_PREDICT + 2 x ping.
+local TIP_PREDICT = 0.35
+function DiscRenderer.predictTip(id: string, state: DiscPhysics.State, t0: number)
+	local v = visuals[id]
+	if not v or v.folder:GetAttribute("Mode") ~= "Flight" then
+		return
+	end
+	v.tipPred = DiscPhysics.copy(state)
+	v.tipPredT0 = t0
+	v.tipPredFlight = v.flightId
+	v.tipPredUntil = now() + TIP_PREDICT + 2 * myPing()
+	v.catchUntil = 0
+	v.observer = nil
+	v.pendingBlend = BLEND_TIME
 end
 
 -- Your own claim: ease the disc into your hand until the server answers.

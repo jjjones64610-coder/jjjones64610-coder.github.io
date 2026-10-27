@@ -190,10 +190,13 @@ export type State = {
 	groundLostAt: number?,
 	takeoffSpeed: number,
 	airRedirectUsed: boolean,
-	airDiveUsed: boolean,
+	airDiveUsed: boolean, -- also set by a ground layout: another layout before landing needs a reset
 	aerialReachUsed: boolean,
 	rebounds: number,
 	lastWall: string?,
+	tipsThisAir: number, -- tip resets this airtime (Reset.MaxTipsPerAir)
+	charged: boolean, -- the next air move follows a reset (Charged)
+	lastResetAt: number,
 
 	landingUntil: number,
 	landedAt: number,
@@ -254,6 +257,7 @@ local RO = Config.RollOut
 local AR = Config.AirRedirect
 local PL = Config.PrecisionLanding
 local WR = Config.WallRebound
+local RS = Config.Reset
 local HD = Config.Holding
 local MK = Config.Marking
 
@@ -269,6 +273,7 @@ local SHORT: { [string]: string } = {
 	Slide = "SLIDE",
 	FakeCommit = "FAKE",
 	PivotSwing = "SWING",
+	TipReset = "TIP",
 }
 
 -- Techniques whose follow-up Burst / Layout counts as a Perfect chain.
@@ -360,6 +365,9 @@ function MovementSim.new(now: number?): State
 		aerialReachUsed = false,
 		rebounds = 0,
 		lastWall = nil,
+		tipsThisAir = 0,
+		charged = false,
+		lastResetAt = -math.huge,
 
 		landingUntil = 0,
 		landedAt = -math.huge,
@@ -454,6 +462,13 @@ end
 local function setCooldown(s: State, tech: string)
 	local cd = (Config.TechCooldowns :: any)[tech] or 0
 	s.ready[tech] = s.now + cd
+end
+
+-- A reset refunds these techniques' cooldowns at once.
+local function refund(s: State, techs: { string })
+	for _, tech in techs do
+		s.ready[tech] = s.now
+	end
 end
 
 local function spend(s: State, cost: number)
@@ -571,6 +586,23 @@ local function velDirOr(s: State, fallback: Vector3): Vector3
 		return s.vel / speed
 	end
 	return fallback
+end
+
+-- Above jog speed, momentum limits how far an explosive technique can bend
+-- the running line: returns the direction actually taken (at most maxTurn
+-- degrees from the current velocity) and how much of maxTurn it used (0..1).
+-- At low speed (standing, inside a plant) any direction is allowed.
+local function bendLine(s: State, want: Vector3, maxTurn: number): (Vector3, number)
+	local speed = VecMath.flat(s.vel).Magnitude
+	if speed <= Config.JogSpeed then
+		return want, 0
+	end
+	local cur = VecMath.flat(s.vel) / speed
+	local angle = VecMath.flatAngle(cur, want)
+	if angle <= maxTurn then
+		return want, angle / maxTurn
+	end
+	return VecMath.rotateToward(cur, want, maxTurn), 1
 end
 
 local function facingOr(env: Env): Vector3
@@ -874,7 +906,10 @@ local function updateHolding(s: State, input: Input, env: Env, dt: number)
 	if dist < 1e-3 then
 		s.vel = Vector3.zero
 	else
-		local sp = math.min(dist * HD.DriveGain, HD.DriveMax, dist / math.max(dt, 1e-3))
+		local now = s.now
+		local fast = now < s.swingUntil or now < s.fakeUntil + HD.FakeStepBack
+		local cap = if fast then HD.DriveMaxFast else HD.DriveMax
+		local sp = math.min(dist * HD.DriveGain, cap, dist / math.max(dt, 1e-3))
 		s.vel = d * (sp / dist)
 	end
 end
@@ -899,13 +934,15 @@ local function land(s: State)
 	s.aerialReachUsed = false
 	s.rebounds = 0
 	s.lastWall = nil
+	s.tipsThisAir = 0
+	s.charged = false
 	s.landedAt = now
 	s.landedFromDive = fromDive
 	s.landingVel = s.vel
 	s.groundLostAt = nil
 
 	if s.holding and s.holdHopped then
-		feedback(s, "HopLanded", nil, "TRAVEL — RELEASE BEFORE YOU LAND")
+		feedback(s, "HopLanded", nil, "CHARGE LOST — RELEASE BEFORE YOU LAND")
 	end
 
 	local armed = s.precisionArmedAt
@@ -918,12 +955,27 @@ local function land(s: State)
 				s.vel = s.vel * (RO.Retention :: any)[q]
 				enterRecover(s, RO.RecoverTime)
 				emit(s, "PrecisionLanding", q, velDirOr(s, s.diveDir), "RollOut")
+				if q == Q.Perfect then
+					refund(s, RS.RollOutRefund)
+				end
 			else
 				s.vel = s.vel * (PL.Retention :: any)[q]
 				setMode(s, "Ground")
-				emit(s, "PrecisionLanding", q, velDirOr(s, FORWARD), nil)
+				-- Landing Reset: a Perfect landing refunds Burst and Layout
+				emit(s, "PrecisionLanding", q, velDirOr(s, FORWARD), if q == Q.Perfect then "Reset" else nil)
+				if q == Q.Perfect then
+					refund(s, RS.LandingRefund)
+				end
 			end
 			feedback(s, "LandingOffset", offset, landingText(offset))
+			if q == Q.Perfect then
+				feedback(
+					s,
+					"Reset",
+					nil,
+					if fromDive then "LANDING RESET — LAYOUT READY" else "LANDING RESET — BURST + LAYOUT READY"
+				)
+			end
 			return
 		elseif offset <= PL.ArmWindow + 0.1 and not fromDive then
 			-- armed early: an unlabelled soft landing (no steering penalty)
@@ -1079,7 +1131,7 @@ local function cutAgainstLine(
 	since: number,
 	gradeSpeed: number
 ): (boolean, string?)
-	if s.now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+	if s.now < s.soldUntil and angle <= SC.MaxAngle and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
 		return pressSnapCut(s, dir, angle, since, math.max(gradeSpeed, SC.MinSpeed), true)
 	end
 	if angle <= SC.MaxAngle then
@@ -1123,6 +1175,13 @@ local function doBurst(s: State, dir: Vector3, free: boolean, forcedQuality: str
 		bs = math.clamp(base * BS.SpeedMult, BS.MinSpeed, BS.MaxSpeed)
 	end
 	if not free then
+		-- a burst accelerates along (or slightly off) the line; reversing a
+		-- sprint takes a plant first
+		local used: number
+		dir, used = bendLine(s, dir, BS.MaxTurn)
+		bs *= 1 - BS.TurnPenalty * used
+	end
+	if not free then
 		spend(s, BS.Cost)
 	end
 	setCooldown(s, "BurstStep")
@@ -1154,6 +1213,11 @@ local function tryPop(s: State, action: Action, dir: Vector3, hasDir: boolean, e
 	setMode(s, "Ground")
 	s.recoverUntil = 0
 	emit(s, "RecoveryChain", q, d, action)
+	if q == Q.Perfect then
+		-- Recovery Reset: a Perfect pop-up refunds the Layout (Double Layout)
+		refund(s, RS.RecoveryRefund)
+		feedback(s, "Reset", nil, "RECOVERY RESET — LAYOUT READY")
+	end
 	if action == "Jump" then
 		s.vel = if hasDir then d * out else Vector3.zero
 		enterAir(s)
@@ -1251,7 +1315,12 @@ local function pressJump(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 			s.vel = nv
 			s.rebounds += 1
 			s.lastWall = env.wallId
+			-- Wall Reset: both air moves come back, the next one Charged
 			s.airRedirectUsed = false
+			s.airDiveUsed = false
+			s.charged = true
+			s.lastResetAt = s.now
+			refund(s, RS.AirRefund)
 			enterAir(s)
 			queueJump(s, WR.Vertical)
 			emit(s, "WallRebound", q, velDirOr(s, n), nil)
@@ -1288,15 +1357,18 @@ local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: En
 	else
 		q = Q.Clean
 	end
+	local charged = s.charged
 	local newVel: Vector3
 	if speed < AR.MinSpeed then
 		newVel = dir * AR.StillSpeed
 	else
 		local nd = VecMath.rotateToward(s.vel / speed, dir, AR.MaxAngle)
-		newVel = nd * (speed * (AR.Retention :: any)[q])
+		local keep = if charged then RS.ChargedRetention else (AR.Retention :: any)[q]
+		newVel = nd * (speed * keep)
 	end
 	spend(s, AR.Cost)
 	s.airRedirectUsed = true
+	s.charged = false
 	s.vel = newVel
 	if s.mode == "Dive" then
 		s.diveDir = velDirOr(s, s.diveDir)
@@ -1304,7 +1376,7 @@ local function pressAirRedirect(s: State, dir: Vector3, hasDir: boolean, env: En
 	if vy < AR.MinVertical then
 		queueVertical(s, AR.MinVertical)
 	end
-	emit(s, "AirRedirect", q, velDirOr(s, dir), nil)
+	emit(s, "AirRedirect", q, velDirOr(s, dir), if charged then "Charged" else nil)
 	return true, nil
 end
 
@@ -1381,8 +1453,9 @@ local function pressCut(s: State, dir: Vector3, hasDir: boolean, env: Env): (boo
 		return refuse(s, "Speed", "NEED SPEED", MC.MinSpeed)
 	end
 	local angle = VecMath.flatAngle(lineDir, dir)
-	-- A cut out of a Fake Commit's sold window is always allowed.
-	if now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+	-- A cut out of a Fake Commit's sold window is allowed up to the normal
+	-- cut angle (further back is a plant, below).
+	if now < s.soldUntil and angle <= SC.MaxAngle and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
 		return pressSnapCut(s, dir, angle, since, math.max(gradeSpeed, SC.MinSpeed), true)
 	end
 	if gradeSpeed < SC.MinSpeed then
@@ -1519,11 +1592,11 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 	if s.mode == "DiveSlide" then
 		return refuse(s, "Context", "GET UP FIRST")
 	end
-	if s.mode == "Dive" or (s.mode == "Air" and s.airDiveUsed) then
+	if (s.mode == "Dive" or s.mode == "Air") and s.airDiveUsed then
 		return refuse(s, "Used", "ONE PER JUMP")
 	end
 	local groundish = isGrounded(s) or s.mode == "Slide"
-	local air = s.mode == "Air"
+	local air = s.mode == "Air" or s.mode == "Dive"
 	if not groundish and not air then
 		return refuse(s, "Context")
 	end
@@ -1536,6 +1609,9 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 	end
 	local speed = s.vel.Magnitude
 	local d = if hasDir then dir else velDirOr(s, facingOr(env))
+	if groundish then
+		d = bendLine(s, d, DV.MaxTurn)
+	end
 	local key = s.lastKeyTech
 	local chained = key ~= nil and DIVE_CHAIN[key :: string] == true and now - s.lastKeyAt <= DV.ChainWindow
 	local q: string
@@ -1560,17 +1636,22 @@ local function pressDive(s: State, dir: Vector3, hasDir: boolean, env: Env): (bo
 		setMode(s, "Dive")
 		s.airStart = now
 		s.groundLostAt = nil
+		s.airDiveUsed = true -- a second layout before landing needs a reset
 		queueJump(s, DV.GroundVertical)
 	else
-		local nv = VecMath.clampMagnitude(s.vel + d * DV.AirBoost, math.max(DV.AirMax, speed))
+		local charged = s.charged
+		local boost = DV.AirBoost + (if charged then RS.ChargedLayoutBoost else 0)
+		local cap = math.max(DV.AirMax + (if charged then RS.ChargedLayoutBoost else 0), speed)
+		local nv = VecMath.clampMagnitude(s.vel + d * boost, math.min(cap, Config.HardCap))
 		s.vel = nv
 		s.airDiveUsed = true
+		s.charged = false
 		setMode(s, "Dive")
 		queueVertical(s, math.min(env.actualVel.Y + DV.AirVertical, DV.MaxVertical))
 	end
 	s.takeoffSpeed = s.vel.Magnitude
 	s.diveDir = velDirOr(s, d)
-	emit(s, "Dive", q, s.diveDir, if air then "Air" else nil)
+	emit(s, "Dive", q, s.diveDir, if groundish then nil else "Air")
 	return true, nil
 end
 
@@ -1789,6 +1870,41 @@ function MovementSim.noteAerialReach(s: State, dir: Vector3): boolean
 	return false
 end
 
+-- Tip Reset: the catch controller saw the player tip a disc in the air
+-- (judged on the disc's closest pass, Reset.TipWindow / TipPerfect). Both air
+-- moves come back, the next one is Charged, and the player gets a lift so
+-- there is time to use them. Returns false (+ reason) when no reset is
+-- allowed (on the ground, two tips already this airtime, cooldown).
+function MovementSim.tipReset(s: State, env: Env, quality: string, dir: Vector3?): (boolean, string?)
+	if s.holding or s.frozen then
+		return false, "Context"
+	end
+	if not (s.mode == "Air" or s.mode == "Dive") then
+		return refuse(s, "Context", "TIP IN THE AIR")
+	end
+	if s.tipsThisAir >= RS.MaxTipsPerAir then
+		return refuse(s, "Used", "TWO TIPS PER JUMP")
+	end
+	local left = cooldownLeft(s, "TipReset")
+	if left > 0 then
+		return refuse(s, "Cooldown", cooldownText("TipReset", left), left, "TipReset")
+	end
+	local q = if quality == Q.Perfect then Q.Perfect else Q.Clean
+	setCooldown(s, "TipReset")
+	s.tipsThisAir += 1
+	s.airRedirectUsed = false
+	s.airDiveUsed = false
+	refund(s, RS.AirRefund)
+	s.aerialReachUsed = false
+	s.charged = true
+	s.lastResetAt = s.now
+	local lift = if q == Q.Perfect then RS.TipLiftPerfect else RS.TipLift
+	queueVertical(s, math.max(env.actualVel.Y, lift))
+	emit(s, "TipReset", q, velDirOr(s, dir or facingOr(env)), nil)
+	feedback(s, "Reset", nil, if q == Q.Perfect then "PERFECT TIP — RESET" else "TIP RESET — AIR MOVES BACK")
+	return true, nil
+end
+
 function MovementSim.setFrozen(s: State, frozen: boolean)
 	s.frozen = frozen
 	if frozen then
@@ -1926,13 +2042,13 @@ local function cutHint(s: State, input: Input, env: Env): string?
 	if not hasDir then
 		return if gradeSpeed >= MC.MinSpeed then "PLANT" else nil
 	end
-	if s.now < s.soldUntil and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
+	local angle = VecMath.flatAngle(lineDir, dir)
+	if s.now < s.soldUntil and angle <= SC.MaxAngle and VecMath.flatAngle(s.soldDir, dir) >= FC.SoldMinAngle then
 		return "SOLD CUT"
 	end
 	if gradeSpeed < SC.MinSpeed then
 		return "SIDE STEP"
 	end
-	local angle = VecMath.flatAngle(lineDir, dir)
 	if angle < FC.MaxAngle then
 		return "FAKE COMMIT"
 	end

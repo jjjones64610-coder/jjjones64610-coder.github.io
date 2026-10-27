@@ -9,11 +9,20 @@
 -- the goal line lands around the receivers' brick, a Mini pull can reach the
 -- end zone, and light touches (~0.1-0.2 s holds) stay short. tests/disc_spec
 -- encodes this; tests/flight_table prints the numbers.
+--
+-- Tempo: the real-world model above flies a mid-range throw at about a
+-- sprinter's speed, which reads as a floaty balloon. Every flight therefore
+-- runs TEMPO times faster: the same shapes and ranges in studs, flight times
+-- divided by TEMPO (speeds and spin x TEMPO, accelerations x TEMPO^2). Wind,
+-- deflection and bobble velocities scale the same way, so nothing changes
+-- shape - a 110-stud backhand just arrives in ~2.7 s instead of ~4.1 s.
+local TEMPO = 1.5
 
 local Disc = {
+	Tempo = TEMPO,
 	Physics = {
 		Dt = 1 / 120, -- fixed simulation step, identical on client and server
-		Gravity = 29.4, -- studs/s^2 (9.81 m/s^2 * 3)
+		Gravity = 29.4 * TEMPO * TEMPO, -- studs/s^2 (9.81 m/s^2 * 3, at TEMPO)
 		AirK = 0.0665, -- 0.5 * rho * area / mass, per stud
 		CL0 = 0.15,
 		CLa = 1.4, -- per radian
@@ -25,8 +34,8 @@ local Disc = {
 		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
 		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
 		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
-		SpinDecay = 0.04, -- per second
-		MinSpin = 8,
+		SpinDecay = 0.04 * TEMPO, -- per second
+		MinSpin = 8 * TEMPO,
 		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
 		GroundContact = 0.14, -- disc centre height that counts as touching the ground
 		MaxFlightTime = 9,
@@ -34,7 +43,7 @@ local Disc = {
 	},
 
 	Throw = {
-		SpinBase = 50, -- rad/s (~8 rev/s)
+		SpinBase = 50 * TEMPO, -- rad/s (~8 rev/s at real tempo)
 		ChargeTime = 0.55, -- seconds of holding to reach full power
 		PerfectWindow = 0.10, -- release within [ChargeTime, ChargeTime + PerfectWindow] = Perfect
 		OverchargeDecay = 0.8, -- spin factor lost per second held beyond the window
@@ -48,8 +57,8 @@ local Disc = {
 		MovingSpinPenalty = 0.85,
 		ThrowerVelocityCarry = 0.45, -- share of the run-up added to the disc (no pivot yet)
 		SwingSpinPenalty = 0.9, -- releasing mid Quick Swing costs 10% spin (no power cap)
-		MinSpeed = 28,
-		MaxSpeed = 88, -- sized for the Normal field (see the header)
+		MinSpeed = 28 * TEMPO,
+		MaxSpeed = 88 * TEMPO, -- sized for the Normal field (see the header)
 		PowerCurve = 0.85,
 		BankRange = 35, -- degrees of player-controlled bank either side
 		BankSteps = 7, -- discrete bank positions for keyboard/gamepad (-3..3)
@@ -182,7 +191,7 @@ local Disc = {
 		SlideDrop = 1.4, -- slide lowers the secure zone this much
 		ShoulderHeight = 1.5,
 		ShoulderWidth = 1.0,
-		BobbleSpeed = 95, -- fingertip catch of a disc faster than this bobbles (disc speed only)
+		BobbleSpeed = 95 * TEMPO, -- fingertip catch of a disc faster than this bobbles (disc speed only)
 		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
 		ContestWindow = 0.04, -- claims this close in time are contested
 		ResolveDelay = 0.04, -- server waits this long to collect competing claims
@@ -204,10 +213,20 @@ local Disc = {
 		ClientRootMax = 8,
 		ClientRootLead = 0.08,
 		PickupRadius = 3.5,
-		BobbleUp = 16,
+		BobbleUp = 16 * TEMPO,
 		BobbleCarry = 0.25,
 		BlockCarry = 0.18,
-		BlockDown = -6,
+		BlockDown = -6 * TEMPO,
+		-- Tip (the Tip Reset): an airborne player taps the disc up through
+		-- their hands. The Tip zone is a hands-up sphere over the head, on top
+		-- of the normal zones. The disc pops ~1.5 studs and comes back down in
+		-- ~0.4 s - about as long as the tipper's reset lift keeps them up.
+		TipHeight = 3.1, -- Tip sphere centre above the hitbox root
+		TipRadius = 1.9,
+		TipUp = 14, -- vertical speed of the popped disc
+		TipCarry = 0.25, -- share of the disc's velocity it keeps
+		TipPush = 4, -- plus this much along the tipper's facing
+		TipSpin = 10 * TEMPO,
 	},
 
 	-- Marker hand zones (for hand blocks on release). The box is centred on the

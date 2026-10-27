@@ -33,6 +33,15 @@
 	contact time (DiscService.deflect), so every client sees it continue from
 	the touch instead of rewinding. The disc stays live; the toucher may not
 	re-claim it for a moment.
+
+	Tips (the Tip Reset): an airborne player presses Secondary as the disc
+	passes their hands; the client sends a claim of kind "Tip" with the press
+	time. The server judges it on the disc's closest pass within
+	Reset.TipWindow of the press (CatchGeometry.bestTip, tip zones incl. the
+	hands-up sphere) and resolves it with the other claims. A winning tip pops
+	the disc up out of the tipper's hands (CatchGeometry.tipVelocity), counts
+	as a touch for the rules (a Tip for the throwing team, a Block for the
+	defence) and lets MovementService accept the tipper's TipReset technique.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -41,11 +50,13 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 local Actors = require(Shared.Actors)
 local Net = require(Shared.Net)
 
 local C = DiscConfig.Catch
+local RS = MovementConfig.Reset
 
 -- quality window sampling: first contact + QualitySamples steps
 local SAMPLE_DT = C.QualityWindow / math.max(C.QualitySamples, 1)
@@ -61,6 +72,9 @@ local services: any
 type ReachState = { at: number, dir: Vector3 }
 local reaches: { [number]: ReachState } = {}
 local lastClaim: { [number]: number } = {}
+-- the latest tip claim per actor: "pending" until resolved, then "ok" / "denied"
+type TipState = { t: number, discId: string, state: string }
+local tips: { [number]: TipState } = {}
 
 local function now(): number
 	return Net.now()
@@ -106,13 +120,14 @@ local function bodyFor(
 		diveDir = if typeof(td) == "Vector3" and (td :: Vector3).Magnitude > 0.5 then td :: Vector3 else facing
 	end
 	return {
-		root = body,
+		root = Hitbox.root(body, services.MovementService.standHeight(actorId)),
 		facing = facing,
 		reaching = reaching,
 		reachDir = dir,
 		diving = diving,
 		diveDir = diveDir,
 		sliding = services.MovementService.isSliding(actorId),
+		prone = services.MovementService.isOnGroundAfterLayout(actorId),
 	}
 end
 
@@ -137,6 +152,20 @@ local function pathAfter(d: any, t: number): { CatchGeometry.PathSample }
 	return samples
 end
 
+-- The disc's path from t0 to t1 at the simulation step.
+local function pathWindow(d: any, t0: number, t1: number): { CatchGeometry.PathSample }
+	local samples: { CatchGeometry.PathSample } = {}
+	local n = math.clamp(math.ceil((t1 - t0) / SAMPLE_DT), 1, 64)
+	for k = 0, n do
+		local tk = t0 + (t1 - t0) * k / n
+		local p = services.DiscService.positionAt(d, tk)
+		if p then
+			table.insert(samples, { t = tk, pos = p })
+		end
+	end
+	return samples
+end
+
 -- Disc velocity at the start of a sampled path (falls back to the live flight).
 local function velocityOf(d: any, samples: { CatchGeometry.PathSample }): Vector3
 	local a, b = samples[1], samples[2]
@@ -153,11 +182,16 @@ local function addClaim(
 	t: number,
 	ev: CatchGeometry.Evaluation,
 	discVel: Vector3,
-	body: Vector3
+	body: Vector3,
+	tip: boolean?
 )
 	local discPos = services.DiscService.positionAt(d, t)
 	for _, c in d.claims do
 		if c.id == actorId then
+			if tip then
+				-- the player chose to tip: that intent wins over a catch claim
+				c.tip = true
+			end
 			-- a repeated claim: the earliest touch orders it, the deepest
 			-- point of either window is its quality
 			if ev.depth < c.depth - 1e-6 then
@@ -183,6 +217,7 @@ local function addClaim(
 		discVel = discVel,
 		discPos = discPos,
 		body = body,
+		tip = tip == true,
 	})
 	if d.resolveAt == nil then
 		d.resolveAt = now() + C.ResolveDelay
@@ -242,8 +277,34 @@ function CatchingService.claim(
 			bodyVel = cv
 		end
 	end
-	local zones = CatchGeometry.zones(bodyFor(actorId, body, facingOf(root), reachDir, t, ping))
 	local slack = if actor.isBot then 0 else CatchGeometry.slack(ping, serverVel.Magnitude)
+	if _kind == "Tip" then
+		-- airborne only: the client says it is in the air (its jump reached
+		-- us before this claim), or our own lagging view agrees
+		local track = services.MovementService.track(actorId)
+		local airborne = track ~= nil
+			and (
+				track.mode == "Air"
+				or track.mode == "Dive"
+				or not track.grounded
+				or t - track.lastAirborneAt <= 0.25 + ping
+			)
+		if not airborne then
+			return false
+		end
+		local tipZones = CatchGeometry.tipZones(bodyFor(actorId, body, facingOf(root), reachDir, t, ping))
+		local window = pathWindow(d, t - RS.TipWindow, t + RS.TipWindow)
+		local ev = CatchGeometry.bestTip(tipZones, window, t, RS.TipPerfect, slack)
+		if not ev then
+			return false
+		end
+		local at = ev.t or t
+		local samples = pathAfter(d, at)
+		addClaim(d, actorId, actor.team, at, ev, velocityOf(d, samples), body, true)
+		tips[actorId] = { t = t, discId = d.id, state = "pending" }
+		return true
+	end
+	local zones = CatchGeometry.zones(bodyFor(actorId, body, facingOf(root), reachDir, t, ping))
 	local samples = pathAfter(d, t)
 	local ev = CatchGeometry.bestOverPath(zones, samples, t, bodyVel, slack)
 	if not ev then
@@ -288,10 +349,20 @@ local function answer(actorId: number, d: any, accepted: boolean, result: string
 	end
 end
 
+local function settleTip(actorId: number, d: any, ok: boolean)
+	local tip = tips[actorId]
+	if tip and tip.discId == d.id and tip.state == "pending" then
+		tip.state = if ok then "ok" else "denied"
+	end
+end
+
 local function notifyClaimers(d: any, winnerId: number?, result: string)
 	for _, c in d.claims do
 		local mine = c.id == winnerId
 		answer(c.id, d, mine and result == "Catch", if mine then result else "Lost")
+		if c.tip then
+			settleTip(c.id, d, mine and result == "Tip")
+		end
 	end
 end
 
@@ -303,6 +374,9 @@ function CatchingService.discard(d: any)
 	d.resolveAt = nil
 	for _, c in claims do
 		answer(c.id, d, false, "Denied")
+		if c.tip then
+			settleTip(c.id, d, false)
+		end
 	end
 end
 
@@ -330,12 +404,32 @@ function CatchingService.resolve(d: any)
 	local discPos: Vector3 = w.discPos or services.DiscService.positionAt(d, w.t) or body
 	local discVel: Vector3 = w.discVel or services.DiscService.velocity(d)
 	local isDefender = d.throwerTeam ~= nil and d.throwerTeam ~= "" and w.team ~= d.throwerTeam and not d.pull
-	local outcome = CatchGeometry.outcome(resolution, isDefender)
+	local outcome = if w.tip then "Tip" else CatchGeometry.outcome(resolution, isDefender)
 
 	notifyClaimers(d, w.id, outcome)
 	local claims = d.claims
 	d.claims = {}
 	d.resolveAt = nil
+
+	if outcome == "Tip" then
+		-- the disc pops up out of the tipper's hands; the tipper may re-catch
+		-- it after the toucher lock (the Reset Grab)
+		local newVel = CatchGeometry.tipVelocity(discVel, facingOf(root))
+		local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
+		services.DiscService.deflect(d, pos, newVel, Vector3.new(0, 1, 0), C.TipSpin, w.t, w.id)
+		Net.event("Effect"):FireAllClients("Tip", discPos, w.id, w.quality, "Tip")
+		services.MovementService.noteTip(w.id, d.id, isDefender, w.t)
+		d.handler.onTouched(d, {
+			id = w.id,
+			team = w.team,
+			kind = "Tip",
+			pos = discPos,
+			zone = "Tip",
+			reason = "Tip",
+			defender = isDefender,
+		})
+		return
+	end
 
 	if outcome == "Catch" then
 		local track = services.MovementService.track(w.id)
@@ -343,6 +437,8 @@ function CatchingService.resolve(d: any)
 		local jumpOrigin = if track then track.lastGroundedPos else body
 		services.DiscService.giveTo(d, w.id)
 		Net.event("Effect"):FireAllClients("Catch", discPos, w.id, w.quality, w.zone)
+		-- signature moves first: their points join the chain this catch converts
+		services.MovementService.noteCatch(w.id, d.id, isDefender, w.t)
 		d.handler.onCaught(d, {
 			id = w.id,
 			team = w.team,
@@ -364,18 +460,27 @@ function CatchingService.resolve(d: any)
 	-- deflections keep the disc alive, continuing from the contact
 	local away = VecMath.flatUnit(discPos - body)
 	local newVel: Vector3
+	local tempo = DiscConfig.Tempo
 	if outcome == "Block" then
-		newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + away * 6
+		newVel = discVel * C.BlockCarry + Vector3.new(0, C.BlockDown, 0) + away * (6 * tempo)
 	else
-		newVel = discVel * C.BobbleCarry + Vector3.new(0, C.BobbleUp, 0) + away * 2
+		newVel = discVel * C.BobbleCarry + Vector3.new(0, C.BobbleUp, 0) + away * (2 * tempo)
 	end
 	local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
-	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12, w.t, w.id)
+	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12 * tempo, w.t, w.id)
 	Net.event("Effect"):FireAllClients(outcome, discPos, w.id, w.quality, w.zone)
 	d.handler.onTouched(
 		d,
 		{ id = w.id, team = w.team, kind = outcome, pos = discPos, zone = w.zone, reason = resolution.reason }
 	)
+end
+
+-- Did this actor send a tip claim around ts that has not been denied? (The
+-- TipReset technique usually arrives right behind the claim, before it is
+-- resolved.)
+function CatchingService.recentTip(actorId: number, ts: number, window: number): boolean
+	local tip = tips[actorId]
+	return tip ~= nil and tip.state ~= "denied" and math.abs(tip.t - ts) <= window
 end
 
 function CatchingService.reachState(actorId: number): ReachState?
@@ -445,6 +550,7 @@ function CatchingService.Start()
 	services.PlayerService.ActorRemoving:Connect(function(actor)
 		reaches[actor.id] = nil
 		lastClaim[actor.id] = nil
+		tips[actor.id] = nil
 	end)
 end
 

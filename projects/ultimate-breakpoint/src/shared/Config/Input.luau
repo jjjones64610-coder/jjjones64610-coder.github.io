@@ -3,7 +3,7 @@
 -- One small vocabulary. Advanced techniques come from pressing these in
 -- context and on time (see MovementSim header), not from extra keys.
 --   Movement actions: Sprint, Jump, Cut, Slide, Dive, Burst
---   Disc actions:     Primary (throw / reach), Secondary (fake / mark)
+--   Disc actions:     Primary (throw / reach), Secondary (fake / mark; in the air: tip)
 --   With the disc:    Q / E quick swing left / right (the Cut / Dive keys),
 --                     Space hop (high release), C low release, Z / X bank,
 --                     mouse wheel or 1-5 throw type (T cycles too), R lead
@@ -49,7 +49,7 @@ Input.Display = {
 	Dive = "Layout Dive · Swing Right (with disc)",
 	Burst = "Burst Step (also restarts a plant)",
 	Primary = "Throw (hold) / Reach",
-	Secondary = "Fake Throw / Mark (hold near the holder)",
+	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
 	BankLeft = "Bank Left (with disc)",
 	BankRight = "Bank Right (with disc)",
 	TypeNext = "Next Throw Type",
@@ -203,6 +203,7 @@ Input.DefaultSettings = {
 	CameraShake = true,
 	ShowComboFeed = true,
 	ShowTechLabels = false,
+	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	AutoSprint = true,
 	ToggleSprint = false,
 	AutoSprintTouch = true,
