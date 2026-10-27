@@ -16,7 +16,7 @@ Run everything with `scripts/check.sh` (the header lists tool versions).
 | Lint | Selene 0.27 (Luau std + Roblox globals) | 0 errors, 0 warnings |
 | Types against the **real Roblox API** (catches invented properties and methods) | luau-lsp 1.70 `analyze`, every file `--!strict` | 0 errors |
 | Cross-module calls (`services.X.y`, `controllers.X.y`) exist | `scripts/audit_refs.py` | 0 missing |
-| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **188 passed** |
+| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **208 passed** |
 | Place builds with the right structure and StarterPlayer settings | Rojo 7.4 + `tests/place_check.luau` | OK |
 
 What the tests cover (`lune run tests/run.luau <spec>` runs one):
@@ -52,6 +52,14 @@ What the tests cover (`lune run tests/run.luau <spec>` runs one):
 * **modes (27)**: Mini / Normal rules and fields, eligibility for 0–16
   humans, ranked overrides, private rules, MatchPlan splits, bench rotation,
   exact bot fill, late joiners, leavers, ranked rosters.
+* **tech (20)**, the tech-spec core (build step 1): acceleration and
+  friction times, part-pushed stick, overspeed decay on the ground and in
+  the air, the hard cap on flat and fall speed, the turn-rate curve, instant
+  slow turns, rate-limited fast turns and drift loss, slow plain reversals,
+  gravity and the fall multiplier, ballistic air, identical results at 20 /
+  60 / 144 / 240 fps, the state machine and its transitions, holding and
+  marking, the 100 ms input buffer, the timing readout, walls, frozen, and a
+  60,000-step fuzz.
 * **signatures (11)**: every signature move's recognition, priority (one
   per catch), timing windows, and a catch confirmed after its landing.
 
@@ -67,7 +75,20 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### A. Running and feel (solo, F5)
+### 0. Tech core (build steps 1–2, the default engine)
+The debug HUD sits top right (always in Studio; Settings → Tech debug HUD
+elsewhere).
+- [ ] Hold W: SPEED climbs to 22 in about 0.37 s and stays there. Let go: you stop in about 0.28 s.
+- [ ] Below 12 you turn on the spot. At full speed a hard turn shows **DRIFT** and SPEED drops; a full reversal is slow (that is what cuts will be for).
+- [ ] You stand at the right height on flat ground, ramps and small steps, with no bobbing, sinking or sliding while standing still.
+- [ ] Walk off a ledge: STATE goes Airborne, you fall faster on the way down, and land cleanly (no bounce, no sinking). The fall animation plays.
+- [ ] Run into a wall at an angle: you slide along it, no sticking or jitter.
+- [ ] Catch a pass at speed: you skid to a stop (STATE HoldingDisc), turn to the camera, and can throw. No travel snap-backs.
+- [ ] Press Space / Q / E / C: nothing moves yet, but BUFFER shows the press for 100 ms.
+- [ ] Settings → **New movement core** off: the classic movement comes back at once; on again: the tech core.
+- [ ] No key hints under the crosshair and no air-move line.
+
+### A. Running and feel (classic engine, solo, F5)
 - [ ] Hold W: you start running at once and **sprint by yourself** after ~0.3 s (Shift sprints instantly). Top speed feels fast; stopping takes a fraction of a second; turns at jog are tight.
 - [ ] Feet don't skate at any speed; walk/run blend smoothly; no limbs pop.
 - [ ] The camera doesn't jitter, clip into the floor when you look up, or pulse its FOV on every cut.
@@ -123,7 +144,12 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 
 These were reasoned about from the API, not observed:
 
-1. **Humanoid-driven movement**: `WalkSpeed = |v|` + `Move(v.Unit)` each
+0. **Tech engine**: with `Humanoid.EvaluateStateMachine = false`, a
+   VectorForce of `AssemblyMass × workspace.Gravity` on the root, and the
+   root's velocity written every frame, the character stays upright (the
+   AlignOrientation holds it), only the root collides (limbs are in
+   UBLimbs), and the Animate script reads `UB_Air` for air poses.
+1. **Humanoid-driven movement (classic engine)**: `WalkSpeed = |v|` + `Move(v.Unit)` each
    frame tracks the sim's velocity closely on the ground and in the air, and
    direct `AssemblyLinearVelocity` writes on impulse frames stick.
 2. **Jumps** via `JumpPower` + `ChangeState(Jumping)` (also mid-air for wall

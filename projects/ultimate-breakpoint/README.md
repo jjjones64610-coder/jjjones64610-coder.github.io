@@ -23,6 +23,15 @@ only fill empty spots, and everyone plays with the same **fixed hitbox**.
 > is the checklist. If something errors, copy the red `[Breakpoint]` or
 > `MOVEMENT ERROR` lines from the Output window.
 
+> **Rebuild in progress: the movement tech spec.** Movement is being
+> rebuilt from [`docs/tech-spec.md`](docs/tech-spec.md), one build step at a
+> time. **Steps 1–2 are done**: a new momentum core (Movement/TechCore,
+> numbers in Config/Tech) and a debug HUD. It is **on by default**. For now
+> you can only run: jumping, cuts, slides, dives, Burst and the pivot come
+> back in steps 3–7. To play the old version, turn off
+> **Menu → Settings → New movement core**. The on-screen key hints are gone:
+> what chains off what is for players to find.
+
 ---
 
 ## Quick start
@@ -153,3 +162,5 @@ lune run tests/flight_table.luau                            # throw table
 * Bots don't tip or chase signature moves.
 * Contact fouls aren't modelled (players don't collide).
 * Everything in `docs/TESTING.md` §2 needs a first run in Studio.
+* Tech spec build steps 3–10 (ground, air, disc, catching, throwing,
+  defense, training drills, network pass).

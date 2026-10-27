@@ -84,6 +84,7 @@ export type State = {
 	drifting: boolean, -- the last step's turn was limited
 	topSpeed: number, -- current run top speed (Burst raises it in step 3)
 	accel: number,
+	burst: number, -- the Burst meter, 0..100 (drained by Burst in step 3)
 	buffer: { [string]: number }, -- action -> os.clock() of the press
 	lastTiming: Timing?,
 	frame: FrameReport,
@@ -133,6 +134,7 @@ function TechCore.new(now: number?): State
 		drifting = false,
 		topSpeed = Config.RUN_TOP_SPEED,
 		accel = Config.RUN_ACCEL,
+		burst = 100,
 		buffer = {},
 		lastTiming = nil,
 		frame = newFrame(),
@@ -210,7 +212,7 @@ end
 
 local function settleBase(s: State)
 	if BASE[s.state] then
-		local want = baseState(s)
+		local want: StateName = baseState(s)
 		if want ~= s.state then
 			s.state = want
 			s.stateSince = s.now

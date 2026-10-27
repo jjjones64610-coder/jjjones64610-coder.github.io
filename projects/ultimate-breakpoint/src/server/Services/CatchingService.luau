@@ -49,6 +49,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
+local TechConfig = require(Shared.Config.Tech)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
 local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
@@ -61,7 +62,7 @@ local RS = MovementConfig.Reset
 -- quality window sampling: first contact + QualitySamples steps
 local SAMPLE_DT = C.QualityWindow / math.max(C.QualitySamples, 1)
 -- a client-reported body velocity faster than this is junk
-local MAX_BODY_SPEED = MovementConfig.HardCap + 12
+local MAX_BODY_SPEED = math.max(MovementConfig.HardCap, TechConfig.HARD_SPEED_CAP) + 12
 -- how far into the future a claim time may be (clock jitter) before it is clamped
 local FUTURE_SLACK = 0.05
 

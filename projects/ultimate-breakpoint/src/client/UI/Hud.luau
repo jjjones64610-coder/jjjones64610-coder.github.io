@@ -10,11 +10,8 @@
 	  Centre  the crosshair. Just above it, feedback chips: the ready-made
 	          MovementController.Feedback texts ("NEED SPEED", "ONE PER JUMP",
 	          "PRECISION LANDING -40 ms", 0.6 s; UIController routes them).
-	          Just below it, the context line: what the movement keys do right
-	          now, from MovementController.contextHint() with the bound keys
-	          ("Q SNAP CUT · F BURST", "Q SWING LEFT · SPACE HOP · E SWING
-	          RIGHT"); everyday meanings (Space jump, C slide, E layout) are
-	          left out so the line stays short.
+	          No key hints under it: what chains off what is for players to
+	          find (the tech debug HUD, a setting, shows timing only).
 	  Left    the combo chain, visible from the first technique (a lone jump
 	          does not count): count, points and tier word with a pop and a
 	          rising tick (AudioController.comboTick) per technique, over a bar
@@ -61,8 +58,6 @@ local FEED_LIFE = 1.2
 local FEED_FADE = 0.3
 local LOW_EXERTION = 25
 local PIP_FLASH = 0.35
-local CONTEXT_MAX = 3
-local CONTEXT_EVERY = 0.06
 
 -- Cooldown pips: sim readiness key, the action whose key is shown, label.
 local PIPS = {
@@ -75,8 +70,6 @@ local PIPS = {
 
 -- Context line: actions in display order, and the labels that are just the
 -- action's everyday meaning (left out).
-local CONTEXT_ORDER = { "Secondary", "Cut", "Slide", "Burst", "Jump", "Dive" }
-local PLAIN: { [string]: string } = { Jump = "JUMP", Slide = "SLIDE", Dive = "LAYOUT" }
 
 type FeedEntry = { label: TextLabel, born: number }
 type PipRef = { fill: Frame, label: TextLabel, stroke: UIStroke?, action: string, text: string }
@@ -91,8 +84,6 @@ local chainMode = "hidden" -- "hidden" | "live" | "card"
 local cardUntil = 0
 local chainZeroSince: number? = nil
 local lastConverted: { startT: number, endT: number }? = nil
-local contextText = ""
-local lastContext = 0
 
 local function now(): number
 	return Net.now()
@@ -493,7 +484,7 @@ function Hud.build(parent: ScreenGui, c: any)
 	})
 	refs.mark = mark
 
-	-- crosshair, chips above it, context line below it ---------------------------------
+	-- crosshair and the chips above it -----------------------------------------
 	refs.crosshair = make("Frame", {
 		Name = "Crosshair",
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -517,31 +508,6 @@ function Hud.build(parent: ScreenGui, c: any)
 		TextStrokeTransparency = 1,
 		TextStrokeColor3 = Color3.new(0, 0, 0),
 	})
-	refs.context = Theme.label("", 13, {
-		Name = "Context",
-		Parent = parent,
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0.5, 22),
-		Size = UDim2.fromOffset(640, 18),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextColor3 = C.Text,
-		TextTransparency = 0.2,
-		TextStrokeTransparency = 0.7,
-		RichText = true,
-	})
-	-- air moves left this jump (shown only in the air): dim = used, cyan = Charged
-	refs.airCharges = Theme.label("", 13, {
-		Name = "AirCharges",
-		Parent = parent,
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0.5, 42),
-		Size = UDim2.fromOffset(420, 18),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextColor3 = C.Text,
-		TextStrokeTransparency = 0.6,
-		RichText = true,
-		Visible = false,
-	})
 	refs.hint = Theme.label("", 14, {
 		Name = "Hint",
 		Parent = parent,
@@ -552,12 +518,11 @@ function Hud.build(parent: ScreenGui, c: any)
 		RichText = true,
 	})
 
-	-- pip and context labels follow rebinds and the input scheme
+	-- pip labels follow rebinds and the input scheme
 	local function refreshKeys()
 		for _, pip in pips do
 			pip.label.Text = Theme.keyText(keyOf(pip.action), pip.text)
 		end
-		contextText = "\0" -- forces the context line to rebuild
 	end
 	controllers.SettingsController.Changed:Connect(refreshKeys)
 	controllers.InputController.SchemeChanged:Connect(refreshKeys)
@@ -909,36 +874,6 @@ local function modeChipText(state: Instance, phase: string): string
 	return text
 end
 
--- The context line: the non-obvious things the movement keys do right now.
-local function buildContext(): string
-	local hint = controllers.MovementController.contextHint()
-	local entries: { { label: string, keys: { string } } } = {}
-	for _, action in CONTEXT_ORDER do
-		local label = hint[action]
-		if label and label ~= PLAIN[action] then
-			local key = keyOf(action)
-			local merged = false
-			for _, entry in entries do
-				if entry.label == label then
-					if key ~= "" then
-						table.insert(entry.keys, key)
-					end
-					merged = true
-					break
-				end
-			end
-			if not merged and #entries < CONTEXT_MAX then
-				table.insert(entries, { label = label, keys = if key ~= "" then { key } else {} })
-			end
-		end
-	end
-	local parts: { string } = {}
-	for _, entry in entries do
-		table.insert(parts, Theme.keyText(table.concat(entry.keys, "/"), entry.label))
-	end
-	return table.concat(parts, "  ·  ")
-end
-
 local function exertionHint(): string
 	local key = keyOf("Sprint")
 	if key ~= "" and not controllers.SettingsController.get("AutoSprint") then
@@ -1090,50 +1025,8 @@ function Hud.update(_dt: number)
 		refs.markText.Text = table.concat(parts, "  ·  ")
 	end
 
-	-- air moves left this jump
-	local msim = controllers.MovementController.sim()
-	local inAir = (msim.mode == "Air" or msim.mode == "Dive") and not msim.holding
-	refs.airCharges.Visible = inAir
-	if inAir then
-		local function slot(key: string, label: string, used: boolean): string
-			local color = if used then "#5A5F6E" elseif msim.charged then "#5AE6FF" else "#F2F4F8"
-			return string.format('<font color="%s">%s %s</font>', color, key, label)
-		end
-		local parts = {
-			slot(keyOf("Cut"), "AIR CUT", msim.airRedirectUsed),
-			slot(keyOf("Dive"), "AIR LAYOUT", msim.airDiveUsed),
-		}
-		if msim.charged then
-			table.insert(parts, '<font color="#5AE6FF">CHARGED</font>')
-		end
-		if msim.tipsThisAir > 0 then
-			table.insert(
-				parts,
-				string.format(
-					'<font color="#FFD25A">TIPS %d/%d</font>',
-					msim.tipsThisAir,
-					MovementConfig.Reset.MaxTipsPerAir
-				)
-			)
-		end
-		local text = table.concat(parts, "   ")
-		if refs.airCharges.Text ~= text then
-			refs.airCharges.Text = text
-		end
-	end
-
-	-- crosshair + context line
-	local locked = controllers.CameraController.isLocked()
-	refs.crosshair.Visible = locked
-	refs.context.Visible = locked
-	if locked and clock - lastContext >= CONTEXT_EVERY then
-		lastContext = clock
-		local text = buildContext()
-		if text ~= contextText then
-			contextText = text
-			refs.context.Text = text
-		end
-	end
+	-- crosshair (no key hints: what chains off what is for players to find)
+	refs.crosshair.Visible = controllers.CameraController.isLocked()
 end
 
 return Hud

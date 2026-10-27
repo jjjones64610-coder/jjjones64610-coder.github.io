@@ -38,6 +38,7 @@ local Theme = require(UI.Theme)
 local Hud = require(UI.Hud)
 local ThrowHud = require(UI.ThrowHud)
 local Menu = require(UI.Menu)
+local TechDebug = require(UI.TechDebug)
 local Panels = require(UI.Panels)
 local Mobile = require(UI.Mobile)
 
@@ -303,6 +304,7 @@ function UIController.Start()
 	Panels.build(gui, controllers)
 	Mobile.build(gui, controllers)
 	Menu.build(gui, controllers)
+	TechDebug.build(gui, controllers)
 
 	controllers.InputController.ActionBegan:Connect(function(action)
 		if action == "Menu" then

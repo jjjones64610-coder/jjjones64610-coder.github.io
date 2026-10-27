@@ -204,6 +204,8 @@ Input.DefaultSettings = {
 	ShowComboFeed = true,
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
+	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
+	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	AutoSprint = true,
 	ToggleSprint = false,
 	AutoSprintTouch = true,

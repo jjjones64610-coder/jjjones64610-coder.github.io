@@ -46,7 +46,12 @@ local connection = RunService.Heartbeat:Connect(function(dt)
 
 	local localMode = character:GetAttribute("UB_LocalMode")
 	local state = humanoid:GetState()
-	local airborne = state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping
+	-- the tech engine turns the Humanoid's state machine off and says when
+	-- you are airborne itself (UB_Air)
+	local airAttr = character:GetAttribute("UB_Air")
+	local airborne = if type(airAttr) == "boolean"
+		then airAttr
+		else state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping
 	local clock = os.clock()
 	if airborne then
 		airSince = airSince or clock
@@ -57,7 +62,9 @@ local connection = RunService.Heartbeat:Connect(function(dt)
 	local mode: Locomotion.Mode = "Ground"
 	if type(localMode) == "string" and POSE_MODES[localMode] then
 		mode = "Pose"
-	elseif airborne and (state == Enum.HumanoidStateType.Jumping or clock - (airSince :: number) > AIR_GRACE) then
+	elseif
+		airborne and (state == Enum.HumanoidStateType.Jumping or v.Y > 2 or clock - (airSince :: number) > AIR_GRACE)
+	then
 		mode = if v.Y > 2 then "Rising" else "Falling"
 	end
 	Locomotion.update(controller, dt, speed, mode)

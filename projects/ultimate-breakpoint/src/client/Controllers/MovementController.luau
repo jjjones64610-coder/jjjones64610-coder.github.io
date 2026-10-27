@@ -41,6 +41,19 @@
 
 	If the per-frame step ever errors, the body is stopped (no runaway
 	character) and the error is reported once.
+
+	TWO ENGINES. Setting TechEngine (default on) runs the new tech core
+	instead (Movement/TechCore, docs/tech-spec.md build steps 1-2): the
+	Humanoid is for animation only (EvaluateStateMachine = false, no
+	WalkSpeed, no jumping); TechCore steps at 120 Hz and its velocity is
+	written straight to the root every frame, with a VectorForce cancelling
+	workspace gravity so only the core's own gravity acts. On the ground the
+	root is held at its stand height by a spring on a down ray; walls ahead
+	(a ray along the velocity, at root and knee height) are slid along.
+	Presses go into the core's input buffer; the tech that uses them comes
+	in later build steps. The character attribute UB_Air tells the Animate
+	script when you are airborne (the Humanoid state no longer says).
+	Turning the setting off switches back to MovementSim at once.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -50,6 +63,8 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementSim = require(Shared.Movement.MovementSim)
+local TechCore = require(Shared.Movement.TechCore)
+local TechConfig = require(Shared.Config.Tech)
 local MovementConfig = require(Shared.Config.Movement)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local Signatures = require(Shared.Rules.Signatures)
@@ -99,6 +114,13 @@ local jumpPowerArmed = false
 local errorReported = false
 local filterAt = -math.huge
 
+-- the tech engine
+local tech: TechCore.State = TechCore.new(os.clock())
+local engineOn = false -- the tech engine drives the current character
+local antiGravity: VectorForce? = nil
+local techPivotSent = false
+local lastAirAttr: boolean? = nil
+
 local techRemote: RemoteEvent? = nil
 local pivotRemote: RemoteEvent? = nil
 
@@ -108,6 +130,8 @@ local BLOCK_RAY = 2.5
 local GROUND_RAY_GROUND = 1.2 -- studs past the feet that still count as grounded (ground modes)
 local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
+local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
+local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -154,10 +178,16 @@ function MovementController.combo(): ComboEvaluator.Tracker
 end
 
 function MovementController.isGrounded(): boolean
+	if engineOn then
+		return tech.grounded
+	end
 	return not MovementSim.isAirborne(sim)
 end
 
 function MovementController.isMarking(): boolean
+	if engineOn then
+		return tech.marking
+	end
 	return MovementSim.isMarking(sim)
 end
 
@@ -165,6 +195,17 @@ end
 -- the sim; poll isMarking() for the live state.
 function MovementController.setMarking(on: boolean)
 	MovementSim.setMarking(sim, on)
+	TechCore.setMarking(tech, on)
+end
+
+-- "Tech" (TechCore drives the body) or "Classic" (MovementSim).
+function MovementController.engine(): string
+	return if engineOn then "Tech" else "Classic"
+end
+
+-- The tech core's state (debug HUD, later tech).
+function MovementController.techState(): TechCore.State
+	return tech
 end
 
 local function refreshFilter(force: boolean?)
@@ -363,27 +404,56 @@ function MovementController.fakeStep(side: number)
 	MovementSim.fakeStep(sim, side)
 end
 
--- What each movement action would do right now ({ Cut = "SNAP CUT", ... }).
-function MovementController.contextHint(): { [string]: string }
-	local env = lastEnv
-	if not env or not root then
-		return {}
-	end
-	local hint = MovementSim.contextHint(sim, currentInput(), env)
-	-- a disc about to pass your hands in the air: the Tip Reset
-	if MovementSim.isAirborne(sim) and not sim.holding and controllers.CatchController.tipReady() then
-		hint.Secondary = "TIP RESET"
-	end
-	-- gamepad X swings to the mirror of the current step, not to the left
-	if sim.holding and hint.Cut and controllers.InputController.scheme() == "Gamepad" then
-		hint.Cut = "SWING OTHER SIDE"
-	end
-	return hint
-end
-
 ---------------------------------------------------------------------------
 -- character setup
 ---------------------------------------------------------------------------
+
+-- Puts the current character on the engine the TechEngine setting picks.
+local function applyEngine()
+	local h, r, c = humanoid, root, character
+	local want = controllers.SettingsController.get("TechEngine") ~= false
+	if not h or not r or not c then
+		engineOn = false
+		return
+	end
+	if want == engineOn and (not want or (antiGravity ~= nil and antiGravity.Parent == r)) then
+		return
+	end
+	engineOn = want
+	if want then
+		h:Move(Vector3.zero, false)
+		h.WalkSpeed = 0
+		h.JumpPower = 0
+		h.EvaluateStateMachine = false
+		local att = r:FindFirstChild("UBFaceAttachment") :: Attachment?
+		local force = Instance.new("VectorForce")
+		force.Name = "UBAntiGravity"
+		force.RelativeTo = Enum.ActuatorRelativeTo.World
+		force.ApplyAtCenterOfMass = true
+		force.Attachment0 = att
+		force.Force = Vector3.new(0, r.AssemblyMass * workspace.Gravity, 0)
+		force.Parent = r
+		antiGravity = force
+		tech = TechCore.new(os.clock())
+		tech.vel = VecMath.flat(r.AssemblyLinearVelocity)
+		TechCore.setHolding(tech, holding)
+		TechCore.setMarking(tech, MovementSim.isMarking(sim))
+		TechCore.setFrozen(tech, c:GetAttribute("UBFrozen") == true)
+		techPivotSent = false
+		lastAirAttr = nil
+	else
+		local force = antiGravity
+		antiGravity = nil
+		if force then
+			force:Destroy()
+		end
+		h.EvaluateStateMachine = true
+		c:SetAttribute("UB_Air", nil)
+		lastAirAttr = nil
+		MovementSim.reset(sim)
+		sim.pos = r.Position
+	end
+end
 
 local function setupCharacter(c: Model)
 	character = c
@@ -445,10 +515,17 @@ local function setupCharacter(c: Model)
 	refreshFilter(true)
 	humanoid = h
 	root = r
+	engineOn = false
+	antiGravity = nil
+	applyEngine()
 	h.Died:Connect(function()
 		h:Move(Vector3.zero, false)
 		h.WalkSpeed = 0
 		align.Enabled = false
+		local force = antiGravity
+		if force and force.Parent == r then
+			force.Enabled = false
+		end
 	end)
 end
 
@@ -472,6 +549,7 @@ local function handleTeleport(c: Model, r: BasePart)
 	r.AssemblyAngularVelocity = Vector3.zero
 	MovementSim.reset(sim) -- keeps frozen, holding, exertion, cooldowns and the pivot
 	sim.pos = r.Position
+	TechCore.reset(tech)
 	if face and type(yaw) == "number" then
 		controllers.CameraController.setYaw(yaw)
 		lastFacing = VecMath.fromYaw(yaw)
@@ -503,7 +581,9 @@ local function updateHolding(grounded: boolean)
 	if want ~= holding then
 		holding = want
 		MovementSim.setHolding(sim, want, grounded)
+		TechCore.setHolding(tech, want)
 		pivotResent = false
+		techPivotSent = false
 	end
 	if confirmed ~= confirmedHold then
 		confirmedHold = confirmed
@@ -621,6 +701,160 @@ local function flushTech(mode: string)
 	end
 end
 
+-- The pose mode the tech core's state replicates as (PoseController,
+-- Animate and the server's VALID_MODES know these names).
+local function techPoseMode(): string
+	if tech.frozen then
+		return "Frozen"
+	end
+	local st = tech.state
+	if st == "HoldingDisc" then
+		return if TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then "Pivot" else "Ground"
+	elseif st == "Marking" then
+		return "Mark"
+	elseif st == "Airborne" or st == "AirDodging" then
+		return "Air"
+	elseif st == "Diving" then
+		return "Dive"
+	elseif st == "Sliding" then
+		return "Slide"
+	elseif st == "Downed" then
+		return "DiveSlide"
+	elseif st == "Recovering" then
+		return "Recover"
+	end
+	return "Ground"
+end
+
+-- Facing on the tech engine: the camera while holding / charging / marking
+-- (blended from travel while a catch is still sliding), travel otherwise.
+local function techFace(v: Vector3): (Vector3?, boolean)
+	local catch = controllers.CatchController
+	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
+	local aiming = tech.holding or tech.marking or controllers.ThrowController.isCharging() or catch.isMarking()
+	if aiming then
+		local cam = controllers.CameraController.forward()
+		if travel and tech.holding then
+			local k = math.clamp(1 - v.Magnitude / 10, 0, 1)
+			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
+			return if blend.Magnitude > 0.5 then blend else travel, true
+		end
+		return cam, true
+	end
+	return travel, false
+end
+
+-- One frame on the tech engine.
+local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
+	refreshFilter()
+	standHeight = computeStandHeight(h, r)
+	local pos = r.Position
+
+	-- ground: a ray from the root to just past the feet (further when
+	-- falling fast, so a landing is caught on the frame of touchdown)
+	local vy = tech.vel.Y
+	local groundY: number? = nil
+	if vy <= 0.01 then
+		local snap = if tech.grounded
+			then TechConfig.GROUND_SNAP
+			else TechConfig.GROUND_SNAP_AIR + math.max(0, -vy) * dt
+		local hit = workspace:Raycast(pos, Vector3.new(0, -(standHeight + snap), 0), rayParams)
+		if hit and hit.Normal.Y > 0.5 then
+			groundY = hit.Position.Y
+		end
+	end
+
+	-- walls: along the velocity, at root and knee height
+	local wallNormal: Vector3? = nil
+	local flatVel = VecMath.flat(tech.vel)
+	if flatVel.Magnitude > 0.5 then
+		local ahead = flatVel.Unit * TECH_WALL_RAY
+		for _, origin in { pos, pos - Vector3.new(0, standHeight * 0.6, 0) } do
+			local w = workspace:Raycast(origin, ahead, rayParams)
+			if w and math.abs(w.Normal.Y) < 0.7 then
+				wallNormal = VecMath.flatUnit(w.Normal)
+				break
+			end
+		end
+	end
+
+	updateHolding(groundY ~= nil)
+	if sim.holding then
+		syncPivot(c)
+	end
+
+	local report = TechCore.advance(
+		tech,
+		{ move = controllers.InputController.moveVector() },
+		{ grounded = groundY ~= nil, wallNormal = wallNormal },
+		dt
+	)
+
+	local flat = VecMath.flat(tech.vel)
+	local lined = applyLine(c, pos, flat)
+	if lined ~= flat then
+		flat = lined
+		tech.vel = Vector3.new(lined.X, tech.vel.Y, lined.Z)
+	end
+	local outY = tech.vel.Y
+	if tech.grounded and groundY then
+		local err = groundY + standHeight - pos.Y
+		outY = math.clamp(err * TechConfig.GROUND_SPRING, -TechConfig.GROUND_SPRING_MAX, TechConfig.GROUND_SPRING_MAX)
+	end
+	r.AssemblyLinearVelocity = Vector3.new(flat.X, outY, flat.Z)
+	local force = antiGravity
+	if force then
+		force.Force = Vector3.new(0, r.AssemblyMass * workspace.Gravity, 0)
+	end
+
+	-- the pivot: propose where we stopped once the catch has settled
+	if confirmedHold and not techPivotSent and tech.grounded and TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then
+		local remote = pivotRemote
+		if remote and c:GetAttribute("UBPivot") == nil then
+			techPivotSent = true
+			remote:FireServer(pos)
+		end
+	end
+
+	-- facing
+	local face, aiming = techFace(flat)
+	if face and face.Magnitude > 0.5 then
+		lastFacing = face
+	end
+	local align = ao
+	if align then
+		if aiming ~= aoAiming then
+			aoAiming = aiming
+			align.Responsiveness = if aiming then 45 else 30
+			align.MaxAngularVelocity = if aiming then 40 else 20
+		end
+		align.CFrame = CFrame.lookAt(Vector3.zero, lastFacing)
+	end
+
+	local air = not tech.grounded
+	if air ~= lastAirAttr then
+		lastAirAttr = air
+		c:SetAttribute("UB_Air", air)
+	end
+	if report.landed then
+		MovementController.Landed:Fire(false, report.landingSpeed)
+		feedSignatures({ kind = "Land", t = now() })
+	end
+
+	local mode = techPoseMode()
+	if mode ~= lastMode then
+		lastMode = mode
+		modeDirty = true
+		c:SetAttribute("UB_LocalMode", mode)
+	end
+	flushTech(mode)
+
+	local ended = ComboEvaluator.expire(combo, now())
+	if ended then
+		MovementController.ChainEnded:Fire(ended)
+	end
+end
+
 local function frame(dtRaw: number)
 	local c, h, r = character, humanoid, root
 	if not c or not h or not r or not r.Parent or h.Health <= 0 then
@@ -642,6 +876,13 @@ local function frame(dtRaw: number)
 	local frozen = c:GetAttribute("UBFrozen") == true
 	if frozen ~= sim.frozen then
 		MovementSim.setFrozen(sim, frozen)
+	end
+	if frozen ~= tech.frozen then
+		TechCore.setFrozen(tech, frozen)
+	end
+	if engineOn then
+		techFrame(c, h, r, dt)
+		return
 	end
 
 	refreshFilter()
@@ -726,6 +967,13 @@ local function guardedFrame(dt: number)
 			h.JumpPower = 0
 		end)
 	end
+	local r = root
+	if r and engineOn then
+		pcall(function()
+			r.AssemblyLinearVelocity = Vector3.zero
+		end)
+		tech.vel = Vector3.zero
+	end
 	if not errorReported then
 		errorReported = true
 		warn("[MovementController] frame failed, movement stopped: " .. tostring(failure))
@@ -742,6 +990,11 @@ local function onAction(action: string, scheme: string?)
 		return
 	end
 	if controllers.InputController.menuOpen() then
+		return
+	end
+	if engineOn then
+		-- buffered for the tech that will use it (later build steps)
+		TechCore.press(tech, action, os.clock())
 		return
 	end
 	if sim.holding then
@@ -832,6 +1085,12 @@ function MovementController.Start()
 			height = if at then at.height elseif airborne then lastAirHeight else 0,
 			interception = interception,
 		})
+	end)
+
+	controllers.SettingsController.Changed:Connect(function(key)
+		if key == "TechEngine" or key == "All" then
+			applyEngine()
+		end
 	end)
 
 	player.CharacterAdded:Connect(setupCharacter)

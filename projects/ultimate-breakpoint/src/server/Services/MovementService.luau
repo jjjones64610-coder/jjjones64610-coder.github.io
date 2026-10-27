@@ -55,6 +55,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
+local TechConfig = require(Shared.Config.Tech)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
@@ -162,7 +163,8 @@ local COOLDOWN_SLACK = 0.05
 local EXERTION_SLACK = 30 -- the mirror may lag the client by this much before claims are refused
 local HISTORY = 72 -- samples (~1.2 s at 60 Hz)
 local SPEED_WINDOW = 1.0
-local SPEED_LIMIT = MovementConfig.HardCap * 1.15 + 8 -- studs per second of window
+-- either engine's cap (the tech core allows more speed than the classic sim)
+local SPEED_LIMIT = math.max(MovementConfig.HardCap, TechConfig.HARD_SPEED_CAP) * 1.15 + 8 -- studs per second of window
 local SPEED_FLAGS_TO_SNAP = 2
 local HOVER_TIME = 6
 local TELEPORT_ARRIVE = 4 -- studs: the server has seen the root reach the teleport target

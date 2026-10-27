@@ -952,6 +952,8 @@ function render.Settings(content: Instance)
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
 		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
+		{ key = "TechEngine", label = "New movement core (tech spec; off = classic movement)" },
+		{ key = "TechDebug", label = "Tech debug HUD (speed, state, timing in ms)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
 	}

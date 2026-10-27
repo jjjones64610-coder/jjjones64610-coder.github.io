@@ -1365,6 +1365,8 @@ Input.DefaultSettings = {
 	ShowComboFeed = true,
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
+	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
+	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	AutoSprint = true,
 	ToggleSprint = false,
 	AutoSprintTouch = true,
@@ -2471,12 +2473,133 @@ return Teams
 ]]></string>
           </Properties>
         </Item>
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">Tech</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	TechConfig — every number of the movement tech (docs/tech-spec.md,
+	"Tuning constants"). Logic never hard-codes these; tune here and re-run
+	`lune run tests/run.luau tech`.
+
+	Units: studs, seconds, studs/s, studs/s². Timing windows are in ms, as in
+	the spec. Values marked "later step" are listed now so the whole table
+	lives in one place; nothing reads them until that build step exists.
+]]
+
+local Tech = {}
+
+-- engine
+Tech.PHYSICS_RATE = 120 -- Hz, fixed timestep
+Tech.MAX_FRAME = 0.25 -- s of frame time the accumulator will catch up on at most
+Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
+
+-- running
+Tech.RUN_TOP_SPEED = 22
+Tech.RUN_ACCEL = 60
+Tech.GROUND_FRICTION = 80 -- no input (and HoldingDisc / Downed)
+Tech.OVERSPEED_DECAY_GROUND = 15
+Tech.OVERSPEED_DECAY_AIR = 4
+Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
+
+-- turning: instant below TURN_FREE_SPEED, then this many °/s at each speed
+-- (linear between points, flat past the last one)
+Tech.TURN_FREE_SPEED = 12
+Tech.TURN_RATE = {
+	{ speed = 12, rate = 300 },
+	{ speed = 30, rate = 180 },
+	{ speed = 50, rate = 90 },
+}
+-- Steering harder than the turn rate drifts: every 90° turned while the
+-- stick asks for more than you can turn costs this fraction of your speed.
+Tech.TURN_DRIFT_LOSS = 0.25
+
+-- gravity (the player's own; the disc has DISC_GRAVITY)
+Tech.PLAYER_GRAVITY = 140
+Tech.FALL_GRAVITY_MULT = 1.3
+
+-- ground contact (controller, not in the spec table)
+Tech.GROUND_SNAP = 0.6 -- studs below the feet that still count as standing (step-downs)
+Tech.GROUND_SNAP_AIR = 0.15 -- ... while airborne, so a fall lands on touchdown
+Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
+Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
+
+-- burst (later step: 3)
+Tech.BURST_TOP_SPEED = 30
+Tech.BURST_ACCEL = 90
+Tech.BURST_DRAIN = 30
+Tech.BURST_REFILL = 15
+Tech.BURST_LOCK_UNTIL = 20
+Tech.PERFECT_BURST_REFUND = 10
+Tech.BURST_KICK = 6
+Tech.BURST_KICK_COST = 15
+Tech.BURST_KICK_TAP = 120 -- ms
+Tech.BURST_KICK_COOLDOWN = 0.5
+
+-- ground tech (later step: 3)
+Tech.CUT_KEEP = 0.70
+Tech.PERFECT_KEEP = 1.00
+Tech.CUT_PERFECT_WINDOW = 80 -- ms
+Tech.CUT_REPEAT_CAP = 0.85
+Tech.CUT_REPEAT_TIME = 0.6
+Tech.JUKE_WINDOW = 120 -- ms
+Tech.SLIDE_MIN_SPEED = 18
+Tech.SLIDE_FRICTION = 15
+Tech.SLIDE_MAX_TIME = 1.2
+Tech.LANDING_SLIDE_WINDOW = 100 -- ms
+Tech.LANDING_SLIDE_PERFECT = 40 -- ms
+Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
+Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
+
+-- air tech (later step: 4)
+Tech.JUMP_TAP = 34
+Tech.JUMP_FULL = 46
+Tech.AIR_DODGE_WINDOW = 1.25
+Tech.AIR_DODGE_BURST = 12
+Tech.AIR_DODGE_HANG = 0.18
+Tech.WAVEDASH_WINDOW = 80 -- ms before landing
+Tech.WAVEDASH_PERFECT = 40
+Tech.WAVEDASH_BURST = 10
+Tech.WAVEDASH_BURST_PERFECT = 14
+Tech.REVERSE_SNAP_WINDOW = { 60, 140 } -- ms
+Tech.REVERSE_SNAP_PERFECT = { 80, 110 } -- ms
+Tech.BURST_DIVE_SPEED = 28
+Tech.BURST_DIVE_SPEED_PERFECT = 32
+
+-- catching (later step: 6)
+Tech.CATCH_RADIUS = 2.5
+Tech.CATCH_WINDOW = 150 -- ± ms
+Tech.CATCH_PERFECT = 40 -- ± ms
+Tech.LAYOUT_DOWN_TIME = 0.9
+Tech.TECH_ROLL_WINDOW = 100 -- ms
+Tech.TECH_ROLL_PERFECT = 40
+Tech.SKY_CHARGE = 0.4
+Tech.SKY_PERFECT = { 0.35, 0.40 }
+
+-- disc (later step: 5)
+Tech.DISC_GRAVITY = 60
+Tech.DISC_DRAG = 0.0035
+Tech.DISC_LIFT = 0.0028
+Tech.SPIN_DECAY = 0.15
+Tech.SNAP_ZONE = { 0.75, 0.85 }
+Tech.SNAP_POINT = 0.80
+Tech.SNAP_PERFECT = 20 -- ± ms
+
+-- defense and rules (later step: 8)
+Tech.STALL_COUNT = 10
+Tech.HAND_BLOCK_ACTIVE = 0.2
+Tech.MIRROR_WINDOW = 120 -- ms
+
+return Tech
+]]></string>
+          </Properties>
+        </Item>
       </Item>
-      <Item class="Folder" referent="18">
+      <Item class="Folder" referent="19">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -2789,7 +2912,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -3012,7 +3135,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -3351,11 +3474,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="22">
+      <Item class="Folder" referent="23">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="23">
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -5694,8 +5817,463 @@ return MovementSim
 ]]></string>
           </Properties>
         </Item>
+        <Item class="ModuleScript" referent="25">
+          <Properties>
+            <string name="Name">TechCore</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	TechCore — the momentum controller every movement tech sits on
+	(docs/tech-spec.md, "Core physics model", build step 1).
+
+	Pure: no Instances. The client (MovementController) gives it the stick
+	and a small environment snapshot each frame and writes the velocity it
+	returns to the body. It can run offline under Lune (tests/tech_spec).
+
+	  * Velocity is kept, not set. The stick accelerates you toward its
+	    direction; speed only drops from friction, turning or overspeed decay.
+	  * Turning is instant below TURN_FREE_SPEED. Faster, the heading turns at
+	    most TURN_RATE(speed) °/s; while the stick asks for more you drift: no
+	    acceleration, and every 90° turned costs TURN_DRIFT_LOSS of your speed.
+	  * Above run speed, speed decays toward it (fast on the ground, slowly in
+	    the air). Neither the flat speed nor the fall speed passes
+	    HARD_SPEED_CAP.
+	  * Gravity is the player's own (PLAYER_GRAVITY, x FALL_GRAVITY_MULT while
+	    moving down). On the ground the vertical speed is 0; the controller
+	    holds the body at its stand height.
+	  * Fixed timestep: advance() runs step() at PHYSICS_RATE with an
+	    accumulator, so nothing depends on the frame rate.
+	  * One state machine (State below). This step builds the always-on states
+	    (Grounded, Airborne, HoldingDisc, Marking); the tech states (Sliding,
+	    AirDodging, Diving, Downed, Recovering) exist with their transitions
+	    and are entered by the tech built in later steps.
+	  * Input buffer: press() stores a press for INPUT_BUFFER ms; a tech whose
+	    window opens in that time consume()s it.
+	  * Timing readout: noteTiming() records how early / late the last timed
+	    press was, for the debug HUD and training.
+]]
+
+local Config = require(script.Parent.Parent.Config.Tech)
+local VecMath = require(script.Parent.Parent.Util.VecMath)
+
+local TechCore = {}
+
+export type StateName =
+	"Grounded"
+	| "Sliding"
+	| "Airborne"
+	| "AirDodging"
+	| "Diving"
+	| "Downed"
+	| "Recovering"
+	| "HoldingDisc"
+	| "Marking"
+
+export type Input = {
+	move: Vector3, -- flat world direction, magnitude 0..1
+}
+
+export type Env = {
+	grounded: boolean,
+	wallNormal: Vector3?, -- flat normal of a wall right in front of the body
+}
+
+export type Timing = {
+	name: string,
+	offsetMs: number, -- < 0 early, > 0 late, 0 dead on
+	windowMs: number, -- half width of the success window
+	quality: string, -- "Perfect" | "Clean" | "Miss"
+	t: number, -- os.clock() of the press
+}
+
+export type FrameReport = {
+	steps: number,
+	landed: boolean,
+	leftGround: boolean,
+	landingSpeed: number, -- downward speed at touchdown
+}
+
+export type State = {
+	state: StateName,
+	stateSince: number,
+	now: number, -- sim time (s), advanced by each fixed step
+	acc: number, -- accumulator
+	vel: Vector3,
+	heading: Vector3, -- flat travel direction (kept while stopped)
+	holding: boolean,
+	marking: boolean,
+	frozen: boolean,
+	grounded: boolean,
+	drifting: boolean, -- the last step's turn was limited
+	topSpeed: number, -- current run top speed (Burst raises it in step 3)
+	accel: number,
+	burst: number, -- the Burst meter, 0..100 (drained by Burst in step 3)
+	buffer: { [string]: number }, -- action -> os.clock() of the press
+	lastTiming: Timing?,
+	frame: FrameReport,
+}
+
+local STEP = 1 / Config.PHYSICS_RATE
+TechCore.STEP = STEP
+
+-- Which states each state may move into by a tech. The environment (leaving
+-- or touching the ground) and the holding / marking flags can always move
+-- between Grounded, Airborne, HoldingDisc and Marking.
+TechCore.Transitions = {
+	Grounded = { Sliding = true, Airborne = true, Diving = true, HoldingDisc = true, Marking = true },
+	Sliding = { Grounded = true, Airborne = true, Diving = true, HoldingDisc = true },
+	Airborne = { AirDodging = true, Diving = true, Grounded = true, Sliding = true, HoldingDisc = true },
+	AirDodging = { Airborne = true, Grounded = true, Sliding = true, Diving = true },
+	Diving = { Downed = true, Recovering = true, Grounded = true, HoldingDisc = true },
+	Downed = { Recovering = true },
+	Recovering = { Grounded = true, Marking = true, HoldingDisc = true },
+	HoldingDisc = { Grounded = true },
+	Marking = { Grounded = true, Airborne = true, Sliding = true, Diving = true },
+} :: { [StateName]: { [StateName]: boolean } }
+
+-- States the environment and flags pick on their own.
+local BASE: { [StateName]: boolean } = { Grounded = true, Airborne = true, HoldingDisc = true, Marking = true }
+-- States that steer and accelerate with the stick on the ground.
+local RUNNING: { [StateName]: boolean } = { Grounded = true, Marking = true }
+-- States that only brake (no stick).
+local BRAKING: { [StateName]: boolean } = { HoldingDisc = true, Downed = true }
+
+local function newFrame(): FrameReport
+	return { steps = 0, landed = false, leftGround = false, landingSpeed = 0 }
+end
+
+function TechCore.new(now: number?): State
+	return {
+		state = "Grounded",
+		stateSince = now or 0,
+		now = now or 0,
+		acc = 0,
+		vel = Vector3.zero,
+		heading = Vector3.new(0, 0, -1),
+		holding = false,
+		marking = false,
+		frozen = false,
+		grounded = true,
+		drifting = false,
+		topSpeed = Config.RUN_TOP_SPEED,
+		accel = Config.RUN_ACCEL,
+		burst = 100,
+		buffer = {},
+		lastTiming = nil,
+		frame = newFrame(),
+	}
+end
+
+---------------------------------------------------------------------------
+-- tuning curves
+---------------------------------------------------------------------------
+
+-- Max turn rate (°/s) at a flat speed; math.huge below TURN_FREE_SPEED.
+function TechCore.turnRate(speed: number): number
+	if speed < Config.TURN_FREE_SPEED then
+		return math.huge
+	end
+	local pts = Config.TURN_RATE
+	if speed <= pts[1].speed then
+		return pts[1].rate
+	end
+	for i = 2, #pts do
+		local a, b = pts[i - 1], pts[i]
+		if speed <= b.speed then
+			local k = (speed - a.speed) / (b.speed - a.speed)
+			return a.rate + (b.rate - a.rate) * k
+		end
+	end
+	return pts[#pts].rate
+end
+
+---------------------------------------------------------------------------
+-- state machine
+---------------------------------------------------------------------------
+
+function TechCore.canEnter(s: State, to: StateName): boolean
+	if s.state == to then
+		return true
+	end
+	local allowed = TechCore.Transitions[s.state]
+	return allowed ~= nil and allowed[to] == true
+end
+
+-- Moves to `to` if the transition table allows it (or `force`). Returns
+-- whether the state is now `to`.
+function TechCore.enter(s: State, to: StateName, force: boolean?): boolean
+	if s.state == to then
+		return true
+	end
+	if not force and not TechCore.canEnter(s, to) then
+		return false
+	end
+	s.state = to
+	s.stateSince = s.now
+	return true
+end
+
+function TechCore.timeInState(s: State): number
+	return s.now - s.stateSince
+end
+
+function TechCore.isAirborne(s: State): boolean
+	return not s.grounded
+end
+
+-- The state the environment and flags pick when no tech holds one.
+local function baseState(s: State): StateName
+	if not s.grounded then
+		return "Airborne"
+	elseif s.holding then
+		return "HoldingDisc"
+	elseif s.marking then
+		return "Marking"
+	end
+	return "Grounded"
+end
+
+local function settleBase(s: State)
+	if BASE[s.state] then
+		local want: StateName = baseState(s)
+		if want ~= s.state then
+			s.state = want
+			s.stateSince = s.now
+		end
+	end
+end
+
+function TechCore.setHolding(s: State, on: boolean)
+	s.holding = on
+	settleBase(s)
+end
+
+function TechCore.setMarking(s: State, on: boolean)
+	s.marking = on
+	settleBase(s)
+end
+
+function TechCore.setFrozen(s: State, on: boolean)
+	s.frozen = on
+	if on then
+		s.vel = Vector3.new(0, s.vel.Y, 0)
+	end
+end
+
+-- After a teleport: no momentum, nothing buffered; flags are kept.
+function TechCore.reset(s: State)
+	s.vel = Vector3.zero
+	s.acc = 0
+	s.drifting = false
+	table.clear(s.buffer)
+	s.state = baseState(s)
+	s.stateSince = s.now
+end
+
+---------------------------------------------------------------------------
+-- input buffer and timing
+---------------------------------------------------------------------------
+
+function TechCore.press(s: State, action: string, t: number)
+	s.buffer[action] = t
+end
+
+-- The buffered press of `action` if it is still fresh at `t` (os.clock()).
+function TechCore.buffered(s: State, action: string, t: number): number?
+	local at = s.buffer[action]
+	if at and t - at <= Config.INPUT_BUFFER / 1000 and t >= at then
+		return at
+	end
+	return nil
+end
+
+-- Takes the buffered press (so it fires once). Returns its time, or nil.
+function TechCore.consume(s: State, action: string, t: number): number?
+	local at = TechCore.buffered(s, action, t)
+	s.buffer[action] = nil
+	return at
+end
+
+-- Records how a timed press went: offset from the ideal moment and the
+-- window it was judged against. Perfect within perfectMs, Clean within
+-- windowMs, otherwise Miss.
+function TechCore.noteTiming(
+	s: State,
+	name: string,
+	offsetMs: number,
+	windowMs: number,
+	perfectMs: number?,
+	t: number?
+): Timing
+	local a = math.abs(offsetMs)
+	local quality = if perfectMs and a <= perfectMs then "Perfect" elseif a <= windowMs then "Clean" else "Miss"
+	local timing: Timing = {
+		name = name,
+		offsetMs = offsetMs,
+		windowMs = windowMs,
+		quality = quality,
+		t = t or s.now,
+	}
+	s.lastTiming = timing
+	return timing
+end
+
+-- "Cut: 34 ms early" / "Cut: 12 ms late" / "Cut: on time"
+function TechCore.describeTiming(timing: Timing): string
+	local ms = math.floor(math.abs(timing.offsetMs) + 0.5)
+	if ms == 0 then
+		return timing.name .. ": on time"
+	end
+	return string.format("%s: %d ms %s", timing.name, ms, if timing.offsetMs < 0 then "early" else "late")
+end
+
+---------------------------------------------------------------------------
+-- simulation
+---------------------------------------------------------------------------
+
+local function moveToward(x: number, target: number, rate: number): number
+	if x < target then
+		return math.min(target, x + rate)
+	end
+	return math.max(target, x - rate)
+end
+
+-- Flat velocity for one fixed step.
+local function stepFlat(s: State, input: Input, dt: number): Vector3
+	local flat = VecMath.flat(s.vel)
+	local speed = flat.Magnitude
+	if speed > 1e-4 then
+		s.heading = flat / speed
+	end
+	s.drifting = false
+
+	if s.frozen then
+		return Vector3.zero
+	end
+
+	if not s.grounded then
+		-- air: momentum is kept; only overspeed decays (air steer is step 4)
+		if speed > s.topSpeed then
+			speed = math.max(s.topSpeed, speed - Config.OVERSPEED_DECAY_AIR * dt)
+		end
+		return s.heading * speed
+	end
+
+	if BRAKING[s.state] or not RUNNING[s.state] then
+		if BRAKING[s.state] then
+			speed = math.max(0, speed - Config.GROUND_FRICTION * dt)
+		elseif speed > s.topSpeed then
+			speed = math.max(s.topSpeed, speed - Config.OVERSPEED_DECAY_GROUND * dt)
+		end
+		return s.heading * speed
+	end
+
+	local mv = VecMath.flat(input.move)
+	local mag = math.min(mv.Magnitude, 1)
+	if mag < 0.05 then
+		-- no stick: friction (overspeed bleeds the same way)
+		speed = math.max(0, speed - Config.GROUND_FRICTION * dt)
+		return s.heading * speed
+	end
+	local want = mv / mv.Magnitude
+
+	-- steer
+	if speed < Config.TURN_FREE_SPEED then
+		s.heading = want
+	else
+		local angle = VecMath.flatAngle(s.heading, want)
+		local maxTurn = TechCore.turnRate(speed) * dt
+		if angle <= maxTurn then
+			s.heading = want
+		else
+			s.heading = VecMath.rotateToward(s.heading, want, maxTurn)
+			s.drifting = true
+			speed *= (1 - Config.TURN_DRIFT_LOSS) ^ (maxTurn / 90)
+		end
+	end
+
+	-- accelerate / decay
+	local target = s.topSpeed * mag
+	if speed > s.topSpeed then
+		speed = math.max(s.topSpeed, speed - Config.OVERSPEED_DECAY_GROUND * dt)
+	elseif speed < target then
+		if not s.drifting then
+			speed = moveToward(speed, target, s.accel * dt)
+		end
+	elseif speed > target then
+		-- a part-pushed stick slows you to its speed like friction
+		speed = math.max(target, speed - Config.GROUND_FRICTION * dt)
+	end
+	return s.heading * speed
+end
+
+-- One fixed step of `dt` (normally TechCore.STEP).
+function TechCore.step(s: State, input: Input, env: Env, dt: number)
+	local wasGrounded = s.grounded
+	s.grounded = env.grounded
+	local frame = s.frame
+	if s.grounded and not wasGrounded then
+		frame.landed = true
+		frame.landingSpeed = math.max(frame.landingSpeed, -s.vel.Y)
+	elseif wasGrounded and not s.grounded then
+		frame.leftGround = true
+	end
+	settleBase(s)
+	if s.grounded and (s.state == "Airborne" or s.state == "AirDodging") then
+		TechCore.enter(s, baseState(s), true)
+	elseif not s.grounded and (RUNNING[s.state] or s.state == "HoldingDisc" or s.state == "Sliding") then
+		TechCore.enter(s, "Airborne", true)
+	end
+
+	local flat = stepFlat(s, input, dt)
+
+	-- walls: never push into one
+	local n = env.wallNormal
+	if n then
+		local into = flat:Dot(n)
+		if into < 0 then
+			flat -= n * into
+		end
+	end
+
+	local vy = s.vel.Y
+	if s.grounded then
+		vy = 0
+	else
+		local g = Config.PLAYER_GRAVITY * (if vy < 0 then Config.FALL_GRAVITY_MULT else 1)
+		vy -= g * dt
+	end
+
+	-- the cap holds on the flat speed and on the fall speed (a long fall
+	-- never eats your run)
+	flat = VecMath.clampMagnitude(flat, Config.HARD_SPEED_CAP)
+	vy = math.clamp(vy, -Config.HARD_SPEED_CAP, Config.HARD_SPEED_CAP)
+	s.vel = Vector3.new(flat.X, vy, flat.Z)
+	s.now += dt
+	frame.steps += 1
+end
+
+-- Runs as many fixed steps as `frameDt` (plus what was left over) covers.
+-- Returns this frame's report (steps run, landed, left the ground).
+function TechCore.advance(s: State, input: Input, env: Env, frameDt: number): FrameReport
+	s.frame = newFrame()
+	s.acc = math.min(s.acc + math.max(frameDt, 0), Config.MAX_FRAME)
+	while s.acc >= STEP do
+		s.acc -= STEP
+		TechCore.step(s, input, env, STEP)
+	end
+	return s.frame
+end
+
+function TechCore.flatSpeed(s: State): number
+	return VecMath.flat(s.vel).Magnitude
+end
+
+return TechCore
+]]></string>
+          </Properties>
+        </Item>
       </Item>
-      <Item class="ModuleScript" referent="24">
+      <Item class="ModuleScript" referent="26">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -5831,11 +6409,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="25">
+      <Item class="Folder" referent="27">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -6295,7 +6873,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -6671,7 +7249,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -6944,7 +7522,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -7487,7 +8065,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -7705,7 +8283,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -8189,7 +8767,7 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -8440,11 +9018,11 @@ return Signatures
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="33">
+      <Item class="Folder" referent="35">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -8491,7 +9069,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -8539,7 +9117,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -8653,19 +9231,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="37">
+  <Item class="ServerScriptService" referent="39">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="38">
+    <Item class="Folder" referent="40">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="39">
+      <Item class="Folder" referent="41">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -9692,7 +10270,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -9816,7 +10394,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -10314,7 +10892,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="43">
+      <Item class="Script" referent="45">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -10379,11 +10957,11 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="44">
+      <Item class="Folder" referent="46">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -10511,7 +11089,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -12918,7 +13496,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -12972,6 +13550,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
+local TechConfig = require(Shared.Config.Tech)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
 local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
@@ -12984,7 +13563,7 @@ local RS = MovementConfig.Reset
 -- quality window sampling: first contact + QualitySamples steps
 local SAMPLE_DT = C.QualityWindow / math.max(C.QualitySamples, 1)
 -- a client-reported body velocity faster than this is junk
-local MAX_BODY_SPEED = MovementConfig.HardCap + 12
+local MAX_BODY_SPEED = math.max(MovementConfig.HardCap, TechConfig.HARD_SPEED_CAP) + 12
 -- how far into the future a claim time may be (clock jitter) before it is clamped
 local FUTURE_SLACK = 0.05
 
@@ -13481,7 +14060,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13792,7 +14371,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="51">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14150,7 +14729,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14686,7 +15265,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14919,7 +15498,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15018,7 +15597,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16784,7 +17363,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16844,6 +17423,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
+local TechConfig = require(Shared.Config.Tech)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
@@ -16951,7 +17531,8 @@ local COOLDOWN_SLACK = 0.05
 local EXERTION_SLACK = 30 -- the mirror may lag the client by this much before claims are refused
 local HISTORY = 72 -- samples (~1.2 s at 60 Hz)
 local SPEED_WINDOW = 1.0
-local SPEED_LIMIT = MovementConfig.HardCap * 1.15 + 8 -- studs per second of window
+-- either engine's cap (the tech core allows more speed than the classic sim)
+local SPEED_LIMIT = math.max(MovementConfig.HardCap, TechConfig.HARD_SPEED_CAP) * 1.15 + 8 -- studs per second of window
 local SPEED_FLAGS_TO_SNAP = 2
 local HOVER_TIME = 6
 local TELEPORT_ARRIVE = 4 -- studs: the server has seen the root reach the teleport target
@@ -18019,7 +18600,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18487,7 +19068,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18993,7 +19574,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19313,7 +19894,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19770,7 +20351,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21660,13 +22241,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="60">
+  <Item class="SoundService" referent="62">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="61">
+  <Item class="StarterPlayer" referent="63">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -21679,11 +22260,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="62">
+    <Item class="StarterCharacterScripts" referent="64">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="63">
+      <Item class="LocalScript" referent="65">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -21734,7 +22315,12 @@ local connection = RunService.Heartbeat:Connect(function(dt)
 
 	local localMode = character:GetAttribute("UB_LocalMode")
 	local state = humanoid:GetState()
-	local airborne = state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping
+	-- the tech engine turns the Humanoid's state machine off and says when
+	-- you are airborne itself (UB_Air)
+	local airAttr = character:GetAttribute("UB_Air")
+	local airborne = if type(airAttr) == "boolean"
+		then airAttr
+		else state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping
 	local clock = os.clock()
 	if airborne then
 		airSince = airSince or clock
@@ -21745,7 +22331,9 @@ local connection = RunService.Heartbeat:Connect(function(dt)
 	local mode: Locomotion.Mode = "Ground"
 	if type(localMode) == "string" and POSE_MODES[localMode] then
 		mode = "Pose"
-	elseif airborne and (state == Enum.HumanoidStateType.Jumping or clock - (airSince :: number) > AIR_GRACE) then
+	elseif
+		airborne and (state == Enum.HumanoidStateType.Jumping or v.Y > 2 or clock - (airSince :: number) > AIR_GRACE)
+	then
 		mode = if v.Y > 2 then "Rising" else "Falling"
 	end
 	Locomotion.update(controller, dt, speed, mode)
@@ -21759,19 +22347,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="64">
+    <Item class="StarterPlayerScripts" referent="66">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="65">
+      <Item class="Folder" referent="67">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="66">
+        <Item class="Folder" referent="68">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -21911,7 +22499,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -22192,7 +22780,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -22945,7 +23533,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -23811,7 +24399,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -24745,7 +25333,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25159,7 +25747,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25205,6 +25793,19 @@ return InputController
 
 	If the per-frame step ever errors, the body is stopped (no runaway
 	character) and the error is reported once.
+
+	TWO ENGINES. Setting TechEngine (default on) runs the new tech core
+	instead (Movement/TechCore, docs/tech-spec.md build steps 1-2): the
+	Humanoid is for animation only (EvaluateStateMachine = false, no
+	WalkSpeed, no jumping); TechCore steps at 120 Hz and its velocity is
+	written straight to the root every frame, with a VectorForce cancelling
+	workspace gravity so only the core's own gravity acts. On the ground the
+	root is held at its stand height by a spring on a down ray; walls ahead
+	(a ray along the velocity, at root and knee height) are slid along.
+	Presses go into the core's input buffer; the tech that uses them comes
+	in later build steps. The character attribute UB_Air tells the Animate
+	script when you are airborne (the Humanoid state no longer says).
+	Turning the setting off switches back to MovementSim at once.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -25214,6 +25815,8 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementSim = require(Shared.Movement.MovementSim)
+local TechCore = require(Shared.Movement.TechCore)
+local TechConfig = require(Shared.Config.Tech)
 local MovementConfig = require(Shared.Config.Movement)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local Signatures = require(Shared.Rules.Signatures)
@@ -25263,6 +25866,13 @@ local jumpPowerArmed = false
 local errorReported = false
 local filterAt = -math.huge
 
+-- the tech engine
+local tech: TechCore.State = TechCore.new(os.clock())
+local engineOn = false -- the tech engine drives the current character
+local antiGravity: VectorForce? = nil
+local techPivotSent = false
+local lastAirAttr: boolean? = nil
+
 local techRemote: RemoteEvent? = nil
 local pivotRemote: RemoteEvent? = nil
 
@@ -25272,6 +25882,8 @@ local BLOCK_RAY = 2.5
 local GROUND_RAY_GROUND = 1.2 -- studs past the feet that still count as grounded (ground modes)
 local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
+local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
+local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -25318,10 +25930,16 @@ function MovementController.combo(): ComboEvaluator.Tracker
 end
 
 function MovementController.isGrounded(): boolean
+	if engineOn then
+		return tech.grounded
+	end
 	return not MovementSim.isAirborne(sim)
 end
 
 function MovementController.isMarking(): boolean
+	if engineOn then
+		return tech.marking
+	end
 	return MovementSim.isMarking(sim)
 end
 
@@ -25329,6 +25947,17 @@ end
 -- the sim; poll isMarking() for the live state.
 function MovementController.setMarking(on: boolean)
 	MovementSim.setMarking(sim, on)
+	TechCore.setMarking(tech, on)
+end
+
+-- "Tech" (TechCore drives the body) or "Classic" (MovementSim).
+function MovementController.engine(): string
+	return if engineOn then "Tech" else "Classic"
+end
+
+-- The tech core's state (debug HUD, later tech).
+function MovementController.techState(): TechCore.State
+	return tech
 end
 
 local function refreshFilter(force: boolean?)
@@ -25527,27 +26156,56 @@ function MovementController.fakeStep(side: number)
 	MovementSim.fakeStep(sim, side)
 end
 
--- What each movement action would do right now ({ Cut = "SNAP CUT", ... }).
-function MovementController.contextHint(): { [string]: string }
-	local env = lastEnv
-	if not env or not root then
-		return {}
-	end
-	local hint = MovementSim.contextHint(sim, currentInput(), env)
-	-- a disc about to pass your hands in the air: the Tip Reset
-	if MovementSim.isAirborne(sim) and not sim.holding and controllers.CatchController.tipReady() then
-		hint.Secondary = "TIP RESET"
-	end
-	-- gamepad X swings to the mirror of the current step, not to the left
-	if sim.holding and hint.Cut and controllers.InputController.scheme() == "Gamepad" then
-		hint.Cut = "SWING OTHER SIDE"
-	end
-	return hint
-end
-
 ---------------------------------------------------------------------------
 -- character setup
 ---------------------------------------------------------------------------
+
+-- Puts the current character on the engine the TechEngine setting picks.
+local function applyEngine()
+	local h, r, c = humanoid, root, character
+	local want = controllers.SettingsController.get("TechEngine") ~= false
+	if not h or not r or not c then
+		engineOn = false
+		return
+	end
+	if want == engineOn and (not want or (antiGravity ~= nil and antiGravity.Parent == r)) then
+		return
+	end
+	engineOn = want
+	if want then
+		h:Move(Vector3.zero, false)
+		h.WalkSpeed = 0
+		h.JumpPower = 0
+		h.EvaluateStateMachine = false
+		local att = r:FindFirstChild("UBFaceAttachment") :: Attachment?
+		local force = Instance.new("VectorForce")
+		force.Name = "UBAntiGravity"
+		force.RelativeTo = Enum.ActuatorRelativeTo.World
+		force.ApplyAtCenterOfMass = true
+		force.Attachment0 = att
+		force.Force = Vector3.new(0, r.AssemblyMass * workspace.Gravity, 0)
+		force.Parent = r
+		antiGravity = force
+		tech = TechCore.new(os.clock())
+		tech.vel = VecMath.flat(r.AssemblyLinearVelocity)
+		TechCore.setHolding(tech, holding)
+		TechCore.setMarking(tech, MovementSim.isMarking(sim))
+		TechCore.setFrozen(tech, c:GetAttribute("UBFrozen") == true)
+		techPivotSent = false
+		lastAirAttr = nil
+	else
+		local force = antiGravity
+		antiGravity = nil
+		if force then
+			force:Destroy()
+		end
+		h.EvaluateStateMachine = true
+		c:SetAttribute("UB_Air", nil)
+		lastAirAttr = nil
+		MovementSim.reset(sim)
+		sim.pos = r.Position
+	end
+end
 
 local function setupCharacter(c: Model)
 	character = c
@@ -25609,10 +26267,17 @@ local function setupCharacter(c: Model)
 	refreshFilter(true)
 	humanoid = h
 	root = r
+	engineOn = false
+	antiGravity = nil
+	applyEngine()
 	h.Died:Connect(function()
 		h:Move(Vector3.zero, false)
 		h.WalkSpeed = 0
 		align.Enabled = false
+		local force = antiGravity
+		if force and force.Parent == r then
+			force.Enabled = false
+		end
 	end)
 end
 
@@ -25636,6 +26301,7 @@ local function handleTeleport(c: Model, r: BasePart)
 	r.AssemblyAngularVelocity = Vector3.zero
 	MovementSim.reset(sim) -- keeps frozen, holding, exertion, cooldowns and the pivot
 	sim.pos = r.Position
+	TechCore.reset(tech)
 	if face and type(yaw) == "number" then
 		controllers.CameraController.setYaw(yaw)
 		lastFacing = VecMath.fromYaw(yaw)
@@ -25667,7 +26333,9 @@ local function updateHolding(grounded: boolean)
 	if want ~= holding then
 		holding = want
 		MovementSim.setHolding(sim, want, grounded)
+		TechCore.setHolding(tech, want)
 		pivotResent = false
+		techPivotSent = false
 	end
 	if confirmed ~= confirmedHold then
 		confirmedHold = confirmed
@@ -25785,6 +26453,160 @@ local function flushTech(mode: string)
 	end
 end
 
+-- The pose mode the tech core's state replicates as (PoseController,
+-- Animate and the server's VALID_MODES know these names).
+local function techPoseMode(): string
+	if tech.frozen then
+		return "Frozen"
+	end
+	local st = tech.state
+	if st == "HoldingDisc" then
+		return if TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then "Pivot" else "Ground"
+	elseif st == "Marking" then
+		return "Mark"
+	elseif st == "Airborne" or st == "AirDodging" then
+		return "Air"
+	elseif st == "Diving" then
+		return "Dive"
+	elseif st == "Sliding" then
+		return "Slide"
+	elseif st == "Downed" then
+		return "DiveSlide"
+	elseif st == "Recovering" then
+		return "Recover"
+	end
+	return "Ground"
+end
+
+-- Facing on the tech engine: the camera while holding / charging / marking
+-- (blended from travel while a catch is still sliding), travel otherwise.
+local function techFace(v: Vector3): (Vector3?, boolean)
+	local catch = controllers.CatchController
+	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
+	local aiming = tech.holding or tech.marking or controllers.ThrowController.isCharging() or catch.isMarking()
+	if aiming then
+		local cam = controllers.CameraController.forward()
+		if travel and tech.holding then
+			local k = math.clamp(1 - v.Magnitude / 10, 0, 1)
+			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
+			return if blend.Magnitude > 0.5 then blend else travel, true
+		end
+		return cam, true
+	end
+	return travel, false
+end
+
+-- One frame on the tech engine.
+local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
+	refreshFilter()
+	standHeight = computeStandHeight(h, r)
+	local pos = r.Position
+
+	-- ground: a ray from the root to just past the feet (further when
+	-- falling fast, so a landing is caught on the frame of touchdown)
+	local vy = tech.vel.Y
+	local groundY: number? = nil
+	if vy <= 0.01 then
+		local snap = if tech.grounded
+			then TechConfig.GROUND_SNAP
+			else TechConfig.GROUND_SNAP_AIR + math.max(0, -vy) * dt
+		local hit = workspace:Raycast(pos, Vector3.new(0, -(standHeight + snap), 0), rayParams)
+		if hit and hit.Normal.Y > 0.5 then
+			groundY = hit.Position.Y
+		end
+	end
+
+	-- walls: along the velocity, at root and knee height
+	local wallNormal: Vector3? = nil
+	local flatVel = VecMath.flat(tech.vel)
+	if flatVel.Magnitude > 0.5 then
+		local ahead = flatVel.Unit * TECH_WALL_RAY
+		for _, origin in { pos, pos - Vector3.new(0, standHeight * 0.6, 0) } do
+			local w = workspace:Raycast(origin, ahead, rayParams)
+			if w and math.abs(w.Normal.Y) < 0.7 then
+				wallNormal = VecMath.flatUnit(w.Normal)
+				break
+			end
+		end
+	end
+
+	updateHolding(groundY ~= nil)
+	if sim.holding then
+		syncPivot(c)
+	end
+
+	local report = TechCore.advance(
+		tech,
+		{ move = controllers.InputController.moveVector() },
+		{ grounded = groundY ~= nil, wallNormal = wallNormal },
+		dt
+	)
+
+	local flat = VecMath.flat(tech.vel)
+	local lined = applyLine(c, pos, flat)
+	if lined ~= flat then
+		flat = lined
+		tech.vel = Vector3.new(lined.X, tech.vel.Y, lined.Z)
+	end
+	local outY = tech.vel.Y
+	if tech.grounded and groundY then
+		local err = groundY + standHeight - pos.Y
+		outY = math.clamp(err * TechConfig.GROUND_SPRING, -TechConfig.GROUND_SPRING_MAX, TechConfig.GROUND_SPRING_MAX)
+	end
+	r.AssemblyLinearVelocity = Vector3.new(flat.X, outY, flat.Z)
+	local force = antiGravity
+	if force then
+		force.Force = Vector3.new(0, r.AssemblyMass * workspace.Gravity, 0)
+	end
+
+	-- the pivot: propose where we stopped once the catch has settled
+	if confirmedHold and not techPivotSent and tech.grounded and TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then
+		local remote = pivotRemote
+		if remote and c:GetAttribute("UBPivot") == nil then
+			techPivotSent = true
+			remote:FireServer(pos)
+		end
+	end
+
+	-- facing
+	local face, aiming = techFace(flat)
+	if face and face.Magnitude > 0.5 then
+		lastFacing = face
+	end
+	local align = ao
+	if align then
+		if aiming ~= aoAiming then
+			aoAiming = aiming
+			align.Responsiveness = if aiming then 45 else 30
+			align.MaxAngularVelocity = if aiming then 40 else 20
+		end
+		align.CFrame = CFrame.lookAt(Vector3.zero, lastFacing)
+	end
+
+	local air = not tech.grounded
+	if air ~= lastAirAttr then
+		lastAirAttr = air
+		c:SetAttribute("UB_Air", air)
+	end
+	if report.landed then
+		MovementController.Landed:Fire(false, report.landingSpeed)
+		feedSignatures({ kind = "Land", t = now() })
+	end
+
+	local mode = techPoseMode()
+	if mode ~= lastMode then
+		lastMode = mode
+		modeDirty = true
+		c:SetAttribute("UB_LocalMode", mode)
+	end
+	flushTech(mode)
+
+	local ended = ComboEvaluator.expire(combo, now())
+	if ended then
+		MovementController.ChainEnded:Fire(ended)
+	end
+end
+
 local function frame(dtRaw: number)
 	local c, h, r = character, humanoid, root
 	if not c or not h or not r or not r.Parent or h.Health <= 0 then
@@ -25806,6 +26628,13 @@ local function frame(dtRaw: number)
 	local frozen = c:GetAttribute("UBFrozen") == true
 	if frozen ~= sim.frozen then
 		MovementSim.setFrozen(sim, frozen)
+	end
+	if frozen ~= tech.frozen then
+		TechCore.setFrozen(tech, frozen)
+	end
+	if engineOn then
+		techFrame(c, h, r, dt)
+		return
 	end
 
 	refreshFilter()
@@ -25890,6 +26719,13 @@ local function guardedFrame(dt: number)
 			h.JumpPower = 0
 		end)
 	end
+	local r = root
+	if r and engineOn then
+		pcall(function()
+			r.AssemblyLinearVelocity = Vector3.zero
+		end)
+		tech.vel = Vector3.zero
+	end
 	if not errorReported then
 		errorReported = true
 		warn("[MovementController] frame failed, movement stopped: " .. tostring(failure))
@@ -25906,6 +26742,11 @@ local function onAction(action: string, scheme: string?)
 		return
 	end
 	if controllers.InputController.menuOpen() then
+		return
+	end
+	if engineOn then
+		-- buffered for the tech that will use it (later build steps)
+		TechCore.press(tech, action, os.clock())
 		return
 	end
 	if sim.holding then
@@ -25998,6 +26839,12 @@ function MovementController.Start()
 		})
 	end)
 
+	controllers.SettingsController.Changed:Connect(function(key)
+		if key == "TechEngine" or key == "All" then
+			applyEngine()
+		end
+	end)
+
 	player.CharacterAdded:Connect(setupCharacter)
 	if player.Character then
 		task.spawn(setupCharacter, player.Character)
@@ -26009,7 +26856,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27103,7 +27950,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27265,7 +28112,150 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="78">
+            <Properties>
+              <string name="Name">TechFeedback</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	TechFeedback — the one feedback channel every tech uses
+	(docs/tech-spec.md, "Roblox architecture"): a sound, a screen flash, a
+	particle burst at your feet and a short text pop over the crosshair
+	("PERFECT CUT"). Perfect gets all four in gold; Clean gets the sound,
+	particles and a white pop; Miss only a dim pop, so a missed window is
+	always readable.
+
+	It says what you just did, never what you could do next.
+
+	  TechFeedback.play("Perfect Cut", "Perfect")
+	  TechFeedback.play("Cut", "Miss", position)
+]]
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+local Theme = require(script.Parent.Parent.UI.Theme)
+
+local TechFeedback = {}
+
+local controllers: any
+local player = Players.LocalPlayer
+local gui: ScreenGui? = nil
+local flash: Frame? = nil
+local popAt = 0
+
+local C = Theme.Colors
+local POP_TIME = 0.6
+local POP_RISE = 28 -- px
+local FLASH_TIME = 0.12
+
+local function ensureGui(): ScreenGui
+	local g = gui
+	if g and g.Parent then
+		return g
+	end
+	local new = Instance.new("ScreenGui")
+	new.Name = "UBTechFeedback"
+	new.ResetOnSpawn = false
+	new.IgnoreGuiInset = true
+	new.DisplayOrder = 5
+	new.Parent = player:WaitForChild("PlayerGui")
+	local f = Instance.new("Frame")
+	f.Name = "Flash"
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundColor3 = C.Perfect
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	f.Parent = new
+	gui = new
+	flash = f
+	return new
+end
+
+local function doFlash(color: Color3, strength: number)
+	ensureGui()
+	local f = flash
+	if not f then
+		return
+	end
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = 1 - strength
+	TweenService:Create(f, TweenInfo.new(FLASH_TIME), { BackgroundTransparency = 1 }):Play()
+end
+
+local function pop(text: string, color: Color3, size: number)
+	local parent = ensureGui()
+	-- a new pop replaces the last one so they never stack up
+	local old = parent:FindFirstChild("Pop")
+	if old then
+		old:Destroy()
+	end
+	popAt = os.clock()
+	local label = Theme.label(string.upper(text), size, {
+		Name = "Pop",
+		Parent = parent,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 0.5, -26),
+		Size = UDim2.fromOffset(420, size + 6),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Font = Theme.Fonts.Heavy,
+		TextColor3 = color,
+		TextStrokeTransparency = 0.5,
+	})
+	local info = TweenInfo.new(POP_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(label, info, {
+		Position = UDim2.new(0.5, 0, 0.5, -26 - POP_RISE),
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	}):Play()
+	task.delay(POP_TIME, function()
+		if label.Parent then
+			label:Destroy()
+		end
+	end)
+end
+
+-- Plays the feedback for a tech. `quality` is "Perfect", "Clean" or "Miss";
+-- `pos` defaults to your feet.
+function TechFeedback.play(name: string, quality: string, pos: Vector3?)
+	local root = controllers.MovementController.root()
+	local at = pos
+	if not at and root then
+		at = root.Position - Vector3.new(0, controllers.MovementController.standHeight(), 0)
+	end
+	if quality == "Perfect" then
+		controllers.AudioController.play("TechPerfect")
+		doFlash(C.Perfect, 0.18)
+		if at then
+			controllers.EffectsController.burst(at, C.Perfect, 18, 16)
+		end
+		pop(name, C.Perfect, 22)
+	elseif quality == "Clean" then
+		controllers.AudioController.play("Tech")
+		if at then
+			controllers.EffectsController.burst(at, C.Clean, 8, 10)
+		end
+		pop(name, C.Clean, 18)
+	else
+		pop(name, C.Muted, 16)
+	end
+end
+
+-- os.clock() of the last pop (tests and the debug HUD).
+function TechFeedback.lastPopAt(): number
+	return popAt
+end
+
+function TechFeedback.Init(c: any)
+	controllers = c
+end
+
+function TechFeedback.Start() end
+
+return TechFeedback
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28097,7 +29087,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28140,6 +29130,7 @@ local Theme = require(UI.Theme)
 local Hud = require(UI.Hud)
 local ThrowHud = require(UI.ThrowHud)
 local Menu = require(UI.Menu)
+local TechDebug = require(UI.TechDebug)
 local Panels = require(UI.Panels)
 local Mobile = require(UI.Mobile)
 
@@ -28405,6 +29396,7 @@ function UIController.Start()
 	Panels.build(gui, controllers)
 	Mobile.build(gui, controllers)
 	Menu.build(gui, controllers)
+	TechDebug.build(gui, controllers)
 
 	controllers.InputController.ActionBegan:Connect(function(action)
 		if action == "Menu" then
@@ -28523,7 +29515,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="78">
+        <Item class="LocalScript" referent="81">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -28548,6 +29540,7 @@ local ORDER = {
 	"PoseController",
 	"AudioController",
 	"EffectsController",
+	"TechFeedback",
 	"UIController",
 }
 
@@ -28572,11 +29565,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="79">
+        <Item class="Folder" referent="82">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -28591,11 +29584,8 @@ end
 	  Centre  the crosshair. Just above it, feedback chips: the ready-made
 	          MovementController.Feedback texts ("NEED SPEED", "ONE PER JUMP",
 	          "PRECISION LANDING -40 ms", 0.6 s; UIController routes them).
-	          Just below it, the context line: what the movement keys do right
-	          now, from MovementController.contextHint() with the bound keys
-	          ("Q SNAP CUT · F BURST", "Q SWING LEFT · SPACE HOP · E SWING
-	          RIGHT"); everyday meanings (Space jump, C slide, E layout) are
-	          left out so the line stays short.
+	          No key hints under it: what chains off what is for players to
+	          find (the tech debug HUD, a setting, shows timing only).
 	  Left    the combo chain, visible from the first technique (a lone jump
 	          does not count): count, points and tier word with a pop and a
 	          rising tick (AudioController.comboTick) per technique, over a bar
@@ -28642,8 +29632,6 @@ local FEED_LIFE = 1.2
 local FEED_FADE = 0.3
 local LOW_EXERTION = 25
 local PIP_FLASH = 0.35
-local CONTEXT_MAX = 3
-local CONTEXT_EVERY = 0.06
 
 -- Cooldown pips: sim readiness key, the action whose key is shown, label.
 local PIPS = {
@@ -28656,8 +29644,6 @@ local PIPS = {
 
 -- Context line: actions in display order, and the labels that are just the
 -- action's everyday meaning (left out).
-local CONTEXT_ORDER = { "Secondary", "Cut", "Slide", "Burst", "Jump", "Dive" }
-local PLAIN: { [string]: string } = { Jump = "JUMP", Slide = "SLIDE", Dive = "LAYOUT" }
 
 type FeedEntry = { label: TextLabel, born: number }
 type PipRef = { fill: Frame, label: TextLabel, stroke: UIStroke?, action: string, text: string }
@@ -28672,8 +29658,6 @@ local chainMode = "hidden" -- "hidden" | "live" | "card"
 local cardUntil = 0
 local chainZeroSince: number? = nil
 local lastConverted: { startT: number, endT: number }? = nil
-local contextText = ""
-local lastContext = 0
 
 local function now(): number
 	return Net.now()
@@ -29074,7 +30058,7 @@ function Hud.build(parent: ScreenGui, c: any)
 	})
 	refs.mark = mark
 
-	-- crosshair, chips above it, context line below it ---------------------------------
+	-- crosshair and the chips above it -----------------------------------------
 	refs.crosshair = make("Frame", {
 		Name = "Crosshair",
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -29098,31 +30082,6 @@ function Hud.build(parent: ScreenGui, c: any)
 		TextStrokeTransparency = 1,
 		TextStrokeColor3 = Color3.new(0, 0, 0),
 	})
-	refs.context = Theme.label("", 13, {
-		Name = "Context",
-		Parent = parent,
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0.5, 22),
-		Size = UDim2.fromOffset(640, 18),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextColor3 = C.Text,
-		TextTransparency = 0.2,
-		TextStrokeTransparency = 0.7,
-		RichText = true,
-	})
-	-- air moves left this jump (shown only in the air): dim = used, cyan = Charged
-	refs.airCharges = Theme.label("", 13, {
-		Name = "AirCharges",
-		Parent = parent,
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0.5, 42),
-		Size = UDim2.fromOffset(420, 18),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextColor3 = C.Text,
-		TextStrokeTransparency = 0.6,
-		RichText = true,
-		Visible = false,
-	})
 	refs.hint = Theme.label("", 14, {
 		Name = "Hint",
 		Parent = parent,
@@ -29133,12 +30092,11 @@ function Hud.build(parent: ScreenGui, c: any)
 		RichText = true,
 	})
 
-	-- pip and context labels follow rebinds and the input scheme
+	-- pip labels follow rebinds and the input scheme
 	local function refreshKeys()
 		for _, pip in pips do
 			pip.label.Text = Theme.keyText(keyOf(pip.action), pip.text)
 		end
-		contextText = "\0" -- forces the context line to rebuild
 	end
 	controllers.SettingsController.Changed:Connect(refreshKeys)
 	controllers.InputController.SchemeChanged:Connect(refreshKeys)
@@ -29490,36 +30448,6 @@ local function modeChipText(state: Instance, phase: string): string
 	return text
 end
 
--- The context line: the non-obvious things the movement keys do right now.
-local function buildContext(): string
-	local hint = controllers.MovementController.contextHint()
-	local entries: { { label: string, keys: { string } } } = {}
-	for _, action in CONTEXT_ORDER do
-		local label = hint[action]
-		if label and label ~= PLAIN[action] then
-			local key = keyOf(action)
-			local merged = false
-			for _, entry in entries do
-				if entry.label == label then
-					if key ~= "" then
-						table.insert(entry.keys, key)
-					end
-					merged = true
-					break
-				end
-			end
-			if not merged and #entries < CONTEXT_MAX then
-				table.insert(entries, { label = label, keys = if key ~= "" then { key } else {} })
-			end
-		end
-	end
-	local parts: { string } = {}
-	for _, entry in entries do
-		table.insert(parts, Theme.keyText(table.concat(entry.keys, "/"), entry.label))
-	end
-	return table.concat(parts, "  ·  ")
-end
-
 local function exertionHint(): string
 	local key = keyOf("Sprint")
 	if key ~= "" and not controllers.SettingsController.get("AutoSprint") then
@@ -29671,57 +30599,15 @@ function Hud.update(_dt: number)
 		refs.markText.Text = table.concat(parts, "  ·  ")
 	end
 
-	-- air moves left this jump
-	local msim = controllers.MovementController.sim()
-	local inAir = (msim.mode == "Air" or msim.mode == "Dive") and not msim.holding
-	refs.airCharges.Visible = inAir
-	if inAir then
-		local function slot(key: string, label: string, used: boolean): string
-			local color = if used then "#5A5F6E" elseif msim.charged then "#5AE6FF" else "#F2F4F8"
-			return string.format('<font color="%s">%s %s</font>', color, key, label)
-		end
-		local parts = {
-			slot(keyOf("Cut"), "AIR CUT", msim.airRedirectUsed),
-			slot(keyOf("Dive"), "AIR LAYOUT", msim.airDiveUsed),
-		}
-		if msim.charged then
-			table.insert(parts, '<font color="#5AE6FF">CHARGED</font>')
-		end
-		if msim.tipsThisAir > 0 then
-			table.insert(
-				parts,
-				string.format(
-					'<font color="#FFD25A">TIPS %d/%d</font>',
-					msim.tipsThisAir,
-					MovementConfig.Reset.MaxTipsPerAir
-				)
-			)
-		end
-		local text = table.concat(parts, "   ")
-		if refs.airCharges.Text ~= text then
-			refs.airCharges.Text = text
-		end
-	end
-
-	-- crosshair + context line
-	local locked = controllers.CameraController.isLocked()
-	refs.crosshair.Visible = locked
-	refs.context.Visible = locked
-	if locked and clock - lastContext >= CONTEXT_EVERY then
-		lastContext = clock
-		local text = buildContext()
-		if text ~= contextText then
-			contextText = text
-			refs.context.Text = text
-		end
-	end
+	-- crosshair (no key hints: what chains off what is for players to find)
+	refs.crosshair.Visible = controllers.CameraController.isLocked()
 end
 
 return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -30678,6 +31564,8 @@ function render.Settings(content: Instance)
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
 		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
+		{ key = "TechEngine", label = "New movement core (tech spec; off = classic movement)" },
+		{ key = "TechDebug", label = "Tech debug HUD (speed, state, timing in ms)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
 	}
@@ -30959,7 +31847,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -31245,7 +32133,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -31624,7 +32512,153 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="87">
+            <Properties>
+              <string name="Name">TechDebug</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	TechDebug — the tech debug HUD (docs/tech-spec.md build step 2). Only
+	numbers you need to tune, top right, monospace:
+
+	  SPEED  21.4 / 22   fall 0.0      flat speed / current top speed
+	  STATE  Grounded  1.24 s          + DRIFT while a turn is rate-limited
+	  BURST  [##########] 100          the meter (spent from step 3)
+	  LAST   Cut: 34 ms early  CLEAN   the last timed press and its grade
+	  BUFFER Jump 42 ms                presses still waiting in the buffer
+	  CORE   120 Hz · 2 steps · 60 fps
+
+	Shown on the tech engine when the TechDebug setting is on, and always in
+	Studio. It reports what happened, never what to press next.
+]]
+
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local TechCore = require(Shared.Movement.TechCore)
+local TechConfig = require(Shared.Config.Tech)
+local Theme = require(script.Parent.Theme)
+
+local TechDebug = {}
+
+local controllers: any
+local panel: Frame? = nil
+local text: TextLabel? = nil
+local fps = 60
+local BAR = 10
+local GRADE_COLOR = { Perfect = "#FFD750", Clean = "#D2F0FF", Miss = "#FF5A64" }
+
+local function visible(): boolean
+	if controllers.MovementController.engine() ~= "Tech" then
+		return false
+	end
+	return RunService:IsStudio() or controllers.SettingsController.get("TechDebug") == true
+end
+
+local function bar(value: number): string
+	local n = math.clamp(math.floor(value / 100 * BAR + 0.5), 0, BAR)
+	return "[" .. string.rep("#", n) .. string.rep(".", BAR - n) .. "]"
+end
+
+local function render(): string
+	local s: TechCore.State = controllers.MovementController.techState()
+	local lines = {}
+	table.insert(
+		lines,
+		string.format(
+			"SPEED  %5.1f / %d   fall %5.1f",
+			TechCore.flatSpeed(s),
+			math.floor(s.topSpeed + 0.5),
+			math.max(0, -s.vel.Y)
+		)
+	)
+	local st = string.format("STATE  %s  %.2f s", s.state, TechCore.timeInState(s))
+	if s.drifting then
+		st ..= '  <font color="#FF9650">DRIFT</font>'
+	end
+	table.insert(lines, st)
+	table.insert(lines, string.format("BURST  %s %3d", bar(s.burst), math.floor(s.burst + 0.5)))
+	local timing = s.lastTiming
+	if timing then
+		table.insert(
+			lines,
+			string.format(
+				'LAST   %s  <font color="%s">%s</font>',
+				TechCore.describeTiming(timing),
+				GRADE_COLOR[timing.quality] or "#FFFFFF",
+				string.upper(timing.quality)
+			)
+		)
+	else
+		table.insert(lines, "LAST   -")
+	end
+	local clock = os.clock()
+	local buffered = {}
+	for action, at in s.buffer do
+		if TechCore.buffered(s, action, clock) then
+			table.insert(buffered, string.format("%s %d ms", action, math.floor((clock - at) * 1000)))
+		end
+	end
+	table.sort(buffered)
+	table.insert(lines, "BUFFER " .. (if #buffered > 0 then table.concat(buffered, "  ") else "-"))
+	table.insert(
+		lines,
+		string.format(
+			"CORE   %d Hz · %d steps · %d fps",
+			TechConfig.PHYSICS_RATE,
+			s.frame.steps,
+			math.floor(fps + 0.5)
+		)
+	)
+	return table.concat(lines, "\n")
+end
+
+function TechDebug.build(parent: ScreenGui, c: any)
+	controllers = c
+	local p = Theme.panel({
+		Name = "TechDebug",
+		Parent = parent,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -12, 0, 72),
+		Size = UDim2.fromOffset(330, 112),
+		BackgroundTransparency = 0.35,
+		Visible = false,
+	})
+	local t = Theme.label("", 13, {
+		Name = "Text",
+		Parent = p,
+		Position = UDim2.fromOffset(10, 6),
+		Size = UDim2.new(1, -20, 1, -12),
+		Font = Enum.Font.Code,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		RichText = true,
+	})
+	panel = p
+	text = t
+	RunService.RenderStepped:Connect(function(dt)
+		if dt > 0 then
+			fps += (1 / dt - fps) * 0.1
+		end
+		local show = visible()
+		p.Visible = show
+		if show then
+			t.Text = render()
+		end
+	end)
+end
+
+-- Whether the HUD is showing (tests / other UI).
+function TechDebug.isShown(): boolean
+	local p = panel
+	return p ~= nil and p.Visible and text ~= nil
+end
+
+return TechDebug
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -31845,7 +32879,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -32309,12 +33343,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="86">
+  <Item class="Teams" referent="90">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="87">
+  <Item class="Workspace" referent="91">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>
