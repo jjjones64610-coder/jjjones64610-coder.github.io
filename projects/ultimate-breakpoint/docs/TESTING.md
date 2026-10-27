@@ -1,150 +1,152 @@
 # Testing
 
-This project was written in an environment **without Roblox Studio**. Anything
-that depends on the engine (physics, replication, rendering, input devices,
-DataStores) has **not been run yet** and must be checked in Studio with the plan
-below. Everything that could be verified offline was verified, and is listed
-first.
+This project is written in an environment **without Roblox Studio**. Anything
+that depends on the engine (Humanoid physics, replication, rendering, input
+devices, DataStores, avatar loading) has **not been run yet** and must be
+checked in Studio with the plan below. Everything that could be verified
+offline was, and is listed first.
 
-## 1. What has been verified (offline, automated)
+## 1. Verified offline (automated)
 
-Run everything with `scripts/check.sh` (see the header for tool versions).
+Run everything with `scripts/check.sh` (the header lists tool versions).
 
 | Check | Tool | Result |
 |---|---|---|
 | Formatting | StyLua 0.20 | clean |
 | Lint | Selene 0.27 (Luau std + Roblox globals) | 0 errors, 0 warnings |
-| Types against the **real Roblox API** (catches invented properties/methods) | luau-lsp 1.70 `analyze`, all files `--!strict`, current `globalTypes.d.luau` | 0 errors |
+| Types against the **real Roblox API** (catches invented properties and methods) | luau-lsp 1.70 `analyze`, every file `--!strict` | 0 errors |
 | Cross-module calls (`services.X.y`, `controllers.X.y`) exist | `scripts/audit_refs.py` | 0 missing |
-| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **71 passed** |
-| Place builds and has the right structure | Rojo 7.4 + `tests/place_check.luau` | OK |
+| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **188 passed** |
+| Place builds with the right structure and StarterPlayer settings | Rojo 7.4 + `tests/place_check.luau` | OK |
 
-What the 71 tests cover:
+What the tests cover (`lune run tests/run.luau <spec>` runs one):
 
-* **Movement** — acceleration time, turn radius, plain vs. Momentum-Cancel
-  reversal (~0.75 s vs < 0.25 s), restart mash lockout, Perfect snap cuts,
-  zig-zag spam penalties, Fake Commit → Sold cut, burst cooldown/ceiling,
-  precision landing timing and lockout, dive → slide → recovery chain, air
-  redirect limits, holding (decelerate then pivot inside 3.2 studs), slide-hop
-  speed ceiling, and a **fuzz test** (120,000 random frames with random
-  techniques, walls and holding) proving the 34 studs/s cap, no NaN and
-  exertion bounds.
-* **Disc physics** — determinism, power→range monotonic, straight full-power
-  backhand, backhand fades left / forehand right, bank curves both ways,
-  hammer inverts, scoober flips short and breaks right, blade is fast,
-  overcharge rolls more, crosswind drift, fixed-step consistency.
-* **Throwing** — charge windows, forehand charge rate, sanitising hostile
-  input, off-balance caps, release heights, left-handed mirroring, solver
-  accuracy (static, leading, coarse) and an **integration test** that solved
-  lead passes actually enter a moving receiver's catch zone.
-* **Catching / defense** — secure, reach and dive zones, fingertip vs clean,
-  server slack, contest resolution, bobble rules, mark stance zones, and an
-  **integration test of mark counterplay** (mid release into a low mark is
-  blocked; pivot + low step-out, hammers and breaks get by; a high mark stops
-  hammers; jumping lifts the hands; you can't throw through a body).
-* **Rules** — every outcome in `RulesEngine`: completions, goals only where
-  you land, airborne resolution, the Greatest, out-of-bounds jump origins,
-  incompletions, blocks, drops, OOB spots, interceptions, Callahan, stall-outs,
-  pulls (in, out → brick, touched and dropped), target score, universe point,
-  time cap during and between points.
-* **Combos**, **rating/levels/team balance**, **deterministic RNG**.
+* **movement (48)**: acceleration, stopping and turning times; plain vs
+  plant-restart reversal; auto-restart; Snap Cut judged against the pre-steer
+  line; look-ahead fake commits; every press returns a reason; the input
+  buffer; burst and layout can't reverse a sprint in one frame; precision
+  landings and their timing; dives, pop-ups and their chain windows; the
+  pivot step model (radius, swing time, fake step, hop, teleports); mark
+  shuffle; **resets** (tip reset restores both air moves with a lift, two per
+  jump, a cooldown, landing clears them; Charged moves; wall reset; landing
+  reset refunds Burst and Layout; a ground layout needs a reset before an air
+  layout); and a **120,000-frame fuzz** with random tip resets: never above
+  the 36 studs/s cap, no NaN, exertion in range, root near the pivot.
+* **disc (15)**: determinism, power → range, turn/fade shapes, bank, hammer,
+  scoober, blade, wind, fixed-step consistency, field fit for both fields.
+* **throw (22)**: charge windows, sanitising hostile input, release heights,
+  releases from the pivot + step, the server's step check, left-handed
+  mirroring, the lead-pass solver and an integration test that solved passes
+  reach a moving receiver.
+* **catch (26)**: catch quality at the closest approach, slack, client-root
+  tolerance, contests, bobbles, block vs interception, the mark box and its
+  counterplay table, the **fixed hitbox** (any stand height gives the
+  standard zones), **prone zones** after a layout, and **tips** (closest pass,
+  Perfect timing, tip-only overhead sphere, the pop lasting about as long as
+  the tipper's lift).
+* **rules (20)**: every RulesEngine outcome (completions, goals, the
+  Greatest, out of bounds, drops, blocks, interceptions, Callahans,
+  stall-outs, pulls, target score, universe point, time cap).
+* **combo (9)**, **misc (10)**: chain scoring, settle/convert, ratings,
+  levels, deterministic RNG.
+* **modes (27)**: Mini / Normal rules and fields, eligibility for 0–16
+  humans, ranked overrides, private rules, MatchPlan splits, bench rotation,
+  exact bot fill, late joiners, leavers, ranked rosters.
+* **signatures (11)**: every signature move's recognition, priority (one
+  per catch), timing windows, and a catch confirmed after its landing.
 
-Regenerate the throw table in DESIGN §4.1: `lune run tests/flight_table.luau`.
+Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.luau`.
 
 ## 2. Studio test plan (not yet run)
 
 ### Setup
 1. Open `build/UltimateBreakpoint.rbxlx` (or `rojo serve` + the Rojo plugin).
-2. Game Settings → Avatar: **R15** (the place file also sets it).
-3. Game Settings → Security: **Enable Studio Access to API Services** if you
-   want saving and the leaderboard (otherwise you'll see a "not saved" toast).
-4. View → Output open. Any `[Breakpoint] X.Init/Start failed` line is a bug.
+2. Game Settings → Avatar: **R15** (also set in the place).
+3. Game Settings → Security: **Enable Studio Access to API Services** for
+   saving and the leaderboard (otherwise a "not saved" toast appears).
+4. View → Output open. `[Breakpoint] X.Init/Start failed` or
+   `MOVEMENT ERROR` is a bug: copy it.
 
-### A. Solo smoke test (Play, F5)
-- [ ] You spawn on the sideline of the Championship Stadium. Output shows `[Breakpoint] server ready`.
-- [ ] HUD: scoreboard (WARMUP clock), exertion bar, pips, hint line. M opens the menu; mouse is free while it is open.
-- [ ] Warm-up disc on the field: walk over it to pick it up, hold LMB and release to throw, the preview arc is visible.
-- [ ] After ~20 s (or Play → *START MATCH NOW* as host) a Casual match starts with bots (3v3).
-- [ ] Line-up: both teams on their goal lines, frozen, end zones glow in the attacking team's colour, banner "POINT 1".
-- [ ] Pull: the puller (you or a bot) throws; everyone unfreezes on release; "PULL!".
-- [ ] Bots cut, mark, chase throws, pick up grounded discs and throw passes.
-- [ ] Catch by running into a disc. Reach (LMB) for wide ones. Layout (E) for far ones.
-- [ ] With the disc: you decelerate then stand on a pivot (can't run); Q/E banks, 1–5 changes type, Ctrl = low, Space = hop, RMB = fake. A stall count appears when marked; it reaches 10 → "STALL" turnover.
-- [ ] Throw out of bounds → turnover where it crossed; catch in the end zone → GOAL banner, confetti, crowd cheers, teams switch ends.
-- [ ] Match ends at 5 or on the cap → summary panel (MVP, stats), back to warm-up.
+### A. Running and feel (solo, F5)
+- [ ] Hold W: you start running at once and **sprint by yourself** after ~0.3 s (Shift sprints instantly). Top speed feels fast; stopping takes a fraction of a second; turns at jog are tight.
+- [ ] Feet don't skate at any speed; walk/run blend smoothly; no limbs pop.
+- [ ] The camera doesn't jitter, clip into the floor when you look up, or pulse its FOV on every cut.
+- [ ] Settings → **Show hitboxes**: every player has the same capsule. A tall or Rthro avatar is rescaled to the standard body when it spawns.
 
-### B. Movement feel (each with a visible label in the combo feed)
-- [ ] Sprint turns are wide; Q while steering 45–90° snaps the line (dust + cyan streak).
-- [ ] Q pointing backward plants (skid mark); Q again ~0.15 s later → "RESTART CUT PERFECT".
-- [ ] Mashing Q twice instantly → "TOO EARLY" feedback.
-- [ ] F bursts (orange ring, FOV kick), then shows a cooldown on the pip.
-- [ ] Ctrl at speed slides (low pose); Q mid-slide → Slide Cut.
-- [ ] Space, then Q in the air bends the path once; Ctrl just before landing → "PRECISION LANDING −xx ms".
-- [ ] E dives horizontally; as the slide stops press Q → Recovery Chain.
-- [ ] Rebound walls exist in the Combo Lab (pink): jump next to one in the air.
-- [ ] Other players/bots show the matching poses (dive, slide, lean, reach, windups).
+### B. Techniques and combos (each press does something)
+- [ ] Hold D, then Q while sprinting → **Snap Cut** (Clean or Perfect, never a weak cut).
+- [ ] Q with nothing held at speed → **Plant**; keep a direction held → auto-restart; Q/F/Space in the window → faster restart.
+- [ ] F → **Burst**; F holding S at a sprint bends your line (no instant reversal).
+- [ ] C at speed → Slide; Q mid-slide → Slide Cut. Jump, C just before landing → "PRECISION LANDING −xx ms".
+- [ ] E → Layout; Space as the slide stops → pop-up. A refused press shows why ("NEED SPEED", "ONE PER JUMP", cooldowns flash the key pip).
+- [ ] The **chain widget** appears from the first technique and counts up; a card shows when it ends; a catch soon after converts it (×2).
 
-### C. Training (Menu → Training, or walk to a terminal and press G)
-- [ ] Movement School advances through all 14 steps.
-- [ ] Cutting Course: timer starts at the first green gate, splits and advice at the end, PB saved.
-- [ ] Momentum Shuttle: reversal times graded.
-- [ ] Aerial Catch: 10 launches; misses explain above/below/too far/early/late.
-- [ ] Throwing Range: rings register hits (including the moving one); miss advice shows left/right/short/long.
-- [ ] Interception Drill: two bots run 8 reps; INT/BLOCK/completed messages with lane distance.
-- [ ] Combo Lab: checklist ticks as chains land.
-- [ ] Free Launcher: set values in Menu → Training, press LAUNCH, catch.
+### C. Resets and signature moves (Training → Reset Lab)
+- [ ] Jump at an incoming floater and press **RMB** as it reaches your hands: the disc pops up, a cyan flash plays, the HUD shows `Q AIR CUT · E AIR LAYOUT` lit again (CHARGED).
+- [ ] Use the reset (Q with a direction, or E) and catch the popped disc before landing → **RESET GRAB** banner, +points in the chain.
+- [ ] Two tips in one jump then the catch → **DOUBLE TIP**; a third tip is refused.
+- [ ] Next to a Rebound wall: wall rebound + tip + catch → **WALL TIP**.
+- [ ] Layout → Perfect pop-up → air layout catch → **DOUBLE LAYOUT**.
+- [ ] A Perfect precision landing shows "LANDING RESET" and Burst is ready at once.
+- [ ] RMB in the air with no disc near → "NO DISC TO TIP".
+- [ ] In a match, other players see your signature banner; in Training only you do.
 
-### D. Multiplayer (Test → Clients and Servers, 2–4 players)
-- [ ] Teams balance; bots top up to equal sizes; a joining player replaces a bot.
-- [ ] Two players contest the same disc: earliest touch wins; near-ties go to the cleaner hand; fingertip contests bobble.
-- [ ] Mark stance + hand blocks: a marker with low hands blocks a mid release thrown into them; a pivot + low step-out gets around.
-- [ ] A player leaving while holding the disc → their team keeps it on the ground there.
-- [ ] Poses, technique effects, disc flights and trails look identical on all clients.
+### D. The pivot and the mark
+- [ ] Catch at a sprint: you slide a little, keep facing your run, then turn to the camera and plant (pivot disc under your foot).
+- [ ] WASD steps around the pivot; the planted foot never moves; Q / E swing fast; the throw comes from where your hand is and goes **where the crosshair points**.
+- [ ] Training → **Break the Mark**: a step-out to the open side gets past; a Sold swing (fake, then swing) beats the bot.
+- [ ] As a defender: hold RMB near the holder to mark-shuffle (no skating); C toggles Low / High; the stall counts.
 
-### E. Latency (Studio Settings → Network → Incoming Replication Lag 0.1–0.2 s)
-- [ ] Your own throws leave instantly and blend smoothly onto the server flight.
-- [ ] Your catches snap to your hand immediately; contested ones correct cleanly.
-- [ ] Catch claims are not rejected for normal play (watch for many "Denied" results; increase `Catch.BaseSlack` if so).
-- [ ] No false speed resets while moving with techniques (raise `HardCap * 1.25 + 6` slack in MovementService if needed).
+### E. Matches and modes
+- [ ] Alone: the lobby says practice vs bots; a **Mini 3v3** starts with bots on the Mini field.
+- [ ] Test → Clients and Servers with 2–6 players: Mini, teams balanced, bots fill the rest; a joining player replaces a bot at the next point.
+- [ ] With 7–9 players the vote offers Mini or Normal; Normal is 7v7 on the big field. Extras sit on the bench and rotate in.
+- [ ] Line-ups freeze only briefly, then you can move behind your goal line; the pull releases everyone.
+- [ ] Goals, turnovers, stall-outs, the end-of-match summary.
 
-### F. Devices
-- [ ] Device emulator (phone): thumbstick, buttons, camera drag, disc buttons appear when holding; menu button.
-- [ ] Gamepad: every binding in Menu → Controls; menu navigable with the D-pad.
-- [ ] Rebinding a key in Menu → Controls takes effect immediately and persists after rejoin (with API access).
+### F. Latency (Studio Settings → Network → Incoming Replication Lag 0.1–0.2 s)
+- [ ] No snapping or rubber-banding while running with techniques (speed check).
+- [ ] Catches snap to your hand at once; a lost contest eases back cleanly; observers see the disc go into the catcher's hand, not teleport.
+- [ ] Tips: the disc pops for you at once and the server's version blends in.
+- [ ] Pivot: no travel resets while legally stepping or swinging.
 
-### G. Data
-- [ ] With API access: XP, level, stats, mastery, PBs, cosmetics and settings persist across sessions.
-- [ ] Ranked (4+ humans, no bots): ratings change and the leaderboard lists them after ~90 s.
+### G. Devices
+- [ ] Phone emulator: stick, buttons, TIP label in the air, swing buttons while holding.
+- [ ] Gamepad: all bindings; X swings to the other side while holding; L2 tips in the air.
+- [ ] Rebinding takes effect at once and persists (with API access).
 
 ### H. Performance (MicroProfiler, Ctrl+F6)
-- [ ] Client frame < 8 ms on a mid PC with 14 players/bots in a stadium arena.
-- [ ] Server Heartbeat stays well under 16 ms with 8 bots.
+- [ ] Client frame < 8 ms with 14 players/bots on Normal (hitbox overlay off).
+- [ ] Server Heartbeat well under 16 ms with 13 bots.
 
-## 3. Assumptions to confirm in Studio
+## 3. Engine assumptions to confirm in Studio
 
-These are the places where engine behaviour was reasoned about but not observed:
+These were reasoned about from the API, not observed:
 
-1. **Humanoid + `LinearVelocity` (Plane mode)** controls horizontal motion
-   cleanly with `WalkSpeed = 0`. If movement jitters, raise the force in
-   `MovementController` (`AssemblyMass * 900`) or set `RigidityEnabled`.
-2. **Jumping** via `ChangeState(Jumping)` + direct vertical velocity behaves
-   the same on ground and in the air (wall rebound uses it mid-air).
-3. **Limb collision group** (`UBLimbs` collides with nothing) keeps the
-   procedural layout/slide poses from snagging the ground.
-4. **Default R15 animation IDs** in `Shared/Animation/Locomotion.luau` load in
-   your experience (they are Roblox's own).
-5. **Built-in sound paths** (`rbxasset://sounds/...`) in `Config/Audio.luau`
-   exist on all platforms; missing ones are silent. Crowd loops need your own
-   uploaded audio.
-6. **`Players:CreateHumanoidModelFromDescription`** builds bots in Studio and
-   live servers.
-7. **Motor6D C0 posing** looks right on avatars with unusual proportions
-   (Rthro, very small/large scales).
+1. **Humanoid-driven movement**: `WalkSpeed = |v|` + `Move(v.Unit)` each
+   frame tracks the sim's velocity closely on the ground and in the air, and
+   direct `AssemblyLinearVelocity` writes on impulse frames stick.
+2. **Jumps** via `JumpPower` + `ChangeState(Jumping)` (also mid-air for wall
+   rebounds and tip lifts).
+3. **Avatar normalisation**: `Humanoid:GetAppliedDescription()` +
+   `ApplyDescriptionAsync` rescales spawned players without breaking the
+   movement or poses (PoseController re-captures rest joints).
+4. **Leg IK** in PoseController plants the pivot foot and stance feet on the
+   ground for standard bodies.
+5. **Camera** `workspace:Spherecast` distance semantics for wall pull-in.
+6. **Bots** from `Players:CreateHumanoidModelFromDescription`, server-owned,
+   driven by the same sim.
+7. **Adornments** (`CylinderHandleAdornment` / `SphereHandleAdornment` under
+   a workspace folder) render the hitbox overlay.
+8. Built-in sound paths in `Config/Audio.luau` exist on all platforms
+   (missing ones are silent; crowd loops need your own audio).
 
 ## 4. Tuning
 
-All feel numbers live in `src/shared/Config`: `Movement.luau` (speeds, windows,
-costs), `Disc.luau` (flight, throw, catch, mark), `Modes.luau` (rules),
-`Arenas.luau` (wind, look). Re-run `lune run tests/run.luau` after changes:
-the tests encode the intended *relationships* (e.g. spam must score lower than
-variety, a plant-restart must beat a plain reversal), not exact values.
+All feel numbers live in `src/shared/Config`: `Movement.luau` (speeds,
+windows, costs, resets), `Disc.luau` (flight, tempo, throw, catch, tip,
+mark), `Hitbox.luau`, `Signatures.luau` (points, windows), `Modes.luau`
+(fields, rules), `Arenas.luau` (wind, look). Re-run `lune run tests/run.luau`
+after changes: the tests encode relationships (spam scores less than variety,
+a plant-restart beats a plain reversal, a tip's pop lasts about as long as
+the tipper's lift), not exact values.

@@ -3,9 +3,36 @@
 	PlayerService — the roster of actors (human players and bots).
 
 	Owns team objects, character setup (collision group, attributes the rest
-	of the game keys on), teleports and the per-actor "frozen" flag used during
-	line-ups. Players never collide with each other (ultimate is a non-contact
-	sport; body positioning is resolved by catch geometry instead).
+	of the game keys on), teleports, the per-actor "frozen" flag and the
+	pre-pull line restriction. Players never collide with each other (ultimate
+	is a non-contact sport; body positioning is resolved by catch geometry).
+
+	Roles: "Match" (on the field this point), "Bench" (on the team, waiting
+	for the next point on the sideline bench), "Training", "Spectate".
+	onTeam() lists the field players; roster() includes the bench.
+
+	Movement is client-driven: each client sets its own Humanoid WalkSpeed /
+	Move every frame from its MovementSim. The server only sets the spawn
+	defaults (AutoRotate off, jump power 0) once and never writes WalkSpeed on
+	a player's Humanoid afterwards, so it never fights the client.
+
+	Teleports are an explicit protocol (character attributes, written in this
+	order):
+	  UBTeleportPos  Vector3   where the root goes
+	  UBTeleportYaw  number    facing (CameraController.getYaw convention)
+	  UBTeleportFace boolean   the client also turns its camera (line-ups,
+	                           drills, spawns); false keeps the camera
+	  UBTeleport     number    counter, bumped last
+	The client puts its root there if it is more than a stud away, zeroes its
+	velocity and resets its sim (keeping frozen, holding, exertion, pivot).
+
+	Line restriction (before the pull): UBLineX / UBLineSide; the character
+	must keep (pos.X - UBLineX) * UBLineSide >= 0. nil = free.
+
+	Fixed hitbox (Config/Hitbox): every player's avatar is rescaled to the
+	standard proportions when it spawns (HumanoidDescription scales; clothes,
+	colours and accessories are kept), so no avatar is bigger or smaller
+	than another. Gameplay zones are measured from the feet anyway.
 ]]
 
 local Players = game:GetService("Players")
@@ -16,6 +43,7 @@ local TeamsService = game:GetService("Teams")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Signal = require(Shared.Util.Signal)
 local TeamsConfig = require(Shared.Config.Teams)
+local Hitbox = require(Shared.Config.Hitbox)
 
 local PlayerService = {}
 
@@ -25,10 +53,16 @@ export type Actor = {
 	player: Player?,
 	isBot: boolean,
 	team: string, -- "A" | "B" | "N"
-	role: string, -- "Match" | "Training" | "Spectate"
+	role: string, -- "Match" | "Bench" | "Training" | "Spectate"
 	character: Model?,
 	teleportCount: number,
 	joinedAt: number,
+	lineX: number?, -- pre-pull restriction (UBLineX / UBLineSide), re-stamped on respawn
+	lineSide: number?,
+}
+
+export type TeleportOptions = {
+	face: boolean?, -- the client also turns its camera to the new facing
 }
 
 local actors: { [number]: Actor } = {}
@@ -98,6 +132,63 @@ local function stampCharacter(actor: Actor, model: Model)
 	model:SetAttribute("UBName", actor.name)
 	model:SetAttribute("UBRole", actor.role)
 	model:SetAttribute("UBTeleport", actor.teleportCount)
+	model:SetAttribute("UBLineX", actor.lineX)
+	model:SetAttribute("UBLineSide", actor.lineSide)
+end
+
+-- True when a description already has the standard scales.
+local function isStandard(desc: HumanoidDescription): boolean
+	local S = Hitbox.Scales
+	local function near(a: number, b: number): boolean
+		return math.abs(a - b) < 1e-3
+	end
+	return near(desc.HeightScale, S.HeightScale)
+		and near(desc.WidthScale, S.WidthScale)
+		and near(desc.DepthScale, S.DepthScale)
+		and near(desc.HeadScale, S.HeadScale)
+		and near(desc.BodyTypeScale, S.BodyTypeScale)
+		and near(desc.ProportionScale, S.ProportionScale)
+end
+
+-- Gives a description the standard body scales (Config/Hitbox.Scales).
+function PlayerService.standardize(desc: HumanoidDescription)
+	local S = Hitbox.Scales
+	desc.HeightScale = S.HeightScale
+	desc.WidthScale = S.WidthScale
+	desc.DepthScale = S.DepthScale
+	desc.HeadScale = S.HeadScale
+	desc.BodyTypeScale = S.BodyTypeScale
+	desc.ProportionScale = S.ProportionScale
+end
+
+-- Rescales a freshly spawned player character to the standard body. Runs in
+-- its own thread (applying a description yields). Leaves the avatar as it is
+-- if the description cannot be read or applied; gameplay zones still use
+-- the fixed hitbox.
+local function normalizeAvatar(model: Model, humanoid: Humanoid)
+	-- CharacterAdded can fire before the model is parented to the workspace
+	for _ = 1, 50 do
+		if model:IsDescendantOf(workspace) then
+			break
+		end
+		task.wait(0.1)
+	end
+	if not model:IsDescendantOf(workspace) or humanoid.Parent ~= model then
+		return
+	end
+	local ok, desc = pcall(function()
+		return humanoid:GetAppliedDescription()
+	end)
+	if not ok or not desc or isStandard(desc) then
+		return
+	end
+	PlayerService.standardize(desc)
+	local applied, err = pcall(function()
+		humanoid:ApplyDescriptionAsync(desc)
+	end)
+	if not applied then
+		warn("[PlayerService] could not apply the standard body: " .. tostring(err))
+	end
 end
 
 function PlayerService.setupCharacter(actor: Actor, model: Model)
@@ -106,15 +197,17 @@ function PlayerService.setupCharacter(actor: Actor, model: Model)
 	stampCharacter(actor, model)
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	if humanoid then
+		-- one-time spawn defaults; the owner (client MovementController for
+		-- players, BotService for bots) drives WalkSpeed / Move / JumpPower
 		humanoid.BreakJointsOnDeath = false
 		humanoid.UseJumpPower = true
 		humanoid.JumpPower = 0
 		humanoid.AutoRotate = false
-		if not actor.isBot then
-			humanoid.WalkSpeed = 0
-		end
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 		humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+		if not actor.isBot and Hitbox.NormalizeAvatars and humanoid.RigType == Enum.HumanoidRigType.R15 then
+			task.spawn(normalizeAvatar, model, humanoid)
+		end
 	end
 	PlayerService.CharacterSpawned:Fire(actor, model)
 end
@@ -130,6 +223,8 @@ local function onPlayerAdded(player: Player)
 		character = nil,
 		teleportCount = 0,
 		joinedAt = os.clock(),
+		lineX = nil,
+		lineSide = nil,
 	}
 	actors[actor.id] = actor
 	player.Team = teamObjects.N
@@ -161,6 +256,8 @@ function PlayerService.registerBot(id: number, name: string, team: string, model
 		character = model,
 		teleportCount = 0,
 		joinedAt = os.clock(),
+		lineX = nil,
+		lineSide = nil,
 	}
 	actors[id] = actor
 	PlayerService.setupCharacter(actor, model)
@@ -208,10 +305,33 @@ function PlayerService.humans(): { Actor }
 	return list
 end
 
+-- Field players of a team (role "Match").
 function PlayerService.onTeam(team: string, includeBots: boolean?): { Actor }
 	local list = {}
 	for _, a in PlayerService.all() do
 		if a.team == team and a.role == "Match" and (includeBots ~= false or not a.isBot) then
+			table.insert(list, a)
+		end
+	end
+	return list
+end
+
+-- Everyone on a team: field players and the bench.
+function PlayerService.roster(team: string, includeBots: boolean?): { Actor }
+	local list = {}
+	for _, a in PlayerService.all() do
+		if a.team == team and (a.role == "Match" or a.role == "Bench") and (includeBots ~= false or not a.isBot) then
+			table.insert(list, a)
+		end
+	end
+	return list
+end
+
+-- The bench of a team (humans waiting for the next point).
+function PlayerService.bench(team: string): { Actor }
+	local list = {}
+	for _, a in PlayerService.all() do
+		if a.team == team and a.role == "Bench" then
 			table.insert(list, a)
 		end
 	end
@@ -248,21 +368,65 @@ function PlayerService.humanoid(actor: Actor): Humanoid?
 	return nil
 end
 
--- Moves an actor and tells their client to drop its momentum.
-function PlayerService.teleport(actor: Actor, cf: CFrame)
+-- Facing yaw of a CFrame in the CameraController.getYaw convention
+-- (CFrame.Angles(0, yaw, 0) looks along the flat LookVector).
+local function yawOf(cf: CFrame): number?
+	local look = cf.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 1e-3 then
+		return nil
+	end
+	return math.atan2(-flat.X, -flat.Z)
+end
+
+-- Moves an actor's root to cf (kept upright) and tells their client exactly
+-- where it went (see the protocol in the header). opts.face also turns the
+-- camera; without it the client keeps its camera.
+function PlayerService.teleport(actor: Actor, cf: CFrame, opts: TeleportOptions?)
 	local c = actor.character
 	if not c or not c.Parent then
 		return
 	end
 	local root = PlayerService.root(actor)
+	local yaw = yawOf(cf) or (if root then yawOf(root.CFrame) else nil) or 0
+	local target = CFrame.new(cf.Position) * CFrame.Angles(0, yaw, 0)
+	c:SetAttribute("UBTeleportPos", target.Position)
+	c:SetAttribute("UBTeleportYaw", yaw)
+	c:SetAttribute("UBTeleportFace", opts ~= nil and opts.face == true)
 	if root then
+		-- sticks for server-owned bots; the owning client zeroes its own
 		root.AssemblyLinearVelocity = Vector3.zero
 	end
-	c:PivotTo(cf)
+	c:PivotTo(target)
 	actor.teleportCount += 1
 	c:SetAttribute("UBTeleport", actor.teleportCount)
 	if services and services.MovementService then
-		services.MovementService.noteTeleport(actor.id)
+		services.MovementService.noteTeleport(actor.id, target.Position)
+	end
+end
+
+-- Pre-pull line restriction: keep (pos.X - x) * side >= 0. nil clears it.
+function PlayerService.setLine(actor: Actor, x: number?, side: number?)
+	if x == nil or side == nil then
+		actor.lineX = nil
+		actor.lineSide = nil
+	else
+		actor.lineX = x
+		actor.lineSide = if side < 0 then -1 else 1
+	end
+	local c = actor.character
+	if c then
+		c:SetAttribute("UBLineX", actor.lineX)
+		c:SetAttribute("UBLineSide", actor.lineSide)
+	end
+end
+
+-- Clears every actor's line restriction.
+function PlayerService.clearLines()
+	for _, a in PlayerService.all() do
+		if a.lineX ~= nil then
+			PlayerService.setLine(a, nil, nil)
+		end
 	end
 end
 

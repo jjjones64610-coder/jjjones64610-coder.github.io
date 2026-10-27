@@ -1,5 +1,8 @@
 --!strict
--- Panels — end-of-match summary, drill HUD and drill reports, nameplates.
+-- Panels — end-of-match summary (sized for a full 7v7 plus subs: 14 rows show
+-- without scrolling; bots and subs are tagged, ranked / void / PvP noted),
+-- drill HUD and drill reports, nameplates (readable to 360 studs, the length
+-- of the Normal field).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -42,7 +45,7 @@ function Panels.showSummary(sum: any)
 		Name = "Summary",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.52),
-		Size = UDim2.fromOffset(720, 440),
+		Size = UDim2.fromOffset(760, 486),
 		Parent = refs.root,
 	})
 	refs.summary = panel
@@ -58,23 +61,18 @@ function Panels.showSummary(sum: any)
 		Font = Theme.Fonts.Heavy,
 		TextColor3 = Theme.teamColor(sum.winner),
 	})
-	Theme.label(
-		string.format(
-			"%d  -  %d   ·   %s%s",
-			sum.score.A,
-			sum.score.B,
-			sum.mode or "",
-			if sum.ranked then "  ·  RANKED" else ""
-		),
-		16,
-		{
-			Parent = panel,
-			Position = UDim2.fromOffset(20, 54),
-			Size = UDim2.new(1, -40, 0, 20),
-			TextXAlignment = Enum.TextXAlignment.Center,
-			TextColor3 = C.Muted,
-		}
-	)
+	local tag = if sum.ranked
+		then "  ·  RANKED"
+		elseif sum.rankedVoid then "  ·  RANKED (VOID: a player left)"
+		elseif sum.pvp then "  ·  PvP"
+		else ""
+	Theme.label(string.format("%d  -  %d   ·   %s%s", sum.score.A, sum.score.B, sum.mode or "", tag), 16, {
+		Parent = panel,
+		Position = UDim2.fromOffset(20, 54),
+		Size = UDim2.new(1, -40, 0, 20),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextColor3 = C.Muted,
+	})
 	local list = make("ScrollingFrame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -86,7 +84,7 @@ function Panels.showSummary(sum: any)
 		Parent = panel,
 		Theme.list(3),
 	})
-	Theme.label("PLAYER                          G    A    BLK  CAT  CMP  TO   HL", 13, {
+	Theme.label("PLAYER                          G    A    BLK  CAT  CMP  TO   HL", 12, {
 		Parent = list,
 		LayoutOrder = 0,
 		TextColor3 = C.Muted,
@@ -99,7 +97,8 @@ function Panels.showSummary(sum: any)
 		return (a.goals + a.assists) > (b.goals + b.assists)
 	end)
 	for i, r in sum.rows do
-		local name = string.sub(r.name .. string.rep(" ", 30), 1, 30)
+		local suffix = if r.bot then " (bot)" elseif r.bench then " (sub)" else ""
+		local name = string.sub(string.sub(tostring(r.name), 1, 30 - #suffix) .. suffix .. string.rep(" ", 30), 1, 30)
 		local mvp = if r.id == sum.mvp then " MVP" else ""
 		local change = sum.ratingChanges and sum.ratingChanges[tostring(r.id)]
 		local rating = if change then string.format("  %d (%+d)", change.new, change.new - change.old) else ""
@@ -117,10 +116,11 @@ function Panels.showSummary(sum: any)
 				mvp,
 				rating
 			),
-			13,
+			12,
 			{
 				Parent = list,
 				LayoutOrder = i,
+				Size = UDim2.new(1, -6, 0, 18),
 				Font = Enum.Font.Code,
 				TextColor3 = if r.id == player.UserId then C.Gold else Theme.teamColor(r.team),
 			}
@@ -223,7 +223,7 @@ local function plateFor(model: Model): BillboardGui?
 		Size = UDim2.fromOffset(180, 54),
 		StudsOffset = Vector3.new(0, 2.6, 0),
 		AlwaysOnTop = false,
-		MaxDistance = 160,
+		MaxDistance = 360,
 		LightInfluence = 0,
 		Adornee = head,
 		Parent = refs.root,

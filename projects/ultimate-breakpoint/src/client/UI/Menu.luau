@@ -1,6 +1,22 @@
 --!strict
--- Menu — Play (votes, join, private rules), Training, Profile, Locker,
--- Leaderboard, Settings and Controls (rebinding + technique reference).
+--[[
+	Menu — Play, Training, Profile, Locker, Leaderboard, Settings, Controls.
+
+	Play: join (mid-match only: everyone in the warm-up is already in the
+	next match) / training, then during warm-up the mode choice. On a public
+	server only the modes the head count allows are offered (UBState
+	VoteModes; Mini up to 9 players, Normal from 7), each other mode says how
+	many players it needs, and a single eligible mode is shown as decided
+	rather than as a vote. The ranked line comes from RankedNext /
+	RankedStatus / RankedReady ("4/6"). In a private server or Studio the
+	host picks the mode (PrivateConfig Mode), edits the rules in
+	Modes.EditableOrder (labels from Modes.Editable, values from the chosen
+	mode's preset) and can START MATCH NOW; ranked is always off there. The
+	page refreshes itself while open when the vote state changes.
+
+	Controls: rebinding, sprint options (AutoSprint, ToggleSprint) and a
+	technique guide written with the keys you have bound.
+]]
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -16,6 +32,7 @@ local InputConfig = require(Shared.Config.Input)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
+local SignaturesConfig = require(Shared.Config.Signatures)
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -33,6 +50,22 @@ local rebinding: { action: string, button: TextButton }? = nil
 local launcher = { throwType = "Backhand", power = 0.5, pitch = 10, bank = 0, offset = 0 }
 
 local TABS = { "Play", "Training", "Profile", "Locker", "Leaderboard", "Settings", "Controls" }
+
+-- UBState attributes the Play tab shows (it refreshes when they change).
+local PLAY_STATE = {
+	"Phase",
+	"VoteModes",
+	"VoteCounts",
+	"VoteDefault",
+	"VoteArenas",
+	"RankedReady",
+	"RankedStatus",
+	"RankedNext",
+	"PrivateConfig",
+	"HostId",
+	"Ranked",
+	"ModeName",
+}
 
 local DRILLS: { any } = {
 	{ id = "Tutorial", name = "Movement School", desc = "Every technique, step by step.", pb = nil },
@@ -52,21 +85,97 @@ local DRILLS: { any } = {
 	{ id = "Range", name = "Throwing Range", desc = "10 throws at static and moving rings.", pb = "score" },
 	{ id = "Interception", name = "Interception Drill", desc = "Read the thrower. Get the D.", pb = "score" },
 	{ id = "Combo", name = "Combo Lab", desc = "Land eight technique chains. Rebound walls inside.", pb = nil },
+	{
+		id = "BreakMark",
+		name = "Break the Mark",
+		desc = "Beat a bot marker from your pivot: step out, fake, swing, release.",
+		pb = "score",
+	},
+	{
+		id = "ResetLab",
+		name = "Reset Lab",
+		desc = "High lobs to tip and chase, rebound walls. Land the signature moves.",
+		pb = "score",
+	},
 }
 
-local TECH_GUIDE = {
-	"SNAP CUT — sprint, then Cut while steering 25-115 deg away. Hold a line first: committed full-speed cuts are Perfect.",
-	"MOMENTUM CANCEL — Cut while steering backward (or with no direction). Then Cut/Burst 0.10-0.32 s later to restart; 0.10-0.21 s is Perfect.",
-	"FAKE COMMIT — Cut while running straight (or standing): a jab step. Cut away within 0.45 s for a Sold cut (always Perfect).",
-	"BURST STEP — Burst. Short, explosive, 1.6 s cooldown. Free and Perfect out of a plant; Perfect within 0.15 s of a Snap Cut.",
-	"SLIDE / SLIDE CUT — Slide while fast. Cut mid-slide to leave at a new angle (0.3-0.6 s into the slide is Perfect).",
-	"AIR REDIRECT — Cut in the air: bend your path up to 80 deg once per jump. Near the apex = Perfect.",
-	"PRECISION LANDING — Slide within 0.15 s before touching down (or 0.06 s after): no landing penalty. After a dive it is a Roll-out.",
-	"LAYOUT — Dive. Huge reach forward. Recovery Chain: Cut/Burst/Jump as your slide stops (first 0.09 s = Perfect). Too early locks you out.",
-	"WALL REBOUND — Jump beside a glowing Rebound wall while airborne (special arenas and the Combo Lab).",
-	"REACH — Primary without the disc: extend toward your aim for a moment. Airborne reaches are Aerial Catch Adjustments.",
-	"MARK — hold Secondary near the thrower: hands up. Aim low for wide hands, high to cover hammers. Jump to lift them.",
-}
+-- The technique guide, written with the keys currently bound (keyboard).
+local function techGuide(): { string }
+	local function k(action: string): string
+		local label = controllers.SettingsController.keyLabel(action, "keyboard")
+		return if label ~= "" then label else "(unbound)"
+	end
+	local cut, burst, slide, dive, jump = k("Cut"), k("Burst"), k("Slide"), k("Dive"), k("Jump")
+	return {
+		string.format(
+			"RUN — move to run; sprint starts by itself when you push one way (AutoSprint), or hold %s.",
+			k("Sprint")
+		),
+		string.format(
+			"SNAP CUT — while running, steer to the new direction and tap %s (hold A or D, then %s). A longer straight line before it = Perfect.",
+			cut,
+			cut
+		),
+		string.format(
+			"PLANT — tap %s with S held (or no direction) at speed: you stop dead. Hold a direction to restart; %s, %s or %s just after = a faster restart.",
+			cut,
+			cut,
+			burst,
+			jump
+		),
+		string.format(
+			"FAKE COMMIT — %s along your line without steering: a jab. Cut away within 0.6 s for a Sold cut (always Perfect).",
+			cut
+		),
+		string.format(
+			"BURST — %s. A short explosive push (1.2 s cooldown). Perfect right after a cut, slide cut or pop-up; free out of a plant.",
+			burst
+		),
+		string.format(
+			"SLIDE / SLIDE CUT — %s while running. %s mid-slide leaves at a new angle; %s bursts out.",
+			slide,
+			cut,
+			burst
+		),
+		string.format(
+			"AIR REDIRECT — %s in the air with a direction held: bend your path once per jump. Near the apex = Perfect.",
+			cut
+		),
+		string.format(
+			"PRECISION LANDING — %s just before touchdown keeps your speed. After a dive it is a Roll-out.",
+			slide
+		),
+		string.format(
+			"LAYOUT — %s. A huge reach. Pop up with %s, %s or %s as the slide stops.",
+			dive,
+			jump,
+			cut,
+			burst
+		),
+		string.format(
+			"WALL REBOUND — %s beside a glowing Rebound wall while airborne (special arenas and the Combo Lab).",
+			jump
+		),
+		string.format(
+			"TIP RESET — in the air, press %s as the disc reaches your hands: it pops up and your air cut and air layout come back (Charged). Wall Rebounds reset too; a Perfect landing or pop-up refunds Burst / Layout.",
+			k("Secondary")
+		),
+		"SIGNATURE MOVES — Reset Grab, Double Tip, Wall Tip, Double Layout, Reset Loop, Self-D, Skyball, The Greatest: hard, and worth thousands (Training lists how).",
+		"CHAINS — techniques within 1.5 s of each other chain. A catch, block or interception within 2 s converts the chain: x2 points and a highlight.",
+		string.format(
+			"WITH THE DISC — WASD steps your free foot around the pivot (the coloured disc under you). %s / %s swing left / right, RMB fakes, %s hops for a high release, hold %s to release low. Fake, swing, release fast = BREAK.",
+			cut,
+			dive,
+			jump,
+			slide
+		),
+		string.format(
+			"MARK — hold RMB near the thrower: shuffle and keep your hands in the lane. %s switches Low / High hands; jump to block a hop.",
+			slide
+		),
+		"REACH — LMB without the disc: extend toward your aim for a moment. Airborne reaches are Aerial Catch Adjustments.",
+	}
+end
 
 local function clear(frame: Instance)
 	for _, ch in frame:GetChildren() do
@@ -142,32 +251,123 @@ end
 
 local render: { [string]: (Instance) -> () } = {}
 
+local function attrString(inst: Instance, name: string): string
+	local v = inst:GetAttribute(name)
+	return if type(v) == "string" then v else ""
+end
+
+local function decodeJson(text: string): { [string]: any }
+	local ok, decoded = pcall(function()
+		return HttpService:JSONDecode(if text ~= "" then text else "{}")
+	end)
+	return if ok and type(decoded) == "table" then decoded else {}
+end
+
+local function modeName(id: string?): string
+	local m = if id then ModesConfig.List[id] else nil
+	return if m then m.Display else tostring(id or "")
+end
+
+-- Head counts each mode is offered for (from Modes.eligible), for the
+-- "needs N players" hints.
+local ELIGIBLE: { [string]: { min: number, max: number } } = {}
+for n = 1, 32 do
+	local options = ModesConfig.eligible(n)
+	for _, id in options do
+		local r = ELIGIBLE[id]
+		if r then
+			r.max = n
+		else
+			ELIGIBLE[id] = { min = n, max = n }
+		end
+	end
+end
+
+local function needsText(id: string): string
+	local r = ELIGIBLE[id]
+	if not r then
+		return "not available"
+	elseif r.min > 1 then
+		return string.format("needs %d+ players", r.min)
+	elseif r.max < 32 then
+		return string.format("up to %d players", r.max)
+	end
+	return ""
+end
+
+local function formatRule(key: string, value: any): string
+	if type(value) ~= "number" then
+		return tostring(value)
+	elseif key == "TimeCap" then
+		return Theme.formatTime(value)
+	elseif key == "PreviewFraction" then
+		return string.format("%d%%", math.floor(value * 100 + 0.5))
+	elseif key == "StallInterval" then
+		return string.format("%.1f s", value)
+	end
+	return tostring(value)
+end
+
+local myVote: string? = nil
+
+local function modeButton(parent: Instance, order: number, text: string, selected: boolean, onPick: () -> ())
+	local b = Theme.button(text, {
+		Parent = parent,
+		LayoutOrder = order,
+		Size = UDim2.fromOffset(190, 38),
+		BackgroundColor3 = if selected then C.Accent else C.PanelLight,
+		TextColor3 = if selected then Color3.new(0, 0, 0) else C.Text,
+	})
+	b.Activated:Connect(onPick)
+end
+
 function render.Play(content: Instance)
 	local state = Net.state()
-	local phase = state:GetAttribute("Phase") or ""
+	local phase = attrString(state, "Phase")
 	local o = 0
 	local function nextOrder(): number
 		o += 1
 		return o
 	end
-	section(content, "PLAY", nextOrder())
-	Theme.label(
-		string.format(
-			"%s  ·  %s  ·  %s",
-			tostring(phase),
-			tostring(state:GetAttribute("ModeName") or "Warmup"),
-			tostring(state:GetAttribute("ArenaName") or "")
-		),
-		15,
-		{
+	local function note(text: string, color: Color3?)
+		Theme.label(text, 14, {
 			Parent = content,
 			LayoutOrder = nextOrder(),
-			TextColor3 = C.Muted,
-		}
+			TextColor3 = color or C.Muted,
+			TextWrapped = true,
+			Size = UDim2.new(1, -10, 0, 20),
+		})
+	end
+	section(content, "PLAY", nextOrder())
+	note(
+		string.format(
+			"%s  ·  %s  ·  %s",
+			if phase ~= "" then phase else "Warmup",
+			if attrString(state, "ModeName") ~= "" then attrString(state, "ModeName") else "Warm-up",
+			attrString(state, "ArenaName")
+		)
 	)
 	local role = if player.Character then player.Character:GetAttribute("UBRole") else nil
+	local inTraining = role == "Training"
 	local r = row(content, nextOrder(), 44)
-	if role ~= "Match" then
+	if role == "Bench" then
+		Theme.label("ON THE BENCH — you play next point", 15, {
+			Parent = r,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(330, 30),
+			TextColor3 = C.Gold,
+			Font = Theme.Fonts.Heavy,
+		})
+	elseif phase == "Intermission" and not inTraining then
+		-- everyone in the warm-up plays the next match: nothing to join
+		Theme.label("YOU'RE IN THE NEXT MATCH — warm up meanwhile", 15, {
+			Parent = r,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(330, 30),
+			TextColor3 = C.Accent,
+			Font = Theme.Fonts.Heavy,
+		})
+	elseif role ~= "Match" then
 		local join = Theme.button(
 			"JOIN MATCH",
 			{ Parent = r, LayoutOrder = 1, BackgroundColor3 = C.Accent, TextColor3 = Color3.new(0, 0, 0) }
@@ -183,95 +383,165 @@ function render.Play(content: Instance)
 		Menu.toggle(false)
 	end)
 
+	local hostId = state:GetAttribute("HostId")
+	local hosted = type(hostId) == "number" and hostId ~= 0
+	local isHost = hosted and hostId == player.UserId
+	local private = decodeJson(attrString(state, "PrivateConfig"))
+	local default = attrString(state, "VoteDefault")
+	if not ModesConfig.has(default) then
+		default = ModesConfig.Default
+	end
+	local nextMode: string = if ModesConfig.has(private.Mode) then private.Mode else default
+
 	if phase == "Intermission" then
-		local counts: any = {}
-		local okJson, decoded = pcall(function()
-			return HttpService:JSONDecode(state:GetAttribute("VoteCounts") or "{}")
-		end)
-		if okJson and type(decoded) == "table" then
-			counts = decoded
-		end
-		section(content, "VOTE: MODE", nextOrder())
-		local mr = row(content, nextOrder(), 44)
-		for i, id in string.split((state:GetAttribute("VoteModes") or "") :: string, ",") do
-			local m = (ModesConfig.List :: any)[id]
-			if m then
-				local n = if counts.mode then counts.mode[id] or 0 else 0
-				local b = Theme.button(
-					string.format("%s (%d)", m.Display, n),
-					{ Parent = mr, LayoutOrder = i, Size = UDim2.fromOffset(150, 38) }
-				)
-				b.Activated:Connect(function()
-					action("Vote", { mode = id })
-				end)
+		local counts = decodeJson(attrString(state, "VoteCounts"))
+		local modeCounts = if type(counts.mode) == "table" then counts.mode else {}
+		local options: { string } = {}
+		for _, id in string.split(attrString(state, "VoteModes"), ",") do
+			if ModesConfig.has(id) then
+				table.insert(options, id)
 			end
 		end
-		section(content, "VOTE: ARENA", nextOrder())
+		section(content, "NEXT MATCH: MODE", nextOrder())
+		if isHost then
+			local mr = row(content, nextOrder(), 44)
+			for i, id in ModesConfig.Order do
+				modeButton(mr, i, modeName(id), id == nextMode, function()
+					action("PrivateConfig", { key = "Mode", value = id })
+					task.delay(0.3, Menu.refresh, true)
+				end)
+			end
+			note(
+				"You are the host: you pick the mode and the rules below. Ranked is off in private servers and Studio."
+			)
+		elseif hosted and ModesConfig.has(private.Mode) then
+			note("The host picked " .. modeName(nextMode) .. ".", C.Text)
+		else
+			if #options > 1 then
+				note(
+					if hosted
+						then "Vote for a mode (the host has the final say)."
+						else "This many players can play either mode: vote."
+				)
+				local mr = row(content, nextOrder(), 44)
+				for i, id in options do
+					local n = tonumber(modeCounts[id]) or 0
+					modeButton(mr, i, string.format("%s (%d)", modeName(id), n), id == myVote, function()
+						myVote = id
+						action("Vote", { mode = id })
+						task.delay(0.3, Menu.refresh, true)
+					end)
+				end
+			else
+				note(modeName(options[1] or default) .. " — set by the number of players", C.Text)
+			end
+			for _, id in ModesConfig.Order do
+				if not table.find(options, id) then
+					note(modeName(id) .. " — " .. needsText(id))
+				end
+			end
+		end
+		if not hosted then
+			local ready = attrString(state, "RankedReady")
+			if state:GetAttribute("RankedNext") == true then
+				note("RANKED — every spot is a player" .. (if ready ~= "" then " (" .. ready .. ")" else ""), C.Gold)
+			else
+				local status = attrString(state, "RankedStatus")
+				note("UNRANKED — " .. (if status ~= "" then status else "ranked needs every spot filled by a player"))
+			end
+		end
+
+		section(content, "NEXT MATCH: ARENA", nextOrder())
+		local arenaCounts = if type(counts.arena) == "table" then counts.arena else {}
 		local ar = row(content, nextOrder(), 44)
-		for i, id in string.split((state:GetAttribute("VoteArenas") or "") :: string, ",") do
+		for i, id in string.split(attrString(state, "VoteArenas"), ",") do
 			local a = (ArenasConfig.List :: any)[id]
 			if a then
-				local n = if counts.arena then counts.arena[id] or 0 else 0
+				local n = tonumber(arenaCounts[id]) or 0
 				local b = Theme.button(
 					string.format("%s (%d)", a.Display, n),
 					{ Parent = ar, LayoutOrder = i, Size = UDim2.fromOffset(200, 38), TextSize = 13 }
 				)
 				b.Activated:Connect(function()
 					action("Vote", { arena = id })
+					task.delay(0.3, Menu.refresh, true)
 				end)
 			end
 		end
+	elseif state:GetAttribute("Ranked") == true then
+		note("This match is RANKED. Leaving counts as a loss.", C.Gold)
 	end
 
-	if state:GetAttribute("HostId") == player.UserId then
-		section(content, "PRIVATE SERVER RULES (you are the host)", nextOrder())
-		local current: any = {}
-		pcall(function()
-			current = HttpService:JSONDecode(state:GetAttribute("PrivateConfig") or "{}")
-		end)
-		local base = ModesConfig.copy("Casual")
-		for key, spec in ModesConfig.Editable :: any do
-			local value = if current[key] ~= nil then current[key] else (base :: any)[key]
-			if spec.bool then
-				toggleRow(content, nextOrder(), key, value == true, function()
-					action("PrivateConfig", { key = key, value = not value })
-					task.delay(0.3, Menu.refresh)
-				end)
-			elseif spec.options then
-				local idx = table.find(spec.options, value) or 1
-				stepper(content, nextOrder(), key, tostring(value), function()
-					action("PrivateConfig", { key = key, value = spec.options[((idx - 2) % #spec.options) + 1] })
-					task.delay(0.3, Menu.refresh)
-				end, function()
-					action("PrivateConfig", { key = key, value = spec.options[(idx % #spec.options) + 1] })
-					task.delay(0.3, Menu.refresh)
-				end)
-			else
-				stepper(content, nextOrder(), key, tostring(value), function()
-					action("PrivateConfig", { key = key, value = value - spec.step })
-					task.delay(0.3, Menu.refresh)
-				end, function()
-					action("PrivateConfig", { key = key, value = value + spec.step })
-					task.delay(0.3, Menu.refresh)
-				end)
+	if isHost then
+		section(content, "HOST RULES (private server / Studio)", nextOrder())
+		if phase ~= "Intermission" then
+			note("Changes apply from the next match.")
+		end
+		local base = ModesConfig.editableDefaults(nextMode)
+		for _, key in ModesConfig.EditableOrder do
+			local spec = ModesConfig.Editable[key]
+			if key ~= "Mode" and spec then
+				local value = if private[key] ~= nil then private[key] else base[key]
+				local function send(v: any)
+					action("PrivateConfig", { key = key, value = v })
+					task.delay(0.3, Menu.refresh, true)
+				end
+				local options = spec.options
+				if spec.bool then
+					toggleRow(content, nextOrder(), spec.label, value == true, function()
+						send(not (value == true))
+					end)
+				elseif options then
+					local idx = table.find(options, value) or 1
+					stepper(content, nextOrder(), spec.label, tostring(value), function()
+						send(options[((idx - 2) % #options) + 1])
+					end, function()
+						send(options[(idx % #options) + 1])
+					end)
+				else
+					local v = tonumber(value) or 0
+					local step = spec.step or 1
+					stepper(content, nextOrder(), spec.label, formatRule(key, v), function()
+						send(v - step)
+					end, function()
+						send(v + step)
+					end)
+				end
 			end
 		end
-		local sr = row(content, nextOrder(), 44)
-		local start = Theme.button("START MATCH NOW", {
-			Parent = sr,
-			Size = UDim2.fromOffset(200, 38),
-			BackgroundColor3 = C.Good,
-			TextColor3 = Color3.new(0, 0, 0),
-		})
-		start.Activated:Connect(function()
-			action("StartNow", nil)
-			Menu.toggle(false)
-		end)
+		if phase == "Intermission" then
+			local sr = row(content, nextOrder(), 44)
+			local start = Theme.button("START MATCH NOW", {
+				Parent = sr,
+				Size = UDim2.fromOffset(200, 38),
+				BackgroundColor3 = C.Good,
+				TextColor3 = Color3.new(0, 0, 0),
+			})
+			start.Activated:Connect(function()
+				action("StartNow", nil)
+				Menu.toggle(false)
+			end)
+		end
 	end
 
 	section(content, "QUICK CONTROLS", nextOrder())
+	local function k(a: string): string
+		return controllers.SettingsController.keyLabel(a, "keyboard")
+	end
 	Theme.label(
-		"WASD move · Shift sprint · Space jump · Q cut · Ctrl slide · E dive · F burst · LMB reach/throw · RMB mark/fake · B celebrate",
+		string.format(
+			"WASD move · %s sprint (or automatic) · %s jump · %s cut · %s burst · %s slide · %s dive · LMB reach / throw · RMB mark / fake · with the disc: WASD step, %s / %s swing, %s hop · %s celebrate",
+			k("Sprint"),
+			k("Jump"),
+			k("Cut"),
+			k("Burst"),
+			k("Slide"),
+			k("Dive"),
+			k("Cut"),
+			k("Dive"),
+			k("Jump"),
+			k("Celebrate")
+		),
 		14,
 		{
 			Parent = content,
@@ -337,43 +607,80 @@ function render.Training(content: Instance)
 		end)
 	end
 
+	-- the signature moves: what they are and how many you have landed
+	section(content, "SIGNATURE MOVES (hard, worth a lot)", nextOrder())
+	local intro = row(content, nextOrder(), 34)
+	Theme.label(
+		string.format(
+			"In the air, press %s as the disc reaches your hands to TIP it: your air moves come back (a reset). Chain resets into the moves below.",
+			controllers.SettingsController.keyLabel("Secondary", "keyboard")
+		),
+		13,
+		{ Parent = intro, Size = UDim2.new(1, -10, 1, 0), TextColor3 = C.Muted, TextWrapped = true }
+	)
+	for _, id in SignaturesConfig.Order do
+		local def = SignaturesConfig.List[id]
+		local sr = row(content, nextOrder(), 40)
+		local count = if profile and profile.stats then profile.stats["sig" .. id] or 0 else 0
+		local color = if def.tier >= 3 then C.Perfect elseif def.tier >= 2 then C.Gold else C.Accent
+		Theme.label(def.name, 15, {
+			Parent = sr,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(150, 30),
+			Font = Theme.Fonts.Heavy,
+			TextColor3 = color,
+		})
+		Theme.label(def.how, 12, {
+			Parent = sr,
+			LayoutOrder = 2,
+			Size = UDim2.fromOffset(400, 34),
+			TextColor3 = C.Muted,
+			TextWrapped = true,
+		})
+		Theme.label(
+			string.format("+%d  ·  x%d", def.points, count),
+			13,
+			{ Parent = sr, LayoutOrder = 3, Size = UDim2.fromOffset(110, 30), TextColor3 = C.Gold }
+		)
+	end
+
 	section(content, "FREE LAUNCHER (advanced practice)", nextOrder())
 	stepper(content, nextOrder(), "Throw type", launcher.throwType, function()
 		local i = table.find(DiscConfig.TypeOrder, launcher.throwType) or 1
 		launcher.throwType = DiscConfig.TypeOrder[((i - 2) % #DiscConfig.TypeOrder) + 1]
-		Menu.refresh()
+		Menu.refresh(true)
 	end, function()
 		local i = table.find(DiscConfig.TypeOrder, launcher.throwType) or 1
 		launcher.throwType = DiscConfig.TypeOrder[(i % #DiscConfig.TypeOrder) + 1]
-		Menu.refresh()
+		Menu.refresh(true)
 	end)
 	stepper(content, nextOrder(), "Power", string.format("%d%%", launcher.power * 100), function()
 		launcher.power = math.clamp(launcher.power - 0.1, 0.1, 1)
-		Menu.refresh()
+		Menu.refresh(true)
 	end, function()
 		launcher.power = math.clamp(launcher.power + 0.1, 0.1, 1)
-		Menu.refresh()
+		Menu.refresh(true)
 	end)
 	stepper(content, nextOrder(), "Launch angle", launcher.pitch .. " deg", function()
 		launcher.pitch = math.clamp(launcher.pitch - 4, -10, 40)
-		Menu.refresh()
+		Menu.refresh(true)
 	end, function()
 		launcher.pitch = math.clamp(launcher.pitch + 4, -10, 40)
-		Menu.refresh()
+		Menu.refresh(true)
 	end)
 	stepper(content, nextOrder(), "Curve (bank)", string.format("%+.1f", launcher.bank), function()
 		launcher.bank = math.clamp(launcher.bank - 0.25, -1, 1)
-		Menu.refresh()
+		Menu.refresh(true)
 	end, function()
 		launcher.bank = math.clamp(launcher.bank + 0.25, -1, 1)
-		Menu.refresh()
+		Menu.refresh(true)
 	end)
 	stepper(content, nextOrder(), "Aim offset", launcher.offset .. " deg", function()
 		launcher.offset = math.clamp(launcher.offset - 5, -30, 30)
-		Menu.refresh()
+		Menu.refresh(true)
 	end, function()
 		launcher.offset = math.clamp(launcher.offset + 5, -30, 30)
-		Menu.refresh()
+		Menu.refresh(true)
 	end)
 	local lr = row(content, nextOrder(), 44)
 	local launch = Theme.button(
@@ -633,28 +940,42 @@ function render.Settings(content: Instance)
 		local v = s.get(n.key)
 		stepper(content, nextOrder(), n.label, string.format(if n.step < 1 then "%.1f" else "%d", v), function()
 			s.set(n.key, math.clamp(math.floor((v - n.step) * 10 + 0.5) / 10, n.min, n.max))
-			Menu.refresh()
+			Menu.refresh(true)
 		end, function()
 			s.set(n.key, math.clamp(math.floor((v + n.step) * 10 + 0.5) / 10, n.min, n.max))
-			Menu.refresh()
+			Menu.refresh(true)
 		end)
 	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },
 		{ key = "CameraShake", label = "Camera shake (subtle)" },
-		{ key = "ShowComboFeed", label = "Combo feed" },
+		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
+		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
-		{ key = "ToggleSprint", label = "Toggle sprint (instead of hold)" },
-		{ key = "AutoSprintTouch", label = "Auto-sprint on touch (push stick fully)" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
 	}
 	for _, t in toggles do
 		toggleRow(content, nextOrder(), t.label, s.get(t.key) == true, function()
 			s.set(t.key, not s.get(t.key))
-			Menu.refresh()
+			Menu.refresh(true)
 		end)
 	end
+	Theme.label("Sprint options are under Controls.", 13, {
+		Parent = content,
+		LayoutOrder = nextOrder(),
+		TextColor3 = C.Muted,
+	})
+end
+
+local function keyNames(keys: { string }?): string
+	local out: { string } = {}
+	if keys then
+		for _, k in keys do
+			table.insert(out, InputConfig.keyLabel(k))
+		end
+	end
+	return table.concat(out, " / ")
 end
 
 function render.Controls(content: Instance)
@@ -664,17 +985,31 @@ function render.Controls(content: Instance)
 		o += 1
 		return o
 	end
+	section(content, "SPRINT", nextOrder())
+	for _, t in
+		{
+			{ key = "AutoSprint", label = "Auto-sprint (push one way to sprint)" },
+			{ key = "ToggleSprint", label = "Sprint key toggles (instead of hold)" },
+			{ key = "AutoSprintTouch", label = "Auto-sprint on touch (push the stick fully)" },
+		}
+	do
+		toggleRow(content, nextOrder(), t.label, s.get(t.key) == true, function()
+			s.set(t.key, not s.get(t.key))
+			Menu.refresh(true)
+		end)
+	end
 	section(content, "CONTROLS (click a binding, then press the new key/button)", nextOrder())
 	local kb = s.bindings("keyboard")
 	local gp = s.bindings("gamepad")
 	for _, act in InputConfig.Actions do
 		local r = row(content, nextOrder(), 34)
-		Theme.label(
-			(InputConfig.Display :: any)[act] or act,
-			14,
-			{ Parent = r, LayoutOrder = 1, Size = UDim2.fromOffset(300, 28) }
-		)
-		local kbText = table.concat(kb[act] or {}, " / ")
+		Theme.label((InputConfig.Display :: any)[act] or act, 13, {
+			Parent = r,
+			LayoutOrder = 1,
+			Size = UDim2.fromOffset(300, 32),
+			TextWrapped = true,
+		})
+		local kbText = keyNames(kb[act])
 		local b1 = Theme.button(
 			if kbText ~= "" then kbText else "—",
 			{ Parent = r, LayoutOrder = 2, Size = UDim2.fromOffset(170, 28), TextSize = 13 }
@@ -684,7 +1019,7 @@ function render.Controls(content: Instance)
 			b1.Text = "press a key..."
 		end)
 		Theme.label(
-			table.concat(gp[act] or {}, " / "),
+			keyNames(gp[act]),
 			13,
 			{ Parent = r, LayoutOrder = 3, Size = UDim2.fromOffset(150, 28), TextColor3 = C.Muted }
 		)
@@ -693,15 +1028,16 @@ function render.Controls(content: Instance)
 	local reset = Theme.button("RESET TO DEFAULTS", { Parent = rr, Size = UDim2.fromOffset(200, 36) })
 	reset.Activated:Connect(function()
 		s.resetBindings()
-		Menu.refresh()
+		Menu.refresh(true)
 	end)
 	section(content, "TECHNIQUE GUIDE", nextOrder())
-	for _, line in TECH_GUIDE do
+	for _, line in techGuide() do
 		Theme.label(line, 13, {
 			Parent = content,
 			LayoutOrder = nextOrder(),
 			TextWrapped = true,
-			Size = UDim2.new(1, -10, 0, 36),
+			Size = UDim2.new(1, -10, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
 			TextColor3 = C.Muted,
 			Font = Theme.Fonts.Medium,
 		})
@@ -710,16 +1046,25 @@ end
 
 ---------------------------------------------------------------------------
 
-function Menu.refresh()
+-- Rebuilds the open tab. keepScroll: a refresh of the same tab after a change
+-- (keeps where you were scrolled to); otherwise the tab opens at the top.
+function Menu.refresh(keepScroll: boolean?)
 	if not isOpen then
 		return
 	end
 	local content = refs.content :: ScrollingFrame
+	local scroll = content.CanvasPosition
+	local selected = GuiService.SelectedObject
+	local hadSelection = selected ~= nil and selected:IsDescendantOf(content)
 	clear(content)
-	content.CanvasPosition = Vector2.zero
 	local fn = render[currentTab]
 	if fn then
 		fn(content)
+	end
+	content.CanvasPosition = if keepScroll then scroll else Vector2.zero
+	if hadSelection then
+		-- the selected button was rebuilt: keep gamepad navigation alive
+		GuiService.SelectedObject = refs.tabButtons[currentTab]
 	end
 	for name, b in refs.tabButtons do
 		b.BackgroundColor3 = if name == currentTab then C.Accent else C.PanelLight
@@ -750,7 +1095,7 @@ end
 function Menu.setProfile(p: any)
 	profile = p
 	if isOpen and (currentTab == "Profile" or currentTab == "Locker" or currentTab == "Training") then
-		Menu.refresh()
+		Menu.refresh(true)
 	end
 end
 
@@ -830,6 +1175,30 @@ function Menu.build(parent: ScreenGui, c: any)
 	})
 	refs.content = content
 
+	-- the Play tab follows the vote / ranked / host state while it is open
+	local refreshQueued = false
+	local function queuePlayRefresh()
+		if refreshQueued or not isOpen or currentTab ~= "Play" then
+			return
+		end
+		refreshQueued = true
+		task.delay(0.15, function()
+			refreshQueued = false
+			if isOpen and currentTab == "Play" then
+				Menu.refresh(true)
+			end
+		end)
+	end
+	local state = Net.state()
+	for _, name in PLAY_STATE do
+		state:GetAttributeChangedSignal(name):Connect(queuePlayRefresh)
+	end
+	state:GetAttributeChangedSignal("Phase"):Connect(function()
+		if state:GetAttribute("Phase") == "Intermission" then
+			myVote = nil
+		end
+	end)
+
 	-- capture the next key press while rebinding
 	UserInputService.InputBegan:Connect(function(input)
 		local rb = rebinding
@@ -842,7 +1211,7 @@ function Menu.build(parent: ScreenGui, c: any)
 		if t == Enum.UserInputType.Keyboard then
 			if input.KeyCode == Enum.KeyCode.Escape then
 				rebinding = nil
-				Menu.refresh()
+				Menu.refresh(true)
 				return
 			end
 			name = input.KeyCode.Name
@@ -855,7 +1224,7 @@ function Menu.build(parent: ScreenGui, c: any)
 		if name then
 			rebinding = nil
 			controllers.SettingsController.setBinding(scheme, rb.action, { name })
-			task.defer(Menu.refresh)
+			task.defer(Menu.refresh, true)
 		end
 	end)
 end

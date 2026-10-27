@@ -2,10 +2,17 @@
 --[[
 	Mobile — touch controls with the full technique set.
 
-	Left half: floating thumbstick (push it fully to auto-sprint, or use the
-	SPRINT toggle). Right side: THROW/REACH (hold to charge), JUMP, CUT, SLIDE,
-	DIVE, BURST, FAKE/MARK. While holding the disc, bank and type buttons
-	appear. Dragging on empty screen space turns the camera.
+	Left half: floating thumbstick (InputController shapes it: a small dead
+	zone, full speed a little before the rim; push it fully to auto-sprint, or
+	use the SPRINT toggle). Right side: THROW/REACH (hold to charge), JUMP,
+	CUT, SLIDE, DIVE, BURST, MARK. Dragging on empty screen space turns the
+	camera.
+
+	While you hold the disc the same buttons change meaning (and label) the
+	way the keyboard does: CUT = SWING LEFT, DIVE = SWING RIGHT (MovementController
+	routes them to the Quick Swing), JUMP = HOP, SLIDE = LOW (hold for a low
+	release), MARK = FAKE, BURST hides. A disc row adds < BANK / BANK > (the
+	Z / X keys), TYPE and LEAD.
 ]]
 
 local Players = game:GetService("Players")
@@ -114,13 +121,24 @@ function Mobile.build(parent: ScreenGui, c: any)
 		Parent = layer,
 	})
 	refs.buttons = right
-	bindHold(circleButton(right, "Primary", "THROW\nREACH", UDim2.fromOffset(250, 220), 104, C.Accent), "Primary")
-	bindHold(circleButton(right, "Jump", "JUMP", UDim2.fromOffset(150, 250), 70), "Jump")
-	bindHold(circleButton(right, "Cut", "CUT", UDim2.fromOffset(160, 160), 66), "Cut")
-	bindHold(circleButton(right, "Slide", "SLIDE", UDim2.fromOffset(60, 260), 60), "Slide")
-	bindHold(circleButton(right, "Dive", "DIVE", UDim2.fromOffset(240, 110), 66), "Dive")
-	bindHold(circleButton(right, "Burst", "BURST", UDim2.fromOffset(80, 175), 60), "Burst")
-	bindHold(circleButton(right, "Secondary", "FAKE\nMARK", UDim2.fromOffset(310, 120), 58), "Secondary")
+	-- { name / action, position, size, label without disc, label with disc }
+	local defs: { { any } } = {
+		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
+		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "HOP" },
+		{ "Cut", UDim2.fromOffset(160, 160), 66, "CUT", "SWING\nLEFT" },
+		{ "Slide", UDim2.fromOffset(60, 260), 60, "SLIDE", "LOW" },
+		{ "Dive", UDim2.fromOffset(240, 110), 66, "DIVE", "SWING\nRIGHT" },
+		{ "Burst", UDim2.fromOffset(80, 175), 60, "BURST", "" },
+		{ "Secondary", UDim2.fromOffset(310, 120), 58, "MARK", "FAKE" },
+	}
+	local labelled: { { any } } = {}
+	for _, def in defs do
+		local name = def[1] :: string
+		local b = circleButton(right, name, def[4], def[2], def[3], if name == "Primary" then C.Accent else nil)
+		bindHold(b, name)
+		table.insert(labelled, { b :: any, def[4], def[5], name })
+	end
+	refs.labelled = labelled
 	local sprint = circleButton(right, "Sprint", "SPRINT", UDim2.fromOffset(40, 90), 54)
 	sprint.Activated:Connect(function()
 		controllers.InputController.toggleTouchSprint()
@@ -137,9 +155,15 @@ function Mobile.build(parent: ScreenGui, c: any)
 		Theme.list(8, true),
 	})
 	refs.discRow = discRow
-	for i, def in
-		{ { "BankLeft", "< BANK" }, { "BankRight", "BANK >" }, { "TypeNext", "TYPE" }, { "LeadLock", "LEAD" } }
-	do
+	local discDefs = {
+		{ "BankLeft", "< BANK" },
+		{ "BankRight", "BANK >" },
+		{ "TypeNext", "TYPE" },
+		{ "LeadLock", "LEAD" },
+	}
+	refs.discActions = {}
+	for i, def in discDefs do
+		table.insert(refs.discActions, def[1])
 		local b =
 			Theme.button(def[2], { Parent = discRow, LayoutOrder = i, Size = UDim2.fromOffset(56, 52), TextSize = 12 })
 		bindHold(b, def[1])
@@ -216,6 +240,41 @@ function Mobile.update()
 	end
 	(uiScale :: UIScale).Scale = scale
 	refs.discRow.Visible = controllers.ThrowController.isHolding()
+	-- labels follow the movement routing (which starts with the predicted catch)
+	local holding = controllers.MovementController.holdingDisc()
+	if holding ~= refs.holding then
+		refs.holding = holding
+		local input = controllers.InputController
+		for _, entry in refs.labelled do
+			local b = entry[1] :: TextButton
+			local text = if holding then entry[3] else entry[2]
+			b.Text = text
+			if text == "" and b.Visible then
+				-- a hidden button never sees its touch end: release it now
+				input.fire(entry[4], false)
+				b.BackgroundTransparency = 0.25
+			end
+			b.Visible = text ~= ""
+		end
+	end
+	-- in the air (not holding) Secondary is the Tip Reset
+	local airTip = not holding and not controllers.MovementController.isGrounded()
+	if airTip ~= refs.airTip then
+		refs.airTip = airTip
+		for _, entry in refs.labelled do
+			if entry[4] == "Secondary" and not holding then
+				(entry[1] :: TextButton).Text = if airTip then "TIP" else entry[2]
+			end
+		end
+	end
+	if not refs.discRow.Visible and refs.discHeld ~= false then
+		refs.discHeld = false
+		for _, action in refs.discActions do
+			controllers.InputController.fire(action, false)
+		end
+	elseif refs.discRow.Visible then
+		refs.discHeld = true
+	end
 end
 
 return Mobile

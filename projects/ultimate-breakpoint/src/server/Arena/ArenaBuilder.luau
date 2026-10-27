@@ -2,9 +2,14 @@
 --[[
 	ArenaBuilder — procedurally builds the field and its surroundings.
 
-	The playing surface is identical in every arena (regulation-inspired
-	proportions from Config/Modes.Fields) so spacing and muscle memory carry
-	over; only the theme, lighting, wind and optional rebound walls change.
+	The playing surface follows the mode (Config/Modes.Fields: Mini 3v3 or
+	Normal 7v7) and is the same in every arena, so spacing and muscle memory
+	carry over; only the theme, lighting, wind and optional rebound walls
+	change. Theme dressing (stands, lights, trees, skyline, crowd) is laid out
+	relative to the field size, the big Normal field gets a scoreboard at each
+	end, and every theme has a team bench on each half of the -Z sideline
+	(FieldGeometry.benchCenter, team A west / B east as MatchPlan.BenchSign),
+	returned in Built.benches for the substitutes' teleports.
 	Everything is generated from code, so the place file needs no hand-built
 	geometry and every arena can be rebuilt between matches.
 
@@ -18,6 +23,9 @@ local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Rng = require(Shared.Util.Rng)
+local FieldGeometry = require(Shared.Rules.FieldGeometry)
+local MatchPlan = require(Shared.Rules.MatchPlan)
+local TeamsConfig = require(Shared.Config.Teams)
 local Build = require(script.Parent.Build)
 
 local ArenaBuilder = {}
@@ -29,9 +37,12 @@ export type Built = {
 	endZones: { [string]: BasePart },
 	spawn: SpawnLocation,
 	margin: number,
+	benches: { [string]: CFrame }, -- team -> centre of its bench spots, facing the field
 }
 
 local MARGIN = 34
+-- Dressing that used to be laid out for a 270-stud field scales from here.
+local BASE_HALF_TOTAL = 135
 local WHITE = Color3.fromRGB(250, 250, 250)
 local CONE = Color3.fromRGB(255, 110, 20)
 
@@ -56,6 +67,21 @@ local SHIRTS = {
 
 local function pick<T>(rng: Rng.Rng, list: { T }): T
 	return list[rng:int(1, #list)]
+end
+
+-- Half the total length (playing field + both end zones).
+local function halfTotal(f: FieldSpec): number
+	return f.length / 2 + f.endZone
+end
+
+-- How much bigger than the original field this one is (never below 1).
+local function dressScale(f: FieldSpec): number
+	return math.max(1, halfTotal(f) / BASE_HALF_TOTAL)
+end
+
+-- The big (Normal) field gets a scoreboard at each end.
+local function bigField(f: FieldSpec): boolean
+	return 2 * halfTotal(f) >= 300
 end
 
 ---------------------------------------------------------------------------
@@ -530,7 +556,7 @@ local function themeStadium(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 	local L = f.length / 2 + f.endZone
 	local W = f.width / 2
 	local props = Build.folder(model, "Props")
-	local budget = { n = math.floor(320 * arena.Crowd) }
+	local budget = { n = math.floor(320 * arena.Crowd * dressScale(f)) }
 	local color = Color3.fromRGB(58, 62, 74)
 	stand(
 		props,
@@ -567,14 +593,9 @@ local function themeStadium(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 	)
 	floodlights(props, f, 1.4, Color3.fromRGB(255, 248, 230))
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 26, 0), Vector3.new(1, 0, 0))
-	-- sideline benches in team colours
-	for _, sx in { 1, -1 } do
-		Build.part(props, {
-			Name = "Bench",
-			Size = Vector3.new(30, 1.2, 3),
-			CFrame = CFrame.new(sx * 40, 0.6, -(W + 14)),
-			Color = if sx > 0 then Color3.fromRGB(255, 120, 30) else Color3.fromRGB(32, 140, 255),
-		})
+	if bigField(f) then
+		-- above and behind the +X end stand
+		scoreboard(props, Vector3.new(L + MARGIN + 30, 34, 0), Vector3.new(-1, 0, 0))
 	end
 end
 
@@ -621,6 +642,9 @@ local function themeCoastal(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 		Color = Color3.fromRGB(230, 70, 60),
 	})
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 20, 0), Vector3.new(1, 0, 0))
+	if bigField(f) then
+		scoreboard(props, Vector3.new(L + MARGIN + 14, 20, 0), Vector3.new(-1, 0, 0))
+	end
 end
 
 local function themeRooftop(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
@@ -644,9 +668,10 @@ local function themeRooftop(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 		Color3.fromRGB(255, 200, 80),
 		Color3.fromRGB(140, 120, 255),
 	}
+	local ring = dressScale(f)
 	for i = 0, 46 do
 		local ang = i / 47 * math.pi * 2
-		local radius = rng:range(330, 470)
+		local radius = rng:range(330, 470) * ring
 		local pos = Vector3.new(math.cos(ang) * radius * 1.2, 0, math.sin(ang) * radius)
 		local h = rng:range(80, 260)
 		local w = rng:range(30, 60)
@@ -693,6 +718,9 @@ local function themeRooftop(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng
 		t.Parent = gui
 	end
 	scoreboard(props, Vector3.new(0, 30, -(W + MARGIN + 20)), Vector3.new(0, 0, 1))
+	if bigField(f) then
+		scoreboard(props, Vector3.new(0, 30, W + MARGIN + 20), Vector3.new(0, 0, -1))
+	end
 end
 
 local function themeBeach(model: Model, _arena: any, f: FieldSpec, rng: Rng.Rng)
@@ -704,9 +732,9 @@ local function themeBeach(model: Model, _arena: any, f: FieldSpec, rng: Rng.Rng)
 		Vector3.new(260, 12, 2 * W + 900),
 		Enum.Material.Water
 	)
-	for _ = 1, 14 do
+	for _ = 1, math.floor(14 * L / BASE_HALF_TOTAL + 0.5) do
 		local pos =
-			Vector3.new(rng:range(-L, L), 0, (if rng:next() < 0.5 then 1 else -1) * (W + rng:range(14, MARGIN - 4)))
+			Vector3.new(rng:range(-L, L), 0, (if rng:next() < 0.5 then 1 else -1) * (W + rng:range(22, MARGIN - 4)))
 		Build.part(props, {
 			Name = "Pole",
 			Size = Vector3.new(0.3, 7, 0.3),
@@ -725,6 +753,9 @@ local function themeBeach(model: Model, _arena: any, f: FieldSpec, rng: Rng.Rng)
 		palm(props, rng, Vector3.new(x, 0, -(W + MARGIN + 16)))
 	end
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 18, 0), Vector3.new(1, 0, 0))
+	if bigField(f) then
+		scoreboard(props, Vector3.new(L + MARGIN + 14, 18, 0), Vector3.new(-1, 0, 0))
+	end
 end
 
 local function themeIndoor(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
@@ -779,7 +810,7 @@ local function themeIndoor(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 			)
 		end
 	end
-	local budget = { n = math.floor(220 * arena.Crowd) }
+	local budget = { n = math.floor(220 * arena.Crowd * dressScale(f)) }
 	stand(
 		props,
 		rng,
@@ -803,13 +834,16 @@ local function themeIndoor(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 		budget
 	)
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 30, 0), Vector3.new(1, 0, 0))
+	if bigField(f) then
+		scoreboard(props, Vector3.new(L + MARGIN + 14, 30, 0), Vector3.new(-1, 0, 0))
+	end
 end
 
 local function themePark(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 	local L = f.length / 2 + f.endZone
 	local W = f.width / 2
 	local props = Build.folder(model, "Props")
-	for _ = 1, 34 do
+	for _ = 1, math.floor(34 * L / BASE_HALF_TOTAL + 0.5) do
 		local side = if rng:next() < 0.5 then 1 else -1
 		local pos = Vector3.new(rng:range(-L - 60, L + 60), 0, side * (W + MARGIN + rng:range(8, 70)))
 		tree(props, rng, pos)
@@ -854,22 +888,77 @@ local function themePark(model: Model, arena: any, f: FieldSpec, rng: Rng.Rng)
 			Color = Color3.fromRGB(40, 40, 40),
 		})
 	end
-	-- benches and a couple of spectators
-	local budget = { n = math.floor(60 * arena.Crowd) + 12 }
+	-- park benches and a couple of spectators, behind the team benches
+	local budget = { n = math.floor(60 * arena.Crowd * dressScale(f)) + 12 }
+	local z = -(W + FieldGeometry.BenchOffset + 12)
 	for x = -L + 10, L - 10, 30 do
 		Build.part(props, {
-			Name = "Bench",
+			Name = "ParkBench",
 			Size = Vector3.new(8, 1.2, 2),
-			CFrame = CFrame.new(x, 0.6, -(W + 16)),
+			CFrame = CFrame.new(x, 0.6, z),
 			Color = Color3.fromRGB(120, 86, 56),
 			Material = Enum.Material.Wood,
 		})
 		if budget.n > 0 then
 			budget.n -= 1
-			crowdFigure(props, rng, Vector3.new(x, 1.2, -(W + 16)), Vector3.new(0, 0, 1))
+			crowdFigure(props, rng, Vector3.new(x, 1.2, z), Vector3.new(0, 0, 1))
 		end
 	end
 	scoreboard(props, Vector3.new(-(L + MARGIN + 14), 14, 0), Vector3.new(1, 0, 0))
+	if bigField(f) then
+		scoreboard(props, Vector3.new(L + MARGIN + 14, 14, 0), Vector3.new(-1, 0, 0))
+	end
+end
+
+-- Team benches on the -Z sideline (every theme). Substitutes stand on the
+-- coloured mat in front of the seat (FieldGeometry.benchSpots); returns the
+-- centre of each team's spots facing the field.
+local function teamBenches(model: Model, f: FieldSpec): { [string]: CFrame }
+	local folder = Build.folder(model, "Benches")
+	local geo = FieldGeometry.new({
+		center = Vector3.zero,
+		width = f.width,
+		length = f.length,
+		endZone = f.endZone,
+		brick = f.brick,
+	})
+	local len = math.max(16, 0.12 * f.length)
+	local out: { [string]: CFrame } = {}
+	for _, team in { "A", "B" } do
+		local sign = if team == "A" then MatchPlan.BenchSign.A else MatchPlan.BenchSign.B
+		local cfg = if team == "A" then TeamsConfig.A else TeamsConfig.B
+		local c = FieldGeometry.benchCenter(geo, sign)
+		local seat = c + Vector3.new(0, 0, -2.6)
+		Build.part(folder, {
+			Name = "Mat",
+			Size = Vector3.new(len, 0.05, 4),
+			CFrame = CFrame.new(c.X, 0.03, c.Z),
+			Color = cfg.Color,
+			Transparency = 0.55,
+		})
+		Build.part(folder, {
+			Name = "Seat",
+			Size = Vector3.new(len, 1.2, 1.6),
+			CFrame = CFrame.new(seat.X, 0.6, seat.Z),
+			Color = cfg.Color,
+			solid = true,
+		})
+		Build.part(folder, {
+			Name = "Backrest",
+			Size = Vector3.new(len, 2.4, 0.4),
+			CFrame = CFrame.new(seat.X, 1.8, seat.Z - 0.9),
+			Color = cfg.Dark,
+		})
+		local sign2 = Build.part(folder, {
+			Name = "BenchLabel",
+			Size = Vector3.new(math.min(len, 18), 0.05, 2.4),
+			CFrame = CFrame.new(c.X, 0.04, c.Z - 0.2),
+			Transparency = 1,
+		})
+		Build.topText(sign2, cfg.Name .. " BENCH", Color3.new(1, 1, 1), 0.35)
+		out[team] = CFrame.lookAt(c, c + Vector3.new(0, 0, 1))
+	end
+	return out
 end
 
 local THEMES = {
@@ -886,9 +975,13 @@ local THEMES = {
 ---------------------------------------------------------------------------
 
 function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
+	-- The old arena goes only after the new one is parented: replication is
+	-- ordered, so clients receive the whole new field before the old floor
+	-- disappears (destroying first left players standing on nothing while a
+	-- thousand-part model streamed in, and they fell through the field).
 	local old = parent:FindFirstChild("Arena")
 	if old then
-		old:Destroy()
+		old.Name = "ArenaOld"
 	end
 	workspace.Terrain:Clear()
 	applyLighting(arena)
@@ -901,6 +994,7 @@ function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
 	local theme = (THEMES :: any)[arena.Theme] or themeStadium
 	theme(model, arena, f, rng)
 	windFlags(model, f, arena.Wind)
+	local benches = teamBenches(model, f)
 
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "Sideline"
@@ -916,7 +1010,10 @@ function ArenaBuilder.build(arena: any, f: FieldSpec, parent: Instance): Built
 	spawn.Parent = model
 
 	model.Parent = parent
-	return { model = model, endZones = endZones, spawn = spawn, margin = MARGIN }
+	if old then
+		old:Destroy()
+	end
+	return { model = model, endZones = endZones, spawn = spawn, margin = MARGIN, benches = benches }
 end
 
 ArenaBuilder.Margin = MARGIN

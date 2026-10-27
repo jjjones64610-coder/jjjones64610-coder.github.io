@@ -7,6 +7,12 @@
 
 	Strategy: coarse grid over (power, aim pitch) with a cheap low-rate sim,
 	refine around the best cell, and correct yaw twice for the curve.
+
+	A holder who has planted a pivot passes `pivot` (and optionally the
+	`step` they will release from): the candidates are then launched from the
+	pivot release point exactly as ThrowModel will launch the real throw, and
+	the returned params carry both. The power grid spans the whole MinSpeed..
+	MaxSpeed range, so short touch passes and full hucks are both found.
 ]]
 
 local Shared = script.Parent.Parent
@@ -30,6 +36,8 @@ export type Options = {
 	maxPower: number?,
 	coarse: boolean?, -- smaller search for client-side assist
 	flightTimeWeight: number?,
+	pivot: Vector3?, -- planted pivot foot P: launch from P + step (see ThrowModel)
+	step: Vector3?, -- flat step from P (ignored without a pivot)
 }
 
 export type Solution = {
@@ -38,6 +46,20 @@ export type Solution = {
 	flightTime: number,
 	catchPoint: Vector3,
 }
+
+local function paramsFor(o: Options, yaw: number, pitch: number, holdTime: number): ThrowModel.Params
+	return {
+		throwType = o.throwType,
+		yaw = yaw,
+		pitch = pitch,
+		holdTime = holdTime,
+		bank = o.bank or 0,
+		height = o.height or "Mid",
+		leftHanded = o.leftHanded,
+		pivot = o.pivot,
+		step = if o.pivot then ThrowModel.clampStep(o.step, yaw) else nil,
+	}
+end
 
 local function holdForPower(power: number, throwType: string): number
 	local info = ThrowModel.typeInfo(throwType)
@@ -58,15 +80,7 @@ local function evaluate(
 	power: number,
 	dt: number
 ): (number, number, number, Vector3)
-	local params: ThrowModel.Params = {
-		throwType = o.throwType,
-		yaw = yaw,
-		pitch = pitch,
-		holdTime = holdForPower(power, o.throwType),
-		bank = o.bank or 0,
-		height = o.height or "Mid",
-		leftHanded = o.leftHanded,
-	}
+	local params = paramsFor(o, yaw, pitch, holdForPower(power, o.throwType))
 	local launch = ThrowModel.launch(params, o.rootPos, o.throwerVel or Vector3.zero)
 	local s = launch.state
 	local ground = (o.groundY or 0)
@@ -103,7 +117,7 @@ function Solver.solve(o: Options): Solution?
 	local maxPower = o.maxPower or 1
 	local flightW = o.flightTimeWeight or 0.6
 	local tv = o.targetVel or Vector3.zero
-	local origin = o.rootPos
+	local origin = o.pivot or o.rootPos
 
 	-- initial yaw toward a lead point
 	local tGuess = (o.target - origin).Magnitude / 55
@@ -191,15 +205,7 @@ function Solver.solve(o: Options): Solution?
 	end
 
 	return {
-		params = {
-			throwType = o.throwType,
-			yaw = yaw,
-			pitch = bestPitch,
-			holdTime = holdForPower(bestPower, o.throwType),
-			bank = o.bank or 0,
-			height = o.height or "Mid",
-			leftHanded = o.leftHanded,
-		},
+		params = paramsFor(o, yaw, bestPitch, holdForPower(bestPower, o.throwType)),
 		miss = bestMiss,
 		flightTime = bestT,
 		catchPoint = bestPoint,

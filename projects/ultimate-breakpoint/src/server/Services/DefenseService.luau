@@ -2,20 +2,37 @@
 --[[
 	DefenseService — the mark.
 
+	Everything is measured from the holder's planted pivot foot P
+	(MovementService.pivotOf; the holder's root until P is planted), not from
+	the holder's root, so a thrower's lunge cannot change who is marking or
+	cause a disc-space call.
+
 	  Stall count   advances once per StallInterval while an opposing player
-	                is within StallRange of the holder. Pauses when nobody is
-	                marking, on a double team (a second defender in range who
-	                is not guarding anyone else), or on a disc-space violation
-	                (marker inside DiscSpace). Resets after 1.5 s unmarked.
-	  Mark stance   defenders hold Secondary to raise their hands; aiming up
-	                or down chooses High (hammers / hop throws) or Low (wide,
-	                waist-to-chest: stops normal and step-out releases).
-	                Jumping lifts the active zone. Stance is replicated as a
-	                character attribute so the thrower can read it.
+	                is within StallRange of P. Pauses when nobody is marking,
+	                on a double team (a second defender in range who is not
+	                guarding anyone else), or on a disc-space violation (the
+	                marker inside DiscSpace of P for 0.4 s). Resets after
+	                1.5 s unmarked.
+	  Mark stance   defenders hold Secondary near the holder to mark-shuffle
+	                with their hands up (MarkStance remote: on, stance); the
+	                Slide key toggles High (hammers / hop throws) and Low
+	                (wide, knees to chest: normal and step-out releases).
+	                Replicated as the character attribute Mark so the thrower
+	                sees it.
 	  Hand blocks   on release the first HandBlockCheckTime seconds of the
-	                flight are tested against every nearby defender's hand
-	                zone. Contact = a point block. Everything is geometry the
-	                thrower can see; there is no hidden roll.
+	                flight are tested against every nearby defender's hand box
+	                (CatchGeometry.markBox: the marker's facing blended toward
+	                P, Low / High bands, a small chest sphere when Relaxed,
+	                lifted by a jump). Markers are rewound (MovementService.
+	                positionAt) by about two one-way pings plus a little,
+	                capped at Mark.RewindMax, so the test uses where the
+	                thrower saw them, in the stance they saw (a stance change
+	                newer than the rewind time uses the previous stance): a
+	                pivot that visibly beats the mark beats it. Contact = a
+	                point block. Pure geometry, no hidden roll.
+	  Force side    each team's markers force a side per point (UBState
+	                ForceA / ForceB = "FH" | "BH", set by MatchService);
+	                forceFor(team) reads it for bots and the HUD.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -30,6 +47,11 @@ local Net = require(Shared.Net)
 
 local M = DiscConfig.Mark
 
+-- only defenders this close to P (rewound) can reach the early flight
+local HAND_BLOCK_RADIUS = 14
+-- a rewound root this far above standing counts as a jump (filters noise)
+local JUMP_NOISE = 0.3
+
 local DefenseService = {}
 
 DefenseService.StallOut = Signal.new() -- (holderId)
@@ -37,7 +59,15 @@ DefenseService.StallTick = Signal.new() -- (count)
 
 local services: any
 
-type Stance = { on: boolean, stance: string, at: number }
+-- The current stance plus the one before it (`at` = server time of the
+-- change), so a rewound hand-block test uses the stance the thrower saw.
+type Stance = {
+	on: boolean,
+	stance: CatchGeometry.MarkStance,
+	at: number,
+	prevOn: boolean,
+	prevStance: CatchGeometry.MarkStance,
+}
 local stances: { [number]: Stance } = {}
 
 local stall = {
@@ -58,20 +88,54 @@ local function now(): number
 end
 
 function DefenseService.setStance(actorId: number, on: boolean, stance: string?)
-	local st = if stance == "High" then "High" else "Low"
-	stances[actorId] = { on = on, stance = st, at = now() }
+	local st: CatchGeometry.MarkStance = if stance == "High" then "High" else "Low"
+	local old = stances[actorId]
+	if not (old and old.on == on and old.stance == st) then
+		-- a change (a repeat keeps when it last changed)
+		stances[actorId] = {
+			on = on,
+			stance = st,
+			at = now(),
+			prevOn = if old then old.on else false,
+			prevStance = if old then old.stance else "Low",
+		}
+	end
 	local actor = services.PlayerService.get(actorId)
 	if actor and actor.character then
 		actor.character:SetAttribute("Mark", if on then st else "")
 	end
 end
 
-function DefenseService.stanceOf(actorId: number): string
+function DefenseService.stanceOf(actorId: number): CatchGeometry.MarkStance
 	local s = stances[actorId]
 	if s and s.on then
 		return s.stance
 	end
 	return "Relaxed"
+end
+
+-- The stance at server time t (the one before the last change when that
+-- change came after t).
+local function stanceAt(actorId: number, t: number): CatchGeometry.MarkStance
+	local s = stances[actorId]
+	if not s then
+		return "Relaxed"
+	end
+	if s.at > t then
+		return if s.prevOn then s.prevStance else "Relaxed"
+	end
+	return if s.on then s.stance else "Relaxed"
+end
+
+-- The side ("FH" | "BH") the markers of `team` force this point.
+function DefenseService.forceFor(team: string): string
+	local v = Net.state():GetAttribute("Force" .. team)
+	return if v == "BH" then "BH" else "FH"
+end
+
+-- The holder's pivot foot P, or their root until it is planted.
+local function pivotOf(actorId: number, root: BasePart): Vector3
+	return services.MovementService.pivotOf(actorId) or root.Position
 end
 
 -- Called by MatchService whenever possession changes hands.
@@ -88,7 +152,10 @@ function DefenseService.startStall(holderId: number?, interval: number, maxCount
 	local state = Net.state()
 	state:SetAttribute("Stall", 0)
 	state:SetAttribute("StallMax", maxCount)
-	state:SetAttribute("StallState", if holderId then "Unmarked" else "None")
+	-- keep setState's memory in step, or a new possession that starts
+	-- Counting (the last one ended Counting) would never be published
+	stall.stateName = if holderId then "Unmarked" else "None"
+	state:SetAttribute("StallState", stall.stateName)
 	state:SetAttribute("MarkerId", 0)
 end
 
@@ -116,6 +183,7 @@ local function stepStall(dt: number)
 	if not holder or not hroot then
 		return
 	end
+	local pivot = pivotOf(holder.id, hroot)
 	local defenders = {}
 	local offenders = {}
 	for _, a in services.PlayerService.all() do
@@ -123,8 +191,10 @@ local function stepStall(dt: number)
 			local r = services.PlayerService.root(a)
 			if r then
 				if a.team ~= holder.team then
-					local d = (Vector3.new(r.Position.X - hroot.Position.X, 0, r.Position.Z - hroot.Position.Z)).Magnitude
-					table.insert(defenders, { actor = a, root = r, dist = d })
+					table.insert(
+						defenders,
+						{ actor = a, root = r, dist = CatchGeometry.markDistance(r.Position, pivot) }
+					)
 				else
 					table.insert(offenders, r.Position)
 				end
@@ -169,8 +239,8 @@ local function stepStall(dt: number)
 		end
 	end
 
-	-- disc space
-	if marker.dist < M.DiscSpace then
+	-- disc space: only the marker can cause it (measured from P)
+	if CatchGeometry.isDiscSpace(marker.root.Position, pivot) then
 		stall.discSpaceFor += dt
 		if stall.discSpaceFor > 0.4 then
 			setState("DiscSpace")
@@ -195,36 +265,52 @@ local function stepStall(dt: number)
 	end
 end
 
+type Candidate = { id: number, box: CatchGeometry.MarkBox }
+
+-- How far back the thrower saw the markers when the release reaches us.
+-- MovementService.ping is one-way: the release took one ping to arrive, and
+-- the thrower's view of other bodies was another ping (plus interpolation)
+-- behind the server. CatchGeometry.markerRewind takes a round trip.
+local function markerRewind(oneWay: number): number
+	return math.min(CatchGeometry.markerRewind(2 * oneWay) + oneWay, M.RewindMax)
+end
+DefenseService.markerRewind = markerRewind
+
 -- Returns (blockerId, timeIntoFlight, blockPosition) if the release hits a
--- defender's hands, else nil.
+-- defender's hands, else nil. Defenders are taken where the thrower saw
+-- them: rewound by markerRewind(thrower ping) from `at` (default now).
 function DefenseService.checkHandBlock(
 	launch: DiscPhysics.State,
 	throwerId: number,
 	throwerTeam: string,
 	groundY: number,
-	wind: DiscPhysics.Wind?
+	wind: DiscPhysics.Wind?,
+	at: number?
 ): (number?, number?, Vector3?)
 	local thrower = services.PlayerService.get(throwerId)
 	local troot = thrower and services.PlayerService.root(thrower)
 	if not troot then
 		return nil, nil, nil
 	end
-	local candidates = {}
+	local pivot = pivotOf(throwerId, troot)
+	local rewindT = (at or now()) - markerRewind(services.MovementService.ping(throwerId))
+	local candidates: { Candidate } = {}
 	for _, a in services.PlayerService.all() do
 		if a.role == "Match" and a.team ~= throwerTeam and a.team ~= "N" then
-			local r = services.PlayerService.root(a)
-			if r and (r.Position - troot.Position).Magnitude < 14 then
-				local track = services.MovementService.track(a.id)
-				local jumpH = 0
-				if track and not track.grounded then
-					jumpH = math.max(0, track.heightAboveGround - 3)
-				end
+			local pos, facing = services.MovementService.positionAt(a.id, rewindT)
+			if (pos - pivot).Magnitude < HAND_BLOCK_RADIUS then
+				local rise = pos.Y - groundY - services.MovementService.standHeight(a.id)
+				local stance: CatchGeometry.MarkStance = stanceAt(a.id, rewindT)
 				table.insert(candidates, {
 					id = a.id,
-					pos = r.Position,
-					toward = troot.Position - r.Position,
-					stance = DefenseService.stanceOf(a.id),
-					jumpH = jumpH,
+					box = CatchGeometry.markBox(
+						pos,
+						facing,
+						pivot,
+						stance,
+						groundY,
+						if rise > JUMP_NOISE then rise else 0
+					),
 				})
 			end
 		end
@@ -238,7 +324,7 @@ function DefenseService.checkHandBlock(
 		DiscPhysics.step(s, dt, wind)
 		local p = Vector3.new(s.px, s.py, s.pz)
 		for _, c in candidates do
-			if CatchGeometry.inMarkZone(c.pos, groundY, c.toward, c.stance :: any, c.jumpH, p) then
+			if CatchGeometry.inMarkBox(c.box, p) then
 				return c.id, s.t, p
 			end
 		end
@@ -255,19 +341,6 @@ function DefenseService.Start()
 		local actor = services.PlayerService.fromPlayer(player)
 		if actor and type(on) == "boolean" then
 			DefenseService.setStance(actor.id, on, if type(stance) == "string" then stance else "Low")
-		end
-	end)
-	Net.unreliable("MarkAim").OnServerEvent:Connect(function(player, pitch)
-		local actor = services.PlayerService.fromPlayer(player)
-		if not actor or type(pitch) ~= "number" or pitch ~= pitch then
-			return
-		end
-		local s = stances[actor.id]
-		if s and s.on then
-			local st = if pitch > math.rad(12) then "High" else "Low"
-			if st ~= s.stance then
-				DefenseService.setStance(actor.id, true, st)
-			end
 		end
 	end)
 	RunService.Heartbeat:Connect(stepStall)

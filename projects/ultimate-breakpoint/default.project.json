@@ -24,6 +24,8 @@
         "GameSettingsAvatar": "R15",
         "CharacterJumpPower": 0,
         "CharacterWalkSpeed": 0,
+        "DevComputerMovementMode": "Scriptable",
+        "DevTouchMovementMode": "Scriptable",
         "CameraMaxZoomDistance": 40,
         "CameraMinZoomDistance": 4,
         "AutoJumpEnabled": false

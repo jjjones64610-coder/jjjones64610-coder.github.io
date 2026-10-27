@@ -3,25 +3,29 @@
 	Net — one place that names every remote and replicated-state folder.
 
 	The server creates everything in Net.init(); clients wait for it. Remotes
-	are coarse and event-driven (a technique, a throw, a catch claim) — there is
-	no per-frame client->server traffic except the optional unreliable
-	MarkAim stream while a defender holds Mark Stance (10 Hz).
+	are coarse and event-driven (a technique, a pivot plant, a throw, a catch
+	claim): there is no per-frame client->server traffic. Every technique
+	event carries its own timestamp `t` (the client's Net.now() when it
+	happened), so the server judges cooldowns, chains and conversions on when
+	things happened rather than when the packet arrived.
 
 	Client -> server
-	  Tech        (events: {{tech, quality, dir, t, info}}, mode)   validated, replicated as pose attributes
-	  ThrowCharge (throwType)                                        windup pose for everyone
-	  Throw       (params)                                           server computes the launch itself
-	  Fake        (throwType)
-	  Catch       (discId, clientServerTime, zoneKind, reachDir)      claim, validated with lag compensation
-	  Reach       (dir)                                              opens the reach window server-side
+	  Tech        (events: {{tech, quality, dir, t, info}}, mode)   validated on t, replicated as pose attributes
+	  Pivot       (pos: Vector3)                                 proposed pivot foot P; server validates, writes UBPivot
+	  ThrowCharge (throwType | false)                            windup pose for everyone (false = charge lost)
+	  Throw       (params)                                       params incl. step, pivot, releaseT, rootPos; the
+	                                                             server computes the launch itself
+	  Fake        (throwType, side)
+	  Catch       (discId, tFirst, zoneKind, reachDir, rootPos, rootVel)  claim, lag-compensated; always answered
+	  Reach       (dir)                                          opens the reach window server-side
 	  MarkStance  (on, stance)
-	  MarkAim     (pitch)          [unreliable]
-	  Action      (kind, payload)                                    votes, training, settings, cosmetics
+	  Action      (kind, payload)                                votes, pickup, training, settings, cosmetics
 	Server -> client
-	  Notify, Highlight, CatchResult, Profile, Summary, Feedback, Effect, Combo
+	  Notify, Highlight, CatchResult (also Denied), Profile, Summary, Feedback, Effect, Combo
 	Replicated state (attributes, late-join safe)
-	  ReplicatedStorage.UBState   match phase, score, clock, possession, stall
+	  ReplicatedStorage.UBState   match phase, mode, score, clock, possession, stall, team counts
 	  ReplicatedStorage.UBDiscs   one Configuration per disc (flight launch params)
+	  character models            UBPivot, UBTeleport(+Pos/Yaw/Face), UBLineX/UBLineSide, UBRole, pose attributes
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -35,6 +39,7 @@ Net.DiscsName = "UBDiscs"
 
 Net.Events = {
 	"Tech",
+	"Pivot",
 	"ThrowCharge",
 	"Throw",
 	"Fake",
@@ -52,7 +57,8 @@ Net.Events = {
 	"Combo",
 }
 
-Net.Unreliable = { "MarkAim" }
+-- Unreliable streams (none at the moment; Net.unreliable() stays for future ones).
+Net.Unreliable = {} :: { string }
 
 Net.Functions = { "GetProfile", "GetLeaderboard" }
 

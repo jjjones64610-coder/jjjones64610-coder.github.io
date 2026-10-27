@@ -8,6 +8,7 @@ local Progression = {}
 Progression.XP = {
 	MatchPlayed = 100,
 	MatchWon = 60,
+	PvPMultiplier = 1.5, -- match XP when both teams had human players (vs bots: x1)
 	Goal = 25,
 	Assist = 20,
 	Callahan = 80,
@@ -18,10 +19,15 @@ Progression.XP = {
 	Layout = 15,
 	Greatest = 60,
 	Highlight = 20,
-	ComboPerHundred = 1, -- converted combos: 1 XP per 100 combo points
-	ComboCap = 60,
+	-- Combos pay from Summary.xpScore (converted: x2 score; not converted:
+	-- 25 % of it, settled once the chain can no longer be converted).
+	ComboPerHundred = 1, -- 1 XP per 100 xpScore points
+	ComboCap = 60, -- per converted chain
+	UnconvertedComboCap = 30, -- per unconverted chain
+	UnconvertedMatchCap = 120, -- unconverted chains, per player per match (match play only)
 	TrainingDrill = 15,
 	PersonalBest = 25,
+	SignatureTier = { 40, 90, 160 }, -- per signature move, by Config/Signatures tier
 }
 
 function Progression.xpForLevel(level: number): number
@@ -178,6 +184,27 @@ Progression.Titles = {
 Progression.Achievements = {
 	{ id = "FirstGoal", name = "On the Board", description = "Score your first goal.", stat = "goals", goal = 1 },
 	{
+		id = "ResetArtist",
+		name = "Reset Artist",
+		description = "Pull off 10 signature moves.",
+		stat = "signatures",
+		goal = 10,
+	},
+	{
+		id = "FlipReset",
+		name = "Flip Reset",
+		description = "Land a Double Tip: two tips in one jump, then the catch.",
+		stat = "sigDoubleTip",
+		goal = 1,
+	},
+	{
+		id = "SelfMade",
+		name = "Self-Made",
+		description = "Get a Self-D: tip it as a defender, then catch it yourself.",
+		stat = "sigSelfD",
+		goal = 1,
+	},
+	{
 		id = "LayoutArtist",
 		name = "Layout Artist",
 		description = "Make 25 diving (layout) catches.",
@@ -230,7 +257,7 @@ Progression.Achievements = {
 	{
 		id = "Huck",
 		name = "Huck It",
-		description = "Complete 10 throws longer than 120 studs.",
+		description = "Complete 10 HUCKs (a completion longer than half the field).",
 		stat = "hucks",
 		goal = 10,
 	},
@@ -246,7 +273,7 @@ Progression.Achievements = {
 		name = "Student of the Game",
 		description = "Finish every training drill once.",
 		stat = "drillsCompleted",
-		goal = 6,
+		goal = 9,
 	},
 } :: { any }
 

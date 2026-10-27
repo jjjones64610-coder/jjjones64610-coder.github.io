@@ -88,15 +88,41 @@ do
 	local m = find(sp, { "StarterPlayerScripts", "Client", "Controllers", name })
 	check(m ~= nil and m.ClassName == "ModuleScript", "controller " .. name)
 end
+for _, name in { "Hud", "Menu", "Mobile", "Panels", "Theme", "ThrowHud" } do
+	local m = find(sp, { "StarterPlayerScripts", "Client", "UI", name })
+	check(m ~= nil and m.ClassName == "ModuleScript", "client UI " .. name)
+end
+for _, name in { "ArenaBuilder", "Build", "TrainingBuilder" } do
+	local m = find(sss, { "Server", "Arena", name })
+	check(m ~= nil and m.ClassName == "ModuleScript", "server Arena " .. name)
+end
 for _, p in
 	{
 		{ "Movement", "MovementSim" },
+		{ "Animation", "Locomotion" },
 		{ "Disc", "DiscPhysics" },
 		{ "Disc", "ThrowModel" },
 		{ "Disc", "Solver" },
 		{ "Rules", "RulesEngine" },
 		{ "Rules", "CatchGeometry" },
 		{ "Rules", "ComboEvaluator" },
+		{ "Rules", "FieldGeometry" },
+		{ "Rules", "MatchPlan" },
+		{ "Rules", "Signatures" },
+		{ "Rules", "Rating" },
+		{ "Config", "Arenas" },
+		{ "Config", "Audio" },
+		{ "Config", "Disc" },
+		{ "Config", "Hitbox" },
+		{ "Config", "Signatures" },
+		{ "Config", "Input" },
+		{ "Config", "Modes" },
+		{ "Config", "Movement" },
+		{ "Config", "Progression" },
+		{ "Config", "Teams" },
+		{ "Util", "Rng" },
+		{ "Util", "Signal" },
+		{ "Util", "VecMath" },
 		{ "Net" },
 		{ "Actors" },
 	}
@@ -105,13 +131,20 @@ do
 	for _, n in p do
 		table.insert(names, n)
 	end
-	check(find(rs, names) ~= nil, "shared " .. table.concat(p, "/"))
+	local m = find(rs, names)
+	check(m ~= nil and m.ClassName == "ModuleScript", "shared " .. table.concat(p, "/"))
 end
 
 check(game:GetService("Workspace").Gravity == 160, "workspace gravity 160")
 check(game:GetService("Workspace").StreamingEnabled == false, "streaming disabled (whole field must be present)")
 check(sp.EnableMouseLockOption == false, "shift-lock disabled (Shift is sprint)")
 check(sp.CharacterWalkSpeed == 0, "default walk speed 0 (movement engine drives characters)")
+check(sp.CharacterJumpPower == 0, "default jump power 0 (jumps come from the movement engine)")
+check(sp.AutoJumpEnabled == false, "auto-jump disabled")
+-- the default control scripts must not move the character: MovementController
+-- drives the Humanoid (WalkSpeed / Move) from MovementSim
+check(sp.DevComputerMovementMode.Name == "Scriptable", "computer movement mode Scriptable")
+check(sp.DevTouchMovementMode.Name == "Scriptable", "touch movement mode Scriptable")
 
 if failures > 0 then
 	print(string.format("\n%d structural checks failed", failures))
