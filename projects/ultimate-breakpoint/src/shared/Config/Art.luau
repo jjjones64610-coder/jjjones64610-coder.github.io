@@ -43,9 +43,9 @@ Art.Ui = {
 	MenuBackground = "77694382940410", -- the store thumbnail
 	FlashStep = "120616402487903",
 	Zone = "72311911062044",
-	SkyWalk = "",
+	SkyWalk = "97193595800423",
 	Overdrive = "91517007108188",
-	Emote = "",
+	Emote = "89850613445736",
 	Trail = "103052506400160",
 	Aura = "106340578522274",
 }

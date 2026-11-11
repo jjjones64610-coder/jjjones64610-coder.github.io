@@ -40,6 +40,7 @@ local Hud = require(UI.Hud)
 local ThrowHud = require(UI.ThrowHud)
 local Menu = require(UI.Menu)
 local TechDebug = require(UI.TechDebug)
+local MainMenu = require(UI.MainMenu)
 local Panels = require(UI.Panels)
 local Mobile = require(UI.Mobile)
 
@@ -323,6 +324,7 @@ function UIController.Start()
 	Mobile.build(gui, controllers)
 	Menu.build(gui, controllers)
 	TechDebug.build(gui, controllers)
+	MainMenu.build(gui, controllers)
 
 	controllers.InputController.ActionBegan:Connect(function(action)
 		if action == "Menu" then
@@ -406,6 +408,7 @@ function UIController.Start()
 			return
 		end
 		Menu.setProfile(p)
+		MainMenu.refresh()
 		lastLevel = p.level
 	end)
 	task.spawn(function()

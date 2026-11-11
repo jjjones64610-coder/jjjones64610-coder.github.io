@@ -105,6 +105,17 @@ the last timed press in ms ("Cut: 34 ms early").
 - [ ] Music: main theme in warm-up, the chill track in Training, the match track in a point, the fanfare at match end; Settings → Music volume.
 - [ ] Settings → New movement core off brings back the classic engine at once.
 
+### 0a. Round 5 (after the first playtest)
+- [ ] Join: the title screen shows (art, logo, level + coins); PLAY drops you in; SHOP / LOCKER / SETTINGS open those tabs. Main theme plays.
+- [ ] The only cursor is a white circle (no arrow), centred in play, following the mouse in menus.
+- [ ] Every avatar is the same standard body (Rthro / bundle bodies become the standard R15 shape; clothes and accessories stay).
+- [ ] Pivot: catch on the run, stop, step around: no pull-back, no spinning, the disc leaves from where your hand is.
+- [ ] Running feels quicker; Space always jumps at once; crouch (C) then Space is a Sky.
+- [ ] Touching the disc catches it; LMB on the gold ring is a Perfect Catch.
+- [ ] Throws: 0.7 s charge, Q / E curve, the camera keeps following the mouse.
+- [ ] Bots: with the disc in your hands they cut into the lanes in front of you; open, you get passes.
+- [ ] Shop: buy an emote / aura / trail / ability with coins; equip it; B plays the emote in warm-up; Perfects flare your aura. Robux buttons read "after publishing".
+
 ### 0b. Art (Config/Art, ForgeGUI images on Roblox)
 - [ ] The scoreboard bar and the menu buttons show the new art (not stretched badly, text readable on top).
 - [ ] A selected tab, a toggle that is on and the gold Play button still show their colour (the art steps aside for state colours).

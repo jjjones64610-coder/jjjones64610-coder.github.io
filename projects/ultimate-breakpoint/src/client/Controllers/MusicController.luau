@@ -20,6 +20,7 @@ local TweenService = game:GetService("TweenService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Music = require(Shared.Config.Music)
 local Net = require(Shared.Net)
+local MainMenu = require(script.Parent.Parent.UI.MainMenu)
 
 local MusicController = {}
 
@@ -43,6 +44,9 @@ end
 
 -- Which track the current state wants.
 local function wanted(): string
+	if MainMenu.isShown() then
+		return "MainTheme" -- the title screen
+	end
 	local c = player.Character
 	if c and c:GetAttribute("UBRole") == "Training" then
 		return "Lobby"

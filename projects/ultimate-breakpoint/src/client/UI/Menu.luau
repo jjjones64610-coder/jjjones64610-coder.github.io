@@ -1343,6 +1343,18 @@ function Menu.isOpen(): boolean
 	return isOpen
 end
 
+-- Opens the menu on a tab ("Shop", "Locker", "Settings", ...).
+function Menu.openTab(name: string)
+	if table.find(TABS, name) then
+		currentTab = name
+	end
+	Menu.toggle(true)
+end
+
+function Menu.profile(): any
+	return profile
+end
+
 function Menu.setProfile(p: any)
 	profile = p
 	if

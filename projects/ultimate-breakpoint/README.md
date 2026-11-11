@@ -76,6 +76,15 @@ and the `UBInterface` ScreenGui.
 
 ---
 
+## Main menu, shop and coins
+
+You start on the title screen: **PLAY**, **TRAINING**, **SHOP**, **LOCKER**,
+**SETTINGS**. Coins come from playing (a share of every XP you earn) and buy
+abilities, anime emotes (B to play), auras that flare on your Perfects, and
+trails. Robux coin packs and the VIP pass are wired up: after publishing,
+create the products and the pass in the Creator Dashboard (Monetization) and
+paste their ids into `src/shared/Config/Shop.luau`.
+
 ## Controls (defaults, all rebindable in Menu → Controls)
 
 Everything sits under the left hand around WASD (the tech-spec layout):
@@ -92,12 +101,15 @@ Everything sits under the left hand around WASD (the tech-spec layout):
 | Forehand throw (holding the disc) · mark (hold near the holder) · tip (in the air) | RMB | LT |
 | Overhead (hold): LMB scoober, RMB hammer | F | Y |
 | Pump fake (while charging) | C | B |
-| Ability (when FLOW is full) | G | L3 |
+| Ability (when FLOW is full; pick it in the Shop / Locker) | G | L3 |
+| Curve the throw while charging | Q / E (hold) | — |
+| Emote | B | D-pad down |
 | Menu · free mouse · celebrate | M · LeftAlt · B | Select · — · D-pad down |
 
-Catching is a press: hit LMB as the ring on the disc closes on your hands
-(gold = Perfect). Throws charge over a second: release in the pale zone,
-on the gold line for a Snap Release. Holding the disc, WASD steps around
+Touching the disc catches it; pressing LMB as the ring closes on your hands
+(gold) is a Perfect Catch with Hot Hands. Throws charge in 0.7 s: release in
+the pale zone, on the gold line for a Snap Release; hold Q / E while
+charging to curve it. Sky: crouch (hold C) while standing, then jump. Holding the disc, WASD steps around
 your pivot; double-tap to lunge. Pick your ability in **Menu → Settings → Ability**; FLOW
 fills from Perfect techs, catches, blocks and goals. The tech debug HUD
 (speed, state, Burst, the last timing in ms) is on in Studio.
