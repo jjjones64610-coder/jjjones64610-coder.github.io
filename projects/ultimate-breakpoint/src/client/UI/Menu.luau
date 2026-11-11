@@ -34,6 +34,9 @@ local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
 local SignaturesConfig = require(Shared.Config.Signatures)
 local Abilities = require(Shared.Config.Abilities)
+local ShopConfig = require(Shared.Config.Shop)
+local Art = require(Shared.Config.Art)
+local MarketplaceService = game:GetService("MarketplaceService")
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -50,7 +53,7 @@ local profile: any = nil
 local rebinding: { action: string, button: TextButton }? = nil
 local launcher = { throwType = "Backhand", power = 0.5, pitch = 10, bank = 0, offset = 0 }
 
-local TABS = { "Play", "Training", "Profile", "Locker", "Leaderboard", "Settings", "Controls" }
+local TABS = { "Play", "Shop", "Training", "Profile", "Locker", "Leaderboard", "Settings", "Controls" }
 
 -- UBState attributes the Play tab shows (it refreshes when they change).
 local PLAY_STATE = {
@@ -880,6 +883,8 @@ function render.Locker(content: Instance)
 		{ key = "celebration", title = "CELEBRATIONS", list = ProgressionConfig.Celebrations },
 		{ key = "banner", title = "BANNERS", list = ProgressionConfig.Banners },
 		{ key = "title", title = "TITLES", list = ProgressionConfig.Titles },
+		{ key = "aura", title = "AURAS", list = ProgressionConfig.Auras },
+		{ key = "ability", title = "ABILITY", list = ShopConfig.Abilities },
 	}
 	for _, slot in slots do
 		section(content, slot.title, nextOrder())
@@ -900,7 +905,11 @@ function render.Locker(content: Instance)
 			local has = table.find(unlocked, item.id) ~= nil
 			local label = item.name
 			if not has then
-				label = if item.level then (item.name .. " · Lv " .. item.level) else (item.name .. " · achievement")
+				label = if item.level
+					then (item.name .. " · Lv " .. item.level)
+					elseif item.price then (item.name .. " · SHOP")
+					elseif item.vip then (item.name .. " · VIP")
+					else (item.name .. " · achievement")
 			end
 			local b = Theme.button(label, {
 				Parent = r,
@@ -920,10 +929,215 @@ function render.Locker(content: Instance)
 			if has then
 				b.Activated:Connect(function()
 					action("Equip", { slot = slot.key, id = item.id })
+					if slot.key == "ability" then
+						controllers.SettingsController.set("Ability", item.id)
+					end
 				end)
 			end
 		end
 	end
+end
+
+-- THE SHOP: coins buy abilities, emotes, auras and trails; Robux buys
+-- coin packs and VIP (Config/Shop; Robux needs the game published first).
+type ShopSection = { key: string, title: string, list: { any }, icon: string? }
+local SHOP_SECTIONS: { ShopSection } = {
+	{ key = "ability", title = "ABILITIES", list = ShopConfig.Abilities, icon = nil },
+	{ key = "celebration", title = "ANIME EMOTES", list = ProgressionConfig.Celebrations, icon = "Emote" },
+	{ key = "aura", title = "AURAS", list = ProgressionConfig.Auras, icon = "Aura" },
+	{ key = "trail", title = "TRAILS", list = ProgressionConfig.Trails, icon = "Trail" },
+}
+
+local function shopCard(
+	parent: Instance,
+	icon: string?,
+	title: string,
+	sub: string,
+	button: string,
+	color: Color3,
+	onClick: (() -> ())?
+)
+	local card = Theme.panel({ Parent = parent, Size = UDim2.fromOffset(176, 92) })
+	local x = 8
+	local img = icon and Art.ui(icon)
+	if img then
+		make("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = img,
+			Size = UDim2.fromOffset(44, 44),
+			Position = UDim2.fromOffset(6, 6),
+			Parent = card,
+		})
+		x = 54
+	end
+	Theme.label(title, 14, {
+		Parent = card,
+		Position = UDim2.fromOffset(x, 6),
+		Size = UDim2.new(1, -x - 6, 0, 18),
+		Font = Theme.Fonts.Heavy,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	Theme.label(sub, 12, {
+		Parent = card,
+		Position = UDim2.fromOffset(x, 26),
+		Size = UDim2.new(1, -x - 6, 0, 16),
+		TextColor3 = C.Muted,
+	})
+	local b = Theme.button(button, {
+		Parent = card,
+		Position = UDim2.new(0, 6, 1, -36),
+		Size = UDim2.new(1, -12, 0, 30),
+		TextSize = 13,
+		BackgroundColor3 = color,
+		TextColor3 = if color == C.PanelLight then C.Text else Color3.new(0, 0, 0),
+	})
+	if onClick then
+		b.Activated:Connect(onClick)
+	end
+end
+
+function render.Shop(content: Instance)
+	local o = 0
+	local function nextOrder(): number
+		o += 1
+		return o
+	end
+	if not profile then
+		Theme.label("Loading...", 16, { Parent = content, LayoutOrder = 1 })
+		return
+	end
+	-- wallet
+	local top = row(content, nextOrder(), 40)
+	local coin = Art.ui("Coin")
+	if coin then
+		make("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = coin,
+			Size = UDim2.fromOffset(32, 32),
+			LayoutOrder = 1,
+			Parent = top,
+		})
+	end
+	Theme.label(string.format("%d COINS", profile.coins or 0), 22, {
+		Parent = top,
+		LayoutOrder = 2,
+		Size = UDim2.fromOffset(220, 30),
+		Font = Theme.Fonts.Heavy,
+		TextColor3 = C.Gold,
+	})
+	if profile.vip then
+		Theme.label("VIP · x" .. ShopConfig.VipCoinMult .. " coins", 15, {
+			Parent = top,
+			LayoutOrder = 3,
+			Size = UDim2.fromOffset(160, 30),
+			TextColor3 = C.Accent,
+		})
+	end
+	Theme.label("Earn coins by playing: matches, goals, catches, blocks, combos and signature moves.", 13, {
+		Parent = content,
+		LayoutOrder = nextOrder(),
+		TextColor3 = C.Muted,
+	})
+	for _, sec in SHOP_SECTIONS do
+		section(content, sec.title, nextOrder())
+		local grid = make("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, -10, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		})
+		local layout = Instance.new("UIGridLayout")
+		layout.CellSize = UDim2.fromOffset(176, 92)
+		layout.CellPadding = UDim2.fromOffset(8, 8)
+		layout.Parent = grid
+		local unlocked = profile.unlocked[sec.key] or {}
+		local equipped = profile.equipped[sec.key]
+		for _, item in sec.list do
+			-- the shop lists what can be bought (and what you already bought)
+			if item.price ~= nil or item.vip then
+				local has = table.find(unlocked, item.id) ~= nil
+				local icon = sec.icon or item.id
+				local def = if sec.key == "ability" then Abilities.get(item.id) else nil
+				local sub = if def then def.desc else (if item.vip then "VIP pass" else "Cosmetic")
+				if has then
+					local on = item.id == equipped
+					shopCard(
+						grid,
+						icon,
+						item.name,
+						sub,
+						if on then "EQUIPPED" else "EQUIP",
+						if on then C.Good else C.PanelLight,
+						function()
+							action("Equip", { slot = sec.key, id = item.id })
+							if sec.key == "ability" then
+								controllers.SettingsController.set("Ability", item.id)
+							end
+						end
+					)
+				elseif item.vip then
+					shopCard(grid, icon, item.name, sub, "VIP ONLY", C.Panel, nil)
+				else
+					local afford = (profile.coins or 0) >= item.price
+					shopCard(
+						grid,
+						icon,
+						item.name,
+						sub,
+						string.format("BUY · %d", item.price),
+						if afford then C.Gold else C.Panel,
+						function()
+							action("Buy", { slot = sec.key, id = item.id })
+						end
+					)
+				end
+			end
+		end
+	end
+	-- Robux
+	section(content, "COINS & VIP (ROBUX)", nextOrder())
+	local grid = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, -10, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = nextOrder(),
+		Parent = content,
+	})
+	local layout = Instance.new("UIGridLayout")
+	layout.CellSize = UDim2.fromOffset(176, 92)
+	layout.CellPadding = UDim2.fromOffset(8, 8)
+	layout.Parent = grid
+	for _, p in ShopConfig.Products do
+		local live = p.productId ~= 0
+		shopCard(
+			grid,
+			"Coin",
+			string.format("%s · %d", p.name, p.coins),
+			if live then "Coins" else "After publishing",
+			string.format("R$ %d", p.robux),
+			if live then C.Accent else C.Panel,
+			if live
+				then function()
+					MarketplaceService:PromptProductPurchase(player, p.productId)
+				end
+				else nil
+		)
+	end
+	local vipLive = ShopConfig.Vip.gamePassId ~= 0
+	shopCard(
+		grid,
+		"Aura",
+		"VIP PASS",
+		if profile.vip then "Owned" else "x1.5 coins + VIP items",
+		if profile.vip then "OWNED" else string.format("R$ %d", ShopConfig.Vip.robux),
+		if profile.vip then C.Good elseif vipLive then C.Accent else C.Panel,
+		if vipLive and not profile.vip
+			then function()
+				MarketplaceService:PromptGamePassPurchase(player, ShopConfig.Vip.gamePassId)
+			end
+			else nil
+	)
 end
 
 function render.Leaderboard(content: Instance)
@@ -979,26 +1193,6 @@ function render.Settings(content: Instance)
 			s.set(n.key, math.clamp(math.floor((v + n.step) * 10 + 0.5) / 10, n.min, n.max))
 			Menu.refresh(true)
 		end)
-	end
-	-- your ability (everyone picks from the same pool)
-	do
-		local order = Abilities.Order
-		local cur = table.find(order, s.get("Ability")) or 1
-		local def = Abilities.List[order[cur]]
-		stepper(content, nextOrder(), "Ability", def.name, function()
-			s.set("Ability", order[(cur - 2) % #order + 1])
-			Menu.refresh(true)
-		end, function()
-			s.set("Ability", order[cur % #order + 1])
-			Menu.refresh(true)
-		end)
-		Theme.label(def.desc .. "  Fill FLOW with Perfect techs, catches, blocks and goals.", 13, {
-			Parent = content,
-			LayoutOrder = nextOrder(),
-			TextColor3 = C.Muted,
-			TextWrapped = true,
-			Size = UDim2.new(1, 0, 0, 34),
-		})
 	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },
@@ -1151,7 +1345,10 @@ end
 
 function Menu.setProfile(p: any)
 	profile = p
-	if isOpen and (currentTab == "Profile" or currentTab == "Locker" or currentTab == "Training") then
+	if
+		isOpen
+		and (currentTab == "Profile" or currentTab == "Locker" or currentTab == "Training" or currentTab == "Shop")
+	then
 		Menu.refresh(true)
 	end
 end

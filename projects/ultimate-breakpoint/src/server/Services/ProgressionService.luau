@@ -20,6 +20,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local ProgressionConfig = require(Shared.Config.Progression)
+local ShopConfig = require(Shared.Config.Shop)
 local InputConfig = require(Shared.Config.Input)
 local MovementConfig = require(Shared.Config.Movement)
 local Rating = require(Shared.Rules.Rating)
@@ -41,11 +42,24 @@ local function levelOf(d: { [string]: any }): number
 	return level
 end
 
-local function unlockedList(d: { [string]: any }, list: { any }): { string }
+local function itemUnlocked(d: { [string]: any }, slot: string, item: any, level: number): boolean
+	if item.level and level >= item.level then
+		return true
+	elseif item.achievement and d.achievements[item.achievement] then
+		return true
+	elseif item.price ~= nil and (item.price == 0 or d.owned[slot .. ":" .. item.id] == true) then
+		return true
+	elseif item.vip and d.vip == true then
+		return true
+	end
+	return false
+end
+
+local function unlockedList(d: { [string]: any }, list: { any }, slot: string): { string }
 	local level = levelOf(d)
 	local out = {}
 	for _, item in list do
-		if (item.level and level >= item.level) or (item.achievement and d.achievements[item.achievement]) then
+		if itemUnlocked(d, slot, item, level) then
 			table.insert(out, item.id)
 		end
 	end
@@ -58,21 +72,62 @@ local SLOTS: { [string]: { any } } = {
 	celebration = ProgressionConfig.Celebrations,
 	banner = ProgressionConfig.Banners,
 	title = ProgressionConfig.Titles,
+	aura = ProgressionConfig.Auras,
+	ability = ShopConfig.Abilities,
 }
+ProgressionService.Slots = SLOTS
 
 local function isUnlocked(d: { [string]: any }, slot: string, id: string): boolean
 	local list = (SLOTS :: any)[slot]
 	if not list then
 		return false
 	end
-	return table.find(unlockedList(d, list), id) ~= nil
+	return table.find(unlockedList(d, list, slot), id) ~= nil
+end
+
+local function findItem(slot: string, id: string): any
+	local list = (SLOTS :: any)[slot]
+	if list then
+		for _, item in list do
+			if item.id == id then
+				return item
+			end
+		end
+	end
+	return nil
+end
+
+-- Does this player have `id` in `slot` (level, achievement, bought, VIP)?
+function ProgressionService.owns(player: Player, slot: string, id: string): boolean
+	local d = data(player)
+	return d ~= nil and isUnlocked(d, slot, id)
+end
+
+-- Adds (or with a negative n, spends) coins. Returns false if it would go
+-- below zero.
+function ProgressionService.addCoins(player: Player, n: number): boolean
+	local d = data(player)
+	if not d or (d.coins or 0) + n < 0 then
+		return false
+	end
+	services.DataService.update(player, function(dd: { [string]: any })
+		dd.coins = math.floor((dd.coins or 0) + n)
+	end)
+	ProgressionService.push(player)
+	return true
 end
 
 function ProgressionService.equipped(player: Player, slot: string): string
 	local d = data(player)
-	local fallback = (
-		{ disc = "Classic", trail = "None", celebration = "Point", banner = "Slate", title = "Rookie" } :: any
-	)[slot] or ""
+	local fallback = ({
+		disc = "Classic",
+		trail = "None",
+		celebration = "Point",
+		banner = "Slate",
+		title = "Rookie",
+		aura = "None",
+		ability = "FlashStep",
+	} :: any)[slot] or ""
 	if not d then
 		return fallback
 	end
@@ -99,6 +154,7 @@ local function stampCharacter(player: Player)
 	c:SetAttribute("UBTitle", title)
 	c:SetAttribute("UBBanner", ProgressionService.equipped(player, "banner"))
 	c:SetAttribute("UBTrail", ProgressionService.equipped(player, "trail"))
+	c:SetAttribute("UBAura", ProgressionService.equipped(player, "aura"))
 	c:SetAttribute("UBLevel", levelOf(d))
 	c:SetAttribute("LeftHanded", d.settings.values.LeftHanded == true)
 	c:SetAttribute("UBDivision", ProgressionConfig.division(d.rating).name)
@@ -123,7 +179,7 @@ local function snapshot(player: Player): { [string]: any }?
 	end
 	local unlocked = {}
 	for slot, list in SLOTS do
-		unlocked[slot] = unlockedList(d, list)
+		unlocked[slot] = unlockedList(d, list, slot)
 	end
 	local division = ProgressionConfig.division(d.rating)
 	return {
@@ -143,6 +199,8 @@ local function snapshot(player: Player): { [string]: any }?
 		personalBests = d.personalBests,
 		drillsDone = d.drillsDone,
 		settings = d.settings,
+		coins = d.coins or 0,
+		vip = d.vip == true,
 		persistent = services.DataService.isPersistent(player),
 	}
 end
@@ -187,8 +245,10 @@ function ProgressionService.xp(player: Player, amount: number, reason: string?)
 		return
 	end
 	local before = levelOf(d)
+	local coins = math.floor(amount * ShopConfig.CoinsPerXp * (if d.vip == true then ShopConfig.VipCoinMult else 1))
 	services.DataService.update(player, function(dd: { [string]: any })
 		dd.xp += math.floor(amount)
+		dd.coins = (dd.coins or 0) + coins
 	end)
 	local after = levelOf(d)
 	if after > before then
@@ -441,6 +501,35 @@ function ProgressionService.action(player: Player, kind: string, payload: any)
 			end)
 			stampCharacter(player)
 			push(player)
+		end
+	elseif
+		kind == "Buy"
+		and type(payload) == "table"
+		and type(payload.slot) == "string"
+		and type(payload.id) == "string"
+	then
+		-- a coin purchase: priced, not owned yet, affordable
+		local d = data(player)
+		local item = findItem(payload.slot, payload.id)
+		if
+			d
+			and item
+			and type(item.price) == "number"
+			and item.price > 0
+			and not isUnlocked(d, payload.slot, item.id)
+		then
+			if (d.coins or 0) >= item.price then
+				services.DataService.update(player, function(dd: { [string]: any })
+					dd.coins -= item.price
+					dd.owned[payload.slot .. ":" .. item.id] = true
+					dd.cosmetics[payload.slot] = item.id -- equip it at once
+				end)
+				Net.event("Notify"):FireClient(player, "Purchase", item.name, { slot = payload.slot, id = item.id })
+				stampCharacter(player)
+				push(player)
+			else
+				Net.event("Notify"):FireClient(player, "Toast", "Not enough coins", nil)
+			end
 		end
 	elseif kind == "SaveSettings" then
 		local clean = sanitizeSettings(payload)

@@ -1635,7 +1635,16 @@ function MatchService.action(player: Player, kind: string, payload: any)
 		MatchService.requestPickup(actor.id)
 	elseif kind == "HandBlock" and typeof(payload) == "Vector3" then
 		services.DefenseService.swing(actor.id, payload)
-	elseif kind == "Celebrate" and (S.phase == "PointOver" or S.phase == "MatchOver") then
+	elseif
+		kind == "Celebrate"
+		and (
+			S.phase == "PointOver"
+			or S.phase == "MatchOver"
+			or S.phase == "Intermission"
+			or actor.role == "Training"
+			or actor.role == "Bench"
+		)
+	then
 		if actor.character and actor.player then
 			actor.character:SetAttribute("Celebrate", services.ProgressionService.equipped(actor.player, "celebration"))
 			actor.character:SetAttribute("CelebrateT", now())

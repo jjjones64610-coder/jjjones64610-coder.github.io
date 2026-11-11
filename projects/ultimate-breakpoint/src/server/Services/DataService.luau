@@ -28,6 +28,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Signal = require(Shared.Util.Signal)
 local InputConfig = require(Shared.Config.Input)
 local ProgressionConfig = require(Shared.Config.Progression)
+local ShopConfig = require(Shared.Config.Shop)
 
 local DataService = {}
 
@@ -65,7 +66,19 @@ local function template(): { [string]: any }
 		personalBests = {},
 		drillsDone = {},
 		achievements = {},
-		cosmetics = { disc = "Classic", trail = "None", celebration = "Point", banner = "Slate", title = "Rookie" },
+		cosmetics = {
+			disc = "Classic",
+			trail = "None",
+			celebration = "Point",
+			banner = "Slate",
+			title = "Rookie",
+			aura = "None",
+			ability = "FlashStep",
+		},
+		coins = ShopConfig.StartingCoins,
+		owned = {}, -- "slot:id" -> true (shop purchases)
+		receipts = {}, -- Robux purchase ids already granted
+		vip = false, -- re-checked against the game pass on join
 		settings = { values = table.clone(InputConfig.DefaultSettings), keyboard = {}, gamepad = {} },
 		firstJoin = os.time(),
 		lastJoin = os.time(),
@@ -82,7 +95,14 @@ local function reconcile(data: any): { [string]: any }
 		local cur = data[k]
 		if cur == nil or type(cur) ~= type(v) then
 			data[k] = v
-		elseif type(v) == "table" and k ~= "stats" and k ~= "techMastery" and k ~= "personalBests" then
+		elseif
+			type(v) == "table"
+			and k ~= "stats"
+			and k ~= "techMastery"
+			and k ~= "personalBests"
+			and k ~= "owned"
+			and k ~= "receipts"
+		then
 			for k2, v2 in v do
 				if cur[k2] == nil or type(cur[k2]) ~= type(v2) then
 					cur[k2] = v2

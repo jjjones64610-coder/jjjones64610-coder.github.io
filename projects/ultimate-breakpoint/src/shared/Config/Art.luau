@@ -36,6 +36,28 @@ function Art.vfx(name: string): string?
 	return nil
 end
 
+-- Menu and shop art (ForgeGUI).
+Art.Ui = {
+	Logo = "111364135042535",
+	Coin = "126354451655390",
+	MenuBackground = "77694382940410", -- the store thumbnail
+	FlashStep = "120616402487903",
+	Zone = "72311911062044",
+	SkyWalk = "",
+	Overdrive = "91517007108188",
+	Emote = "",
+	Trail = "103052506400160",
+	Aura = "106340578522274",
+}
+
+function Art.ui(name: string): string?
+	local id = (Art.Ui :: any)[name]
+	if type(id) == "string" and id ~= "" then
+		return "rbxassetid://" .. id
+	end
+	return nil
+end
+
 -- Not used in code; listed so they are easy to find.
 Art.Store = {
 	Icon = "122240476504741",

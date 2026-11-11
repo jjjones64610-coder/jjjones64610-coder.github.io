@@ -32,7 +32,7 @@ Audio.Cues = {
 	Land = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.35, pitch = 1.0 },
 	PrecisionLand = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.5, pitch = 1.4 },
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
-	UiClick = { id = "rbxasset://sounds/button.wav", volume = 0.4, pitch = 1.0 },
+	UiClick = { id = "rbxassetid://136877996742041", volume = 0.5, pitch = 1.0 }, -- ForgeGUI
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },
 	ComboTick = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.2, pitch = 1.25 },
 	ComboEnd = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.3, pitch = 1.05 },
@@ -41,6 +41,8 @@ Audio.Cues = {
 	Reset = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.45, pitch = 2.0 },
 	Signature = { id = "rbxassetid://102977794641930", volume = 0.8, pitch = 1.0 }, -- ForgeGUI power-up
 	Dash = { id = "rbxassetid://97962321370622", volume = 0.45, pitch = 1.1 }, -- dodges, zap dashes, flash step
+	Purchase = { id = "rbxassetid://138762609430193", volume = 0.7, pitch = 1.0 }, -- ForgeGUI coin chime
+	MenuWhoosh = { id = "rbxassetid://103770482539981", volume = 0.6, pitch = 1.0 }, -- ForgeGUI
 	Impact = { id = "rbxassetid://86078047585706", volume = 0.6, pitch = 1.0 }, -- impact frames
 	Ability = { id = "rbxassetid://102977794641930", volume = 0.85, pitch = 1.0 }, -- ability activation
 	-- Supply your own looping crowd ambience and cheer to enable these.

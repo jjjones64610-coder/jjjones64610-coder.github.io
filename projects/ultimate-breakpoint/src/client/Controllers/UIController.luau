@@ -106,6 +106,13 @@ local function onNotify(kind: string, text: string, data: any)
 	elseif kind == "Achievement" then
 		Hud.toast("ACHIEVEMENT: " .. text .. " — " .. tostring(d.description or ""), C.Gold, 6)
 		controllers.AudioController.play("Highlight")
+	elseif kind == "Purchase" then
+		Hud.banner(string.upper(text), "Purchased", C.Gold, 2.2)
+		controllers.AudioController.play("Purchase")
+		-- an ability bought is equipped for the Ability key at once
+		if type(d) == "table" and d.slot == "ability" and type(d.id) == "string" then
+			controllers.SettingsController.set("Ability", d.id)
+		end
 	elseif kind == "LevelUp" then
 		Hud.banner(text, "Level up!", C.Gold, 2.5)
 		for _, u in d.unlocks or {} do

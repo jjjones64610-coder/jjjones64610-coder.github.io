@@ -88,6 +88,10 @@ function AbilityService.activate(id: number, abilityId: any): boolean
 	if c:GetAttribute("UBFrozen") == true then
 		return false
 	end
+	-- only an ability you own (Shop); bots have them all
+	if actor.player and not services.ProgressionService.owns(actor.player, "ability", def.id) then
+		return false
+	end
 	local track = services.MovementService.track(id)
 	if def.id == "FlashStep" and track and track.holding then
 		return false -- a blink while holding the disc would be a travel

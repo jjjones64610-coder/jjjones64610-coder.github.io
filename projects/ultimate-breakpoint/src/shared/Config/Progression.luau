@@ -1,7 +1,10 @@
 --!strict
 -- PROGRESSION, COSMETICS, ACHIEVEMENTS
 -- Nothing here changes how a player moves, throws or catches. Every unlock is
--- visual. There are no purchases that affect competition.
+-- visual, except abilities (Config/Abilities), which are balanced sidegrades
+-- anyone can earn with coins. Items unlock by `level`, by `achievement`, or
+-- are bought in the Shop for `price` coins (Config/Shop); `vip` items come
+-- with the VIP pass.
 
 local Progression = {}
 
@@ -147,6 +150,30 @@ Progression.Trails = {
 		a = Color3.fromRGB(255, 92, 160),
 		b = Color3.fromRGB(255, 255, 255),
 	},
+	-- shop trails
+	{
+		id = "Lightning",
+		name = "Lightning",
+		price = 800,
+		a = Color3.fromRGB(120, 240, 255),
+		b = Color3.fromRGB(255, 255, 255),
+	},
+	{
+		id = "Sakura",
+		name = "Sakura",
+		price = 800,
+		a = Color3.fromRGB(255, 170, 210),
+		b = Color3.fromRGB(255, 240, 250),
+	},
+	{ id = "Shadow", name = "Shadow", price = 1200, a = Color3.fromRGB(140, 60, 255), b = Color3.fromRGB(20, 10, 40) },
+	{
+		id = "Inferno",
+		name = "Inferno",
+		price = 1500,
+		a = Color3.fromRGB(255, 220, 80),
+		b = Color3.fromRGB(255, 40, 20),
+	},
+	{ id = "Galaxy", name = "Galaxy", vip = true, a = Color3.fromRGB(90, 80, 255), b = Color3.fromRGB(255, 120, 255) },
 } :: { any }
 
 Progression.Celebrations = {
@@ -155,6 +182,24 @@ Progression.Celebrations = {
 	{ id = "Bow", name = "Take a Bow", level = 8 },
 	{ id = "Spin", name = "Disc Spin", level = 12 },
 	{ id = "Slide", name = "Knee Slide", level = 18 },
+	-- shop emotes (anime)
+	{ id = "PowerUp", name = "Power Up", price = 600 },
+	{ id = "VPose", name = "Victory V", price = 500 },
+	{ id = "Levitate", name = "Levitate", price = 1500 },
+	{ id = "NinjaRun", name = "Ninja Stance", price = 900 },
+	{ id = "Finisher", name = "Finisher", price = 2000 },
+} :: { any }
+
+-- Auras: anime energy that flares around you on every Perfect, goal and
+-- signature move (Config/Art.Vfx.Aura flames in this colour).
+Progression.Auras = {
+	{ id = "None", name = "None", level = 1 },
+	{ id = "Spirit", name = "Spirit Blue", price = 700, color = Color3.fromRGB(90, 200, 255) },
+	{ id = "Gold", name = "Golden", price = 1500, color = Color3.fromRGB(255, 210, 70) },
+	{ id = "Crimson", name = "Crimson", price = 1200, color = Color3.fromRGB(255, 60, 70) },
+	{ id = "Void", name = "Void", price = 2500, color = Color3.fromRGB(150, 70, 255) },
+	{ id = "Jade", name = "Jade", price = 1000, color = Color3.fromRGB(80, 255, 160) },
+	{ id = "Champion", name = "Champion", vip = true, color = Color3.fromRGB(255, 255, 255) },
 } :: { any }
 
 Progression.Banners = {

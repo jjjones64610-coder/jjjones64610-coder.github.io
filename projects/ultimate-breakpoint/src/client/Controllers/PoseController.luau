@@ -880,6 +880,39 @@ local function compute(ctx: Ctx): Pose
 			pose.legs = "slide"
 			pose.RShoulder = CFrame.Angles(2.6, 0, 0.6)
 			pose.LShoulder = CFrame.Angles(2.6, 0, -0.6)
+		-- shop emotes (anime)
+		elseif ctx.celebrate == "PowerUp" then
+			-- crouched, fists clenched at the hips, trembling with power
+			pose.drop, pose.pitch = 0.7, 0.2
+			pose.roll = math.sin(a * 45) * 0.05
+			pose.RShoulder = CFrame.Angles(0.35, 0, 0.55)
+			pose.LShoulder = CFrame.Angles(0.35, 0, -0.55)
+			pose.Neck = CFrame.Angles(0.35, 0, 0) -- head thrown back
+		elseif ctx.celebrate == "VPose" then
+			pose.pitch = 0.08
+			pose.RShoulder = CFrame.Angles(2.7, 0, 0.75)
+			pose.LShoulder = CFrame.Angles(2.7, 0, -0.75)
+		elseif ctx.celebrate == "Levitate" then
+			-- a calm float, arms out, slowly turning
+			pose.drop = -0.6 - 0.25 * math.sin(a * 2.4)
+			pose.legs = "none"
+			pose.yaw = a * 0.8
+			pose.RShoulder = CFrame.Angles(0.2, 0, 1.2)
+			pose.LShoulder = CFrame.Angles(0.2, 0, -1.2)
+		elseif ctx.celebrate == "NinjaRun" then
+			pose.drop, pose.pitch = 0.5, -0.85
+			pose.RShoulder = CFrame.Angles(-1.25, 0, 0.35)
+			pose.LShoulder = CFrame.Angles(-1.25, 0, -0.35)
+		elseif ctx.celebrate == "Finisher" then
+			-- a spin into a pointed finisher pose
+			if a < 0.6 then
+				pose.yaw = a / 0.6 * math.pi * 4
+				pose.drop = 0.3
+			else
+				pose.drop, pose.pitch, pose.roll = 0.45, -0.2, 0.25
+				pose.RShoulder = CFrame.Angles(1.6, 0, 0.1)
+				pose.LShoulder = CFrame.Angles(0.3, 0, -1.3)
+			end
 		end
 		pose.rate = 14
 	end

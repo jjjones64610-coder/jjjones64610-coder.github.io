@@ -24,6 +24,7 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Theme = require(script.Parent.Parent.UI.Theme)
 local Art = require(ReplicatedStorage:WaitForChild("Shared").Config.Art)
+local ProgressionConfig = require(ReplicatedStorage:WaitForChild("Shared").Config.Progression)
 
 local AnimeFX = {}
 
@@ -393,10 +394,55 @@ end
 -- hooks
 ---------------------------------------------------------------------------
 
+-- A flare of the model's equipped aura (Locker / Shop): anime flames rising
+-- off the body for `duration`.
+function AnimeFX.auraFlare(model: Model, duration: number?)
+	if not enabled() then
+		return
+	end
+	local id = model:GetAttribute("UBAura")
+	if type(id) ~= "string" or id == "None" then
+		return
+	end
+	local color: Color3? = nil
+	for _, a in ProgressionConfig.Auras do
+		if a.id == id then
+			color = a.color
+		end
+	end
+	local root = model:FindFirstChild("HumanoidRootPart")
+	local tex = Art.vfx("Aura")
+	if not color or not root or not tex then
+		return
+	end
+	local e = Instance.new("ParticleEmitter")
+	e.Name = "UBAuraFlare"
+	e.Texture = tex
+	e.Color = ColorSequence.new(color)
+	e.LightEmission = 0.85
+	e.Rate = 40
+	e.Lifetime = NumberRange.new(0.3, 0.55)
+	e.Speed = NumberRange.new(5, 9)
+	e.SpreadAngle = Vector2.new(30, 30)
+	e.EmissionDirection = Enum.NormalId.Top
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 2.2), NumberSequenceKeypoint.new(1, 0.4) })
+	e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(1, 1) })
+	e.Parent = root
+	task.delay(duration or 1.2, function()
+		e.Enabled = false
+		task.delay(0.7, function()
+			e:Destroy()
+		end)
+	end)
+end
+
 -- Called by EffectsController for every technique, local or remote.
 function AnimeFX.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	if not enabled() then
 		return
+	end
+	if quality == "Perfect" and tech ~= "Plant" then
+		AnimeFX.auraFlare(model, 0.9)
 	end
 	local color = (Theme.TechColors :: any)[tech] or Theme.Colors.Accent
 	local perfect = quality == "Perfect"
@@ -439,6 +485,35 @@ end
 function AnimeFX.Start()
 	buildLines()
 	RunService.RenderStepped:Connect(updateLines)
+	-- celebrations (goals) flare everyone's aura; emotes get a burst too
+	local seen: { [Model]: any } = {}
+	task.spawn(function()
+		while true do
+			task.wait(0.25)
+			for _, p in Players:GetPlayers() do
+				local m = p.Character
+				if m then
+					local t = m:GetAttribute("CelebrateT")
+					if t ~= nil and seen[m] ~= t then
+						local first = seen[m] == nil
+						seen[m] = t
+						if not first then
+							AnimeFX.auraFlare(m, 3)
+							local root = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+							if root then
+								AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), Theme.Colors.Perfect, 7)
+							end
+						end
+					end
+				end
+			end
+			for m in seen do
+				if not m.Parent then
+					seen[m] = nil
+				end
+			end
+		end
+	end)
 end
 
 return AnimeFX

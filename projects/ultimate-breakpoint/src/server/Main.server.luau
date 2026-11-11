@@ -30,6 +30,7 @@ local ORDER = {
 	"ThrowService",
 	"LeaderboardService",
 	"ProgressionService",
+	"ShopService",
 	"HighlightService",
 	"TeamService",
 	"BotService",

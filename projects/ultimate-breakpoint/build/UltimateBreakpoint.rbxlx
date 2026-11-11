@@ -898,6 +898,28 @@ function Art.vfx(name: string): string?
 	return nil
 end
 
+-- Menu and shop art (ForgeGUI).
+Art.Ui = {
+	Logo = "111364135042535",
+	Coin = "126354451655390",
+	MenuBackground = "77694382940410", -- the store thumbnail
+	FlashStep = "120616402487903",
+	Zone = "72311911062044",
+	SkyWalk = "",
+	Overdrive = "91517007108188",
+	Emote = "",
+	Trail = "103052506400160",
+	Aura = "106340578522274",
+}
+
+function Art.ui(name: string): string?
+	local id = (Art.Ui :: any)[name]
+	if type(id) == "string" and id ~= "" then
+		return "rbxassetid://" .. id
+	end
+	return nil
+end
+
 -- Not used in code; listed so they are easy to find.
 Art.Store = {
 	Icon = "122240476504741",
@@ -954,7 +976,7 @@ Audio.Cues = {
 	Land = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.35, pitch = 1.0 },
 	PrecisionLand = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.5, pitch = 1.4 },
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
-	UiClick = { id = "rbxasset://sounds/button.wav", volume = 0.4, pitch = 1.0 },
+	UiClick = { id = "rbxassetid://136877996742041", volume = 0.5, pitch = 1.0 }, -- ForgeGUI
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },
 	ComboTick = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.2, pitch = 1.25 },
 	ComboEnd = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.3, pitch = 1.05 },
@@ -963,6 +985,8 @@ Audio.Cues = {
 	Reset = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.45, pitch = 2.0 },
 	Signature = { id = "rbxassetid://102977794641930", volume = 0.8, pitch = 1.0 }, -- ForgeGUI power-up
 	Dash = { id = "rbxassetid://97962321370622", volume = 0.45, pitch = 1.1 }, -- dodges, zap dashes, flash step
+	Purchase = { id = "rbxassetid://138762609430193", volume = 0.7, pitch = 1.0 }, -- ForgeGUI coin chime
+	MenuWhoosh = { id = "rbxassetid://103770482539981", volume = 0.6, pitch = 1.0 }, -- ForgeGUI
 	Impact = { id = "rbxassetid://86078047585706", volume = 0.6, pitch = 1.0 }, -- impact frames
 	Ability = { id = "rbxassetid://102977794641930", volume = 0.85, pitch = 1.0 }, -- ability activation
 	-- Supply your own looping crowd ambience and cheer to enable these.
@@ -2345,7 +2369,10 @@ return Music
             <string name="Source"><![CDATA[--!strict
 -- PROGRESSION, COSMETICS, ACHIEVEMENTS
 -- Nothing here changes how a player moves, throws or catches. Every unlock is
--- visual. There are no purchases that affect competition.
+-- visual, except abilities (Config/Abilities), which are balanced sidegrades
+-- anyone can earn with coins. Items unlock by `level`, by `achievement`, or
+-- are bought in the Shop for `price` coins (Config/Shop); `vip` items come
+-- with the VIP pass.
 
 local Progression = {}
 
@@ -2491,6 +2518,30 @@ Progression.Trails = {
 		a = Color3.fromRGB(255, 92, 160),
 		b = Color3.fromRGB(255, 255, 255),
 	},
+	-- shop trails
+	{
+		id = "Lightning",
+		name = "Lightning",
+		price = 800,
+		a = Color3.fromRGB(120, 240, 255),
+		b = Color3.fromRGB(255, 255, 255),
+	},
+	{
+		id = "Sakura",
+		name = "Sakura",
+		price = 800,
+		a = Color3.fromRGB(255, 170, 210),
+		b = Color3.fromRGB(255, 240, 250),
+	},
+	{ id = "Shadow", name = "Shadow", price = 1200, a = Color3.fromRGB(140, 60, 255), b = Color3.fromRGB(20, 10, 40) },
+	{
+		id = "Inferno",
+		name = "Inferno",
+		price = 1500,
+		a = Color3.fromRGB(255, 220, 80),
+		b = Color3.fromRGB(255, 40, 20),
+	},
+	{ id = "Galaxy", name = "Galaxy", vip = true, a = Color3.fromRGB(90, 80, 255), b = Color3.fromRGB(255, 120, 255) },
 } :: { any }
 
 Progression.Celebrations = {
@@ -2499,6 +2550,24 @@ Progression.Celebrations = {
 	{ id = "Bow", name = "Take a Bow", level = 8 },
 	{ id = "Spin", name = "Disc Spin", level = 12 },
 	{ id = "Slide", name = "Knee Slide", level = 18 },
+	-- shop emotes (anime)
+	{ id = "PowerUp", name = "Power Up", price = 600 },
+	{ id = "VPose", name = "Victory V", price = 500 },
+	{ id = "Levitate", name = "Levitate", price = 1500 },
+	{ id = "NinjaRun", name = "Ninja Stance", price = 900 },
+	{ id = "Finisher", name = "Finisher", price = 2000 },
+} :: { any }
+
+-- Auras: anime energy that flares around you on every Perfect, goal and
+-- signature move (Config/Art.Vfx.Aura flames in this colour).
+Progression.Auras = {
+	{ id = "None", name = "None", level = 1 },
+	{ id = "Spirit", name = "Spirit Blue", price = 700, color = Color3.fromRGB(90, 200, 255) },
+	{ id = "Gold", name = "Golden", price = 1500, color = Color3.fromRGB(255, 210, 70) },
+	{ id = "Crimson", name = "Crimson", price = 1200, color = Color3.fromRGB(255, 60, 70) },
+	{ id = "Void", name = "Void", price = 2500, color = Color3.fromRGB(150, 70, 255) },
+	{ id = "Jade", name = "Jade", price = 1000, color = Color3.fromRGB(80, 255, 160) },
+	{ id = "Champion", name = "Champion", vip = true, color = Color3.fromRGB(255, 255, 255) },
 } :: { any }
 
 Progression.Banners = {
@@ -2636,6 +2705,65 @@ return Progression
           </Properties>
         </Item>
         <Item class="ModuleScript" referent="19">
+          <Properties>
+            <string name="Name">Shop</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Shop — the economy (ShopService, Menu → SHOP).
+
+	Coins are earned by playing (a share of every XP grant: matches, goals,
+	catches, blocks, Perfect techs through combos, signature moves, drills)
+	and spent on items with a `price` in Config/Progression (trails, emotes,
+	auras) and on abilities (Abilities below). Robux buys coin packs
+	(developer products) and the VIP pass (a game pass: x1.5 coins and the
+	VIP cosmetics).
+
+	Robux ids are 0 until the game is published: create the products and the
+	pass on the Creator Dashboard (Monetization), paste their ids here, and
+	the shop's Robux buttons switch on. Nothing else to change.
+]]
+
+local Shop = {}
+
+Shop.CoinsPerXp = 0.25 -- coins for every XP point earned
+Shop.VipCoinMult = 1.5
+Shop.StartingCoins = 250
+
+-- Abilities and their prices (Flash Step is everyone's to start).
+Shop.Abilities = {
+	{ id = "FlashStep", name = "Flash Step", price = 0 },
+	{ id = "Zone", name = "The Zone", price = 1500 },
+	{ id = "Overdrive", name = "Overdrive", price = 2000 },
+	{ id = "SkyWalk", name = "Sky Walk", price = 2500 },
+} :: { any }
+
+export type Product = { id: string, productId: number, coins: number, robux: number, name: string }
+
+-- Developer products (coin packs). robux is the price you set on the dashboard (shown on the button).
+Shop.Products = {
+	{ id = "Coins500", name = "Pouch", coins = 500, robux = 49, productId = 0 },
+	{ id = "Coins1500", name = "Bag", coins = 1500, robux = 129, productId = 0 },
+	{ id = "Coins4000", name = "Chest", coins = 4000, robux = 299, productId = 0 },
+	{ id = "Coins10000", name = "Vault", coins = 10000, robux = 649, productId = 0 },
+} :: { Product }
+
+-- The VIP game pass.
+Shop.Vip = { gamePassId = 0, robux = 299, name = "VIP" }
+
+function Shop.product(productId: number): Product?
+	for _, p in Shop.Products do
+		if p.productId ~= 0 and p.productId == productId then
+			return p
+		end
+	end
+	return nil
+end
+
+return Shop
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -2790,7 +2918,7 @@ return Signatures
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">Teams</string>
             <string name="Source"><![CDATA[--!strict
@@ -2821,7 +2949,7 @@ return Teams
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Tech</string>
             <string name="Source"><![CDATA[--!strict
@@ -3043,11 +3171,11 @@ return Tech
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="22">
+      <Item class="Folder" referent="23">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="23">
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -3380,7 +3508,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -3605,7 +3733,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -3995,11 +4123,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="26">
+      <Item class="Folder" referent="27">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -6338,7 +6466,7 @@ return MovementSim
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">TechCore</string>
             <string name="Source"><![CDATA[--!strict
@@ -8010,7 +8138,7 @@ return TechCore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="29">
+      <Item class="ModuleScript" referent="30">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -8148,11 +8276,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="30">
+      <Item class="Folder" referent="31">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -8612,7 +8740,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -8988,7 +9116,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -9261,7 +9389,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -9804,7 +9932,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -10022,7 +10150,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -10506,7 +10634,7 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -10806,11 +10934,11 @@ return Signatures
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="38">
+      <Item class="Folder" referent="39">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -10857,7 +10985,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -10905,7 +11033,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -11019,19 +11147,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="42">
+  <Item class="ServerScriptService" referent="43">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="43">
+    <Item class="Folder" referent="44">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="44">
+      <Item class="Folder" referent="45">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12058,7 +12186,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -12182,7 +12310,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12680,7 +12808,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="48">
+      <Item class="Script" referent="49">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -12716,6 +12844,7 @@ local ORDER = {
 	"ThrowService",
 	"LeaderboardService",
 	"ProgressionService",
+	"ShopService",
 	"HighlightService",
 	"TeamService",
 	"BotService",
@@ -12746,11 +12875,11 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="49">
+      <Item class="Folder" referent="50">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="51">
           <Properties>
             <string name="Name">AbilityService</string>
             <string name="Source"><![CDATA[--!strict
@@ -12843,6 +12972,10 @@ function AbilityService.activate(id: number, abilityId: any): boolean
 	if c:GetAttribute("UBFrozen") == true then
 		return false
 	end
+	-- only an ability you own (Shop); bots have them all
+	if actor.player and not services.ProgressionService.owns(actor.player, "ability", def.id) then
+		return false
+	end
 	local track = services.MovementService.track(id)
 	if def.id == "FlashStep" and track and track.holding then
 		return false -- a blink while holding the disc would be a travel
@@ -12895,7 +13028,7 @@ return AbilityService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13023,7 +13156,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15697,7 +15830,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16337,7 +16470,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16370,6 +16503,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Signal = require(Shared.Util.Signal)
 local InputConfig = require(Shared.Config.Input)
 local ProgressionConfig = require(Shared.Config.Progression)
+local ShopConfig = require(Shared.Config.Shop)
 
 local DataService = {}
 
@@ -16407,7 +16541,19 @@ local function template(): { [string]: any }
 		personalBests = {},
 		drillsDone = {},
 		achievements = {},
-		cosmetics = { disc = "Classic", trail = "None", celebration = "Point", banner = "Slate", title = "Rookie" },
+		cosmetics = {
+			disc = "Classic",
+			trail = "None",
+			celebration = "Point",
+			banner = "Slate",
+			title = "Rookie",
+			aura = "None",
+			ability = "FlashStep",
+		},
+		coins = ShopConfig.StartingCoins,
+		owned = {}, -- "slot:id" -> true (shop purchases)
+		receipts = {}, -- Robux purchase ids already granted
+		vip = false, -- re-checked against the game pass on join
 		settings = { values = table.clone(InputConfig.DefaultSettings), keyboard = {}, gamepad = {} },
 		firstJoin = os.time(),
 		lastJoin = os.time(),
@@ -16424,7 +16570,14 @@ local function reconcile(data: any): { [string]: any }
 		local cur = data[k]
 		if cur == nil or type(cur) ~= type(v) then
 			data[k] = v
-		elseif type(v) == "table" and k ~= "stats" and k ~= "techMastery" and k ~= "personalBests" then
+		elseif
+			type(v) == "table"
+			and k ~= "stats"
+			and k ~= "techMastery"
+			and k ~= "personalBests"
+			and k ~= "owned"
+			and k ~= "receipts"
+		then
 			for k2, v2 in v do
 				if cur[k2] == nil or type(cur[k2]) ~= type(v2) then
 					cur[k2] = v2
@@ -16648,7 +16801,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17058,7 +17211,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17594,7 +17747,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17827,7 +17980,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17926,7 +18079,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19566,7 +19719,16 @@ function MatchService.action(player: Player, kind: string, payload: any)
 		MatchService.requestPickup(actor.id)
 	elseif kind == "HandBlock" and typeof(payload) == "Vector3" then
 		services.DefenseService.swing(actor.id, payload)
-	elseif kind == "Celebrate" and (S.phase == "PointOver" or S.phase == "MatchOver") then
+	elseif
+		kind == "Celebrate"
+		and (
+			S.phase == "PointOver"
+			or S.phase == "MatchOver"
+			or S.phase == "Intermission"
+			or actor.role == "Training"
+			or actor.role == "Bench"
+		)
+	then
 		if actor.character and actor.player then
 			actor.character:SetAttribute("Celebrate", services.ProgressionService.equipped(actor.player, "celebration"))
 			actor.character:SetAttribute("CelebrateT", now())
@@ -19695,7 +19857,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21037,7 +21199,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21529,7 +21691,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21554,6 +21716,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
 local ProgressionConfig = require(Shared.Config.Progression)
+local ShopConfig = require(Shared.Config.Shop)
 local InputConfig = require(Shared.Config.Input)
 local MovementConfig = require(Shared.Config.Movement)
 local Rating = require(Shared.Rules.Rating)
@@ -21575,11 +21738,24 @@ local function levelOf(d: { [string]: any }): number
 	return level
 end
 
-local function unlockedList(d: { [string]: any }, list: { any }): { string }
+local function itemUnlocked(d: { [string]: any }, slot: string, item: any, level: number): boolean
+	if item.level and level >= item.level then
+		return true
+	elseif item.achievement and d.achievements[item.achievement] then
+		return true
+	elseif item.price ~= nil and (item.price == 0 or d.owned[slot .. ":" .. item.id] == true) then
+		return true
+	elseif item.vip and d.vip == true then
+		return true
+	end
+	return false
+end
+
+local function unlockedList(d: { [string]: any }, list: { any }, slot: string): { string }
 	local level = levelOf(d)
 	local out = {}
 	for _, item in list do
-		if (item.level and level >= item.level) or (item.achievement and d.achievements[item.achievement]) then
+		if itemUnlocked(d, slot, item, level) then
 			table.insert(out, item.id)
 		end
 	end
@@ -21592,21 +21768,62 @@ local SLOTS: { [string]: { any } } = {
 	celebration = ProgressionConfig.Celebrations,
 	banner = ProgressionConfig.Banners,
 	title = ProgressionConfig.Titles,
+	aura = ProgressionConfig.Auras,
+	ability = ShopConfig.Abilities,
 }
+ProgressionService.Slots = SLOTS
 
 local function isUnlocked(d: { [string]: any }, slot: string, id: string): boolean
 	local list = (SLOTS :: any)[slot]
 	if not list then
 		return false
 	end
-	return table.find(unlockedList(d, list), id) ~= nil
+	return table.find(unlockedList(d, list, slot), id) ~= nil
+end
+
+local function findItem(slot: string, id: string): any
+	local list = (SLOTS :: any)[slot]
+	if list then
+		for _, item in list do
+			if item.id == id then
+				return item
+			end
+		end
+	end
+	return nil
+end
+
+-- Does this player have `id` in `slot` (level, achievement, bought, VIP)?
+function ProgressionService.owns(player: Player, slot: string, id: string): boolean
+	local d = data(player)
+	return d ~= nil and isUnlocked(d, slot, id)
+end
+
+-- Adds (or with a negative n, spends) coins. Returns false if it would go
+-- below zero.
+function ProgressionService.addCoins(player: Player, n: number): boolean
+	local d = data(player)
+	if not d or (d.coins or 0) + n < 0 then
+		return false
+	end
+	services.DataService.update(player, function(dd: { [string]: any })
+		dd.coins = math.floor((dd.coins or 0) + n)
+	end)
+	ProgressionService.push(player)
+	return true
 end
 
 function ProgressionService.equipped(player: Player, slot: string): string
 	local d = data(player)
-	local fallback = (
-		{ disc = "Classic", trail = "None", celebration = "Point", banner = "Slate", title = "Rookie" } :: any
-	)[slot] or ""
+	local fallback = ({
+		disc = "Classic",
+		trail = "None",
+		celebration = "Point",
+		banner = "Slate",
+		title = "Rookie",
+		aura = "None",
+		ability = "FlashStep",
+	} :: any)[slot] or ""
 	if not d then
 		return fallback
 	end
@@ -21633,6 +21850,7 @@ local function stampCharacter(player: Player)
 	c:SetAttribute("UBTitle", title)
 	c:SetAttribute("UBBanner", ProgressionService.equipped(player, "banner"))
 	c:SetAttribute("UBTrail", ProgressionService.equipped(player, "trail"))
+	c:SetAttribute("UBAura", ProgressionService.equipped(player, "aura"))
 	c:SetAttribute("UBLevel", levelOf(d))
 	c:SetAttribute("LeftHanded", d.settings.values.LeftHanded == true)
 	c:SetAttribute("UBDivision", ProgressionConfig.division(d.rating).name)
@@ -21657,7 +21875,7 @@ local function snapshot(player: Player): { [string]: any }?
 	end
 	local unlocked = {}
 	for slot, list in SLOTS do
-		unlocked[slot] = unlockedList(d, list)
+		unlocked[slot] = unlockedList(d, list, slot)
 	end
 	local division = ProgressionConfig.division(d.rating)
 	return {
@@ -21677,6 +21895,8 @@ local function snapshot(player: Player): { [string]: any }?
 		personalBests = d.personalBests,
 		drillsDone = d.drillsDone,
 		settings = d.settings,
+		coins = d.coins or 0,
+		vip = d.vip == true,
 		persistent = services.DataService.isPersistent(player),
 	}
 end
@@ -21721,8 +21941,10 @@ function ProgressionService.xp(player: Player, amount: number, reason: string?)
 		return
 	end
 	local before = levelOf(d)
+	local coins = math.floor(amount * ShopConfig.CoinsPerXp * (if d.vip == true then ShopConfig.VipCoinMult else 1))
 	services.DataService.update(player, function(dd: { [string]: any })
 		dd.xp += math.floor(amount)
+		dd.coins = (dd.coins or 0) + coins
 	end)
 	local after = levelOf(d)
 	if after > before then
@@ -21976,6 +22198,35 @@ function ProgressionService.action(player: Player, kind: string, payload: any)
 			stampCharacter(player)
 			push(player)
 		end
+	elseif
+		kind == "Buy"
+		and type(payload) == "table"
+		and type(payload.slot) == "string"
+		and type(payload.id) == "string"
+	then
+		-- a coin purchase: priced, not owned yet, affordable
+		local d = data(player)
+		local item = findItem(payload.slot, payload.id)
+		if
+			d
+			and item
+			and type(item.price) == "number"
+			and item.price > 0
+			and not isUnlocked(d, payload.slot, item.id)
+		then
+			if (d.coins or 0) >= item.price then
+				services.DataService.update(player, function(dd: { [string]: any })
+					dd.coins -= item.price
+					dd.owned[payload.slot .. ":" .. item.id] = true
+					dd.cosmetics[payload.slot] = item.id -- equip it at once
+				end)
+				Net.event("Notify"):FireClient(player, "Purchase", item.name, { slot = payload.slot, id = item.id })
+				stampCharacter(player)
+				push(player)
+			else
+				Net.event("Notify"):FireClient(player, "Toast", "Not enough coins", nil)
+			end
+		end
 	elseif kind == "SaveSettings" then
 		local clean = sanitizeSettings(payload)
 		if clean then
@@ -22035,7 +22286,118 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="63">
+        <Item class="ModuleScript" referent="64">
+          <Properties>
+            <string name="Name">ShopService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	ShopService — Robux purchases (Config/Shop).
+
+	  * Coin packs are developer products. ProcessReceipt grants the coins once
+	    per purchase id (recorded in the profile's receipts, so a retried
+	    receipt is never paid twice) and only says PurchaseGranted after the
+	    profile has the coins; if the profile isn't loaded yet it answers
+	    NotProcessedYet and Roblox retries later.
+	  * The VIP pass is a game pass, checked on join and when bought in game
+	    (PromptGamePassPurchaseFinished): x1.5 coins and the VIP cosmetics.
+	  * With every id still 0 (not published yet) nothing is prompted; the
+	    shop shows the packs as "available after publishing".
+]]
+
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local ShopConfig = require(Shared.Config.Shop)
+local Net = require(Shared.Net)
+
+local ShopService = {}
+
+local services: any
+
+local function setVip(player: Player, on: boolean)
+	local d = services.DataService.get(player)
+	if d and d.vip ~= on then
+		services.DataService.update(player, function(dd: { [string]: any })
+			dd.vip = on
+		end)
+		services.ProgressionService.push(player)
+	end
+end
+
+local function checkVip(player: Player)
+	local pass = ShopConfig.Vip.gamePassId
+	if pass == 0 then
+		return
+	end
+	local ok, owns = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, pass)
+	end)
+	if ok then
+		setVip(player, owns == true)
+	end
+end
+
+function ShopService.isVip(player: Player): boolean
+	local d = services.DataService.get(player)
+	return d ~= nil and d.vip == true
+end
+
+local function processReceipt(info: any): Enum.ProductPurchaseDecision
+	local player = Players:GetPlayerByUserId(info.PlayerId)
+	local product = ShopConfig.product(info.ProductId)
+	if not product then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	if not player then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local d = services.DataService.get(player)
+	if not d then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local key = tostring(info.PurchaseId)
+	if d.receipts[key] then
+		return Enum.ProductPurchaseDecision.PurchaseGranted -- already paid out
+	end
+	services.DataService.update(player, function(dd: { [string]: any })
+		dd.receipts[key] = true
+		dd.coins = (dd.coins or 0) + product.coins
+	end)
+	pcall(function()
+		services.DataService.saveNow(player)
+	end)
+	services.ProgressionService.push(player)
+	Net.event("Notify"):FireClient(player, "Purchase", string.format("+%d coins", product.coins), nil)
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
+function ShopService.Init(s: any)
+	services = s
+end
+
+function ShopService.Start()
+	MarketplaceService.ProcessReceipt = processReceipt
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, bought)
+		if bought and passId == ShopConfig.Vip.gamePassId then
+			setVip(player, true)
+			Net.event("Notify"):FireClient(player, "Purchase", "VIP unlocked", nil)
+		end
+	end)
+	Players.PlayerAdded:Connect(function(player)
+		task.delay(3, checkVip, player) -- after the profile has loaded
+	end)
+	for _, p in Players:GetPlayers() do
+		task.spawn(checkVip, p)
+	end
+end
+
+return ShopService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22355,7 +22717,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="64">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22847,7 +23209,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="65">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -24738,13 +25100,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="66">
+  <Item class="SoundService" referent="68">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="67">
+  <Item class="StarterPlayer" referent="69">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -24757,11 +25119,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="68">
+    <Item class="StarterCharacterScripts" referent="70">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="69">
+      <Item class="LocalScript" referent="71">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -24844,19 +25206,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="70">
+    <Item class="StarterPlayerScripts" referent="72">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="71">
+      <Item class="Folder" referent="73">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="72">
+        <Item class="Folder" referent="74">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">AbilityController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25131,7 +25493,7 @@ return AbilityController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">AnimeFX</string>
               <string name="Source"><![CDATA[--!strict
@@ -25160,6 +25522,7 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Theme = require(script.Parent.Parent.UI.Theme)
 local Art = require(ReplicatedStorage:WaitForChild("Shared").Config.Art)
+local ProgressionConfig = require(ReplicatedStorage:WaitForChild("Shared").Config.Progression)
 
 local AnimeFX = {}
 
@@ -25529,10 +25892,55 @@ end
 -- hooks
 ---------------------------------------------------------------------------
 
+-- A flare of the model's equipped aura (Locker / Shop): anime flames rising
+-- off the body for `duration`.
+function AnimeFX.auraFlare(model: Model, duration: number?)
+	if not enabled() then
+		return
+	end
+	local id = model:GetAttribute("UBAura")
+	if type(id) ~= "string" or id == "None" then
+		return
+	end
+	local color: Color3? = nil
+	for _, a in ProgressionConfig.Auras do
+		if a.id == id then
+			color = a.color
+		end
+	end
+	local root = model:FindFirstChild("HumanoidRootPart")
+	local tex = Art.vfx("Aura")
+	if not color or not root or not tex then
+		return
+	end
+	local e = Instance.new("ParticleEmitter")
+	e.Name = "UBAuraFlare"
+	e.Texture = tex
+	e.Color = ColorSequence.new(color)
+	e.LightEmission = 0.85
+	e.Rate = 40
+	e.Lifetime = NumberRange.new(0.3, 0.55)
+	e.Speed = NumberRange.new(5, 9)
+	e.SpreadAngle = Vector2.new(30, 30)
+	e.EmissionDirection = Enum.NormalId.Top
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 2.2), NumberSequenceKeypoint.new(1, 0.4) })
+	e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(1, 1) })
+	e.Parent = root
+	task.delay(duration or 1.2, function()
+		e.Enabled = false
+		task.delay(0.7, function()
+			e:Destroy()
+		end)
+	end)
+end
+
 -- Called by EffectsController for every technique, local or remote.
 function AnimeFX.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	if not enabled() then
 		return
+	end
+	if quality == "Perfect" and tech ~= "Plant" then
+		AnimeFX.auraFlare(model, 0.9)
 	end
 	local color = (Theme.TechColors :: any)[tech] or Theme.Colors.Accent
 	local perfect = quality == "Perfect"
@@ -25575,13 +25983,42 @@ end
 function AnimeFX.Start()
 	buildLines()
 	RunService.RenderStepped:Connect(updateLines)
+	-- celebrations (goals) flare everyone's aura; emotes get a burst too
+	local seen: { [Model]: any } = {}
+	task.spawn(function()
+		while true do
+			task.wait(0.25)
+			for _, p in Players:GetPlayers() do
+				local m = p.Character
+				if m then
+					local t = m:GetAttribute("CelebrateT")
+					if t ~= nil and seen[m] ~= t then
+						local first = seen[m] == nil
+						seen[m] = t
+						if not first then
+							AnimeFX.auraFlare(m, 3)
+							local root = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+							if root then
+								AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), Theme.Colors.Perfect, 7)
+							end
+						end
+					end
+				end
+			end
+			for m in seen do
+				if not m.Parent then
+					seen[m] = nil
+				end
+			end
+		end
+	end)
 end
 
 return AnimeFX
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25721,7 +26158,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26030,7 +26467,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26952,7 +27389,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">CursorController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27073,7 +27510,7 @@ return CursorController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -27939,7 +28376,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28900,7 +29337,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29314,7 +29751,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30699,7 +31136,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30835,7 +31272,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31720,6 +32157,39 @@ local function compute(ctx: Ctx): Pose
 			pose.legs = "slide"
 			pose.RShoulder = CFrame.Angles(2.6, 0, 0.6)
 			pose.LShoulder = CFrame.Angles(2.6, 0, -0.6)
+		-- shop emotes (anime)
+		elseif ctx.celebrate == "PowerUp" then
+			-- crouched, fists clenched at the hips, trembling with power
+			pose.drop, pose.pitch = 0.7, 0.2
+			pose.roll = math.sin(a * 45) * 0.05
+			pose.RShoulder = CFrame.Angles(0.35, 0, 0.55)
+			pose.LShoulder = CFrame.Angles(0.35, 0, -0.55)
+			pose.Neck = CFrame.Angles(0.35, 0, 0) -- head thrown back
+		elseif ctx.celebrate == "VPose" then
+			pose.pitch = 0.08
+			pose.RShoulder = CFrame.Angles(2.7, 0, 0.75)
+			pose.LShoulder = CFrame.Angles(2.7, 0, -0.75)
+		elseif ctx.celebrate == "Levitate" then
+			-- a calm float, arms out, slowly turning
+			pose.drop = -0.6 - 0.25 * math.sin(a * 2.4)
+			pose.legs = "none"
+			pose.yaw = a * 0.8
+			pose.RShoulder = CFrame.Angles(0.2, 0, 1.2)
+			pose.LShoulder = CFrame.Angles(0.2, 0, -1.2)
+		elseif ctx.celebrate == "NinjaRun" then
+			pose.drop, pose.pitch = 0.5, -0.85
+			pose.RShoulder = CFrame.Angles(-1.25, 0, 0.35)
+			pose.LShoulder = CFrame.Angles(-1.25, 0, -0.35)
+		elseif ctx.celebrate == "Finisher" then
+			-- a spin into a pointed finisher pose
+			if a < 0.6 then
+				pose.yaw = a / 0.6 * math.pi * 4
+				pose.drop = 0.3
+			else
+				pose.drop, pose.pitch, pose.roll = 0.45, -0.2, 0.25
+				pose.RShoulder = CFrame.Angles(1.6, 0, 0.1)
+				pose.LShoulder = CFrame.Angles(0.3, 0, -1.3)
+			end
 		end
 		pose.rate = 14
 	end
@@ -32027,7 +32497,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -32190,7 +32660,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -32362,7 +32832,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -32510,7 +32980,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33456,7 +33926,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33567,6 +34037,13 @@ local function onNotify(kind: string, text: string, data: any)
 	elseif kind == "Achievement" then
 		Hud.toast("ACHIEVEMENT: " .. text .. " — " .. tostring(d.description or ""), C.Gold, 6)
 		controllers.AudioController.play("Highlight")
+	elseif kind == "Purchase" then
+		Hud.banner(string.upper(text), "Purchased", C.Gold, 2.2)
+		controllers.AudioController.play("Purchase")
+		-- an ability bought is equipped for the Ability key at once
+		if type(d) == "table" and d.slot == "ability" and type(d.id) == "string" then
+			controllers.SettingsController.set("Ability", d.id)
+		end
 	elseif kind == "LevelUp" then
 		Hud.banner(text, "Level up!", C.Gold, 2.5)
 		for _, u in d.unlocks or {} do
@@ -33895,7 +34372,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="90">
+        <Item class="LocalScript" referent="92">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -33950,11 +34427,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="91">
+        <Item class="Folder" referent="93">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="92">
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -34998,7 +35475,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="93">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -35037,6 +35514,9 @@ local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
 local SignaturesConfig = require(Shared.Config.Signatures)
 local Abilities = require(Shared.Config.Abilities)
+local ShopConfig = require(Shared.Config.Shop)
+local Art = require(Shared.Config.Art)
+local MarketplaceService = game:GetService("MarketplaceService")
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -35053,7 +35533,7 @@ local profile: any = nil
 local rebinding: { action: string, button: TextButton }? = nil
 local launcher = { throwType = "Backhand", power = 0.5, pitch = 10, bank = 0, offset = 0 }
 
-local TABS = { "Play", "Training", "Profile", "Locker", "Leaderboard", "Settings", "Controls" }
+local TABS = { "Play", "Shop", "Training", "Profile", "Locker", "Leaderboard", "Settings", "Controls" }
 
 -- UBState attributes the Play tab shows (it refreshes when they change).
 local PLAY_STATE = {
@@ -35883,6 +36363,8 @@ function render.Locker(content: Instance)
 		{ key = "celebration", title = "CELEBRATIONS", list = ProgressionConfig.Celebrations },
 		{ key = "banner", title = "BANNERS", list = ProgressionConfig.Banners },
 		{ key = "title", title = "TITLES", list = ProgressionConfig.Titles },
+		{ key = "aura", title = "AURAS", list = ProgressionConfig.Auras },
+		{ key = "ability", title = "ABILITY", list = ShopConfig.Abilities },
 	}
 	for _, slot in slots do
 		section(content, slot.title, nextOrder())
@@ -35903,7 +36385,11 @@ function render.Locker(content: Instance)
 			local has = table.find(unlocked, item.id) ~= nil
 			local label = item.name
 			if not has then
-				label = if item.level then (item.name .. " · Lv " .. item.level) else (item.name .. " · achievement")
+				label = if item.level
+					then (item.name .. " · Lv " .. item.level)
+					elseif item.price then (item.name .. " · SHOP")
+					elseif item.vip then (item.name .. " · VIP")
+					else (item.name .. " · achievement")
 			end
 			local b = Theme.button(label, {
 				Parent = r,
@@ -35923,10 +36409,215 @@ function render.Locker(content: Instance)
 			if has then
 				b.Activated:Connect(function()
 					action("Equip", { slot = slot.key, id = item.id })
+					if slot.key == "ability" then
+						controllers.SettingsController.set("Ability", item.id)
+					end
 				end)
 			end
 		end
 	end
+end
+
+-- THE SHOP: coins buy abilities, emotes, auras and trails; Robux buys
+-- coin packs and VIP (Config/Shop; Robux needs the game published first).
+type ShopSection = { key: string, title: string, list: { any }, icon: string? }
+local SHOP_SECTIONS: { ShopSection } = {
+	{ key = "ability", title = "ABILITIES", list = ShopConfig.Abilities, icon = nil },
+	{ key = "celebration", title = "ANIME EMOTES", list = ProgressionConfig.Celebrations, icon = "Emote" },
+	{ key = "aura", title = "AURAS", list = ProgressionConfig.Auras, icon = "Aura" },
+	{ key = "trail", title = "TRAILS", list = ProgressionConfig.Trails, icon = "Trail" },
+}
+
+local function shopCard(
+	parent: Instance,
+	icon: string?,
+	title: string,
+	sub: string,
+	button: string,
+	color: Color3,
+	onClick: (() -> ())?
+)
+	local card = Theme.panel({ Parent = parent, Size = UDim2.fromOffset(176, 92) })
+	local x = 8
+	local img = icon and Art.ui(icon)
+	if img then
+		make("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = img,
+			Size = UDim2.fromOffset(44, 44),
+			Position = UDim2.fromOffset(6, 6),
+			Parent = card,
+		})
+		x = 54
+	end
+	Theme.label(title, 14, {
+		Parent = card,
+		Position = UDim2.fromOffset(x, 6),
+		Size = UDim2.new(1, -x - 6, 0, 18),
+		Font = Theme.Fonts.Heavy,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	Theme.label(sub, 12, {
+		Parent = card,
+		Position = UDim2.fromOffset(x, 26),
+		Size = UDim2.new(1, -x - 6, 0, 16),
+		TextColor3 = C.Muted,
+	})
+	local b = Theme.button(button, {
+		Parent = card,
+		Position = UDim2.new(0, 6, 1, -36),
+		Size = UDim2.new(1, -12, 0, 30),
+		TextSize = 13,
+		BackgroundColor3 = color,
+		TextColor3 = if color == C.PanelLight then C.Text else Color3.new(0, 0, 0),
+	})
+	if onClick then
+		b.Activated:Connect(onClick)
+	end
+end
+
+function render.Shop(content: Instance)
+	local o = 0
+	local function nextOrder(): number
+		o += 1
+		return o
+	end
+	if not profile then
+		Theme.label("Loading...", 16, { Parent = content, LayoutOrder = 1 })
+		return
+	end
+	-- wallet
+	local top = row(content, nextOrder(), 40)
+	local coin = Art.ui("Coin")
+	if coin then
+		make("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = coin,
+			Size = UDim2.fromOffset(32, 32),
+			LayoutOrder = 1,
+			Parent = top,
+		})
+	end
+	Theme.label(string.format("%d COINS", profile.coins or 0), 22, {
+		Parent = top,
+		LayoutOrder = 2,
+		Size = UDim2.fromOffset(220, 30),
+		Font = Theme.Fonts.Heavy,
+		TextColor3 = C.Gold,
+	})
+	if profile.vip then
+		Theme.label("VIP · x" .. ShopConfig.VipCoinMult .. " coins", 15, {
+			Parent = top,
+			LayoutOrder = 3,
+			Size = UDim2.fromOffset(160, 30),
+			TextColor3 = C.Accent,
+		})
+	end
+	Theme.label("Earn coins by playing: matches, goals, catches, blocks, combos and signature moves.", 13, {
+		Parent = content,
+		LayoutOrder = nextOrder(),
+		TextColor3 = C.Muted,
+	})
+	for _, sec in SHOP_SECTIONS do
+		section(content, sec.title, nextOrder())
+		local grid = make("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, -10, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		})
+		local layout = Instance.new("UIGridLayout")
+		layout.CellSize = UDim2.fromOffset(176, 92)
+		layout.CellPadding = UDim2.fromOffset(8, 8)
+		layout.Parent = grid
+		local unlocked = profile.unlocked[sec.key] or {}
+		local equipped = profile.equipped[sec.key]
+		for _, item in sec.list do
+			-- the shop lists what can be bought (and what you already bought)
+			if item.price ~= nil or item.vip then
+				local has = table.find(unlocked, item.id) ~= nil
+				local icon = sec.icon or item.id
+				local def = if sec.key == "ability" then Abilities.get(item.id) else nil
+				local sub = if def then def.desc else (if item.vip then "VIP pass" else "Cosmetic")
+				if has then
+					local on = item.id == equipped
+					shopCard(
+						grid,
+						icon,
+						item.name,
+						sub,
+						if on then "EQUIPPED" else "EQUIP",
+						if on then C.Good else C.PanelLight,
+						function()
+							action("Equip", { slot = sec.key, id = item.id })
+							if sec.key == "ability" then
+								controllers.SettingsController.set("Ability", item.id)
+							end
+						end
+					)
+				elseif item.vip then
+					shopCard(grid, icon, item.name, sub, "VIP ONLY", C.Panel, nil)
+				else
+					local afford = (profile.coins or 0) >= item.price
+					shopCard(
+						grid,
+						icon,
+						item.name,
+						sub,
+						string.format("BUY · %d", item.price),
+						if afford then C.Gold else C.Panel,
+						function()
+							action("Buy", { slot = sec.key, id = item.id })
+						end
+					)
+				end
+			end
+		end
+	end
+	-- Robux
+	section(content, "COINS & VIP (ROBUX)", nextOrder())
+	local grid = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, -10, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = nextOrder(),
+		Parent = content,
+	})
+	local layout = Instance.new("UIGridLayout")
+	layout.CellSize = UDim2.fromOffset(176, 92)
+	layout.CellPadding = UDim2.fromOffset(8, 8)
+	layout.Parent = grid
+	for _, p in ShopConfig.Products do
+		local live = p.productId ~= 0
+		shopCard(
+			grid,
+			"Coin",
+			string.format("%s · %d", p.name, p.coins),
+			if live then "Coins" else "After publishing",
+			string.format("R$ %d", p.robux),
+			if live then C.Accent else C.Panel,
+			if live
+				then function()
+					MarketplaceService:PromptProductPurchase(player, p.productId)
+				end
+				else nil
+		)
+	end
+	local vipLive = ShopConfig.Vip.gamePassId ~= 0
+	shopCard(
+		grid,
+		"Aura",
+		"VIP PASS",
+		if profile.vip then "Owned" else "x1.5 coins + VIP items",
+		if profile.vip then "OWNED" else string.format("R$ %d", ShopConfig.Vip.robux),
+		if profile.vip then C.Good elseif vipLive then C.Accent else C.Panel,
+		if vipLive and not profile.vip
+			then function()
+				MarketplaceService:PromptGamePassPurchase(player, ShopConfig.Vip.gamePassId)
+			end
+			else nil
+	)
 end
 
 function render.Leaderboard(content: Instance)
@@ -35982,26 +36673,6 @@ function render.Settings(content: Instance)
 			s.set(n.key, math.clamp(math.floor((v + n.step) * 10 + 0.5) / 10, n.min, n.max))
 			Menu.refresh(true)
 		end)
-	end
-	-- your ability (everyone picks from the same pool)
-	do
-		local order = Abilities.Order
-		local cur = table.find(order, s.get("Ability")) or 1
-		local def = Abilities.List[order[cur]]
-		stepper(content, nextOrder(), "Ability", def.name, function()
-			s.set("Ability", order[(cur - 2) % #order + 1])
-			Menu.refresh(true)
-		end, function()
-			s.set("Ability", order[cur % #order + 1])
-			Menu.refresh(true)
-		end)
-		Theme.label(def.desc .. "  Fill FLOW with Perfect techs, catches, blocks and goals.", 13, {
-			Parent = content,
-			LayoutOrder = nextOrder(),
-			TextColor3 = C.Muted,
-			TextWrapped = true,
-			Size = UDim2.new(1, 0, 0, 34),
-		})
 	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },
@@ -36154,7 +36825,10 @@ end
 
 function Menu.setProfile(p: any)
 	profile = p
-	if isOpen and (currentTab == "Profile" or currentTab == "Locker" or currentTab == "Training") then
+	if
+		isOpen
+		and (currentTab == "Profile" or currentTab == "Locker" or currentTab == "Training" or currentTab == "Shop")
+	then
 		Menu.refresh(true)
 	end
 end
@@ -36293,7 +36967,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="94">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -36579,7 +37253,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -36958,7 +37632,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -37172,7 +37846,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -37455,7 +38129,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -37936,12 +38610,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="99">
+  <Item class="Teams" referent="101">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="100">
+  <Item class="Workspace" referent="102">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>
