@@ -13,7 +13,7 @@ only fill empty spots, and everyone plays with the same **fixed hitbox**.
 * **Testing:** [`docs/TESTING.md`](docs/TESTING.md) covers what was verified offline and the Studio test plan.
 
 > **Status — honest version.** The full game is written in strict Luau. It
-> type-checks against the real Roblox API, lints clean and passes 188
+> type-checks against the real Roblox API, lints clean and passes 230
 > offline tests: movement fuzzing with resets, rules, physics, catch and tip
 > geometry, signature moves, modes and teams. **It has not been run in Roblox
 > Studio.** This version reworks movement after the first playtest (the
@@ -23,14 +23,18 @@ only fill empty spots, and everyone plays with the same **fixed hitbox**.
 > is the checklist. If something errors, copy the red `[Breakpoint]` or
 > `MOVEMENT ERROR` lines from the Output window.
 
-> **Rebuild in progress: the movement tech spec.** Movement is being
-> rebuilt from [`docs/tech-spec.md`](docs/tech-spec.md), one build step at a
-> time. **Steps 1–2 are done**: a new momentum core (Movement/TechCore,
-> numbers in Config/Tech) and a debug HUD. It is **on by default**. For now
-> you can only run: jumping, cuts, slides, dives, Burst and the pivot come
-> back in steps 3–7. To play the old version, turn off
-> **Menu → Settings → New movement core**. The on-screen key hints are gone:
-> what chains off what is for players to find.
+> **The tech engine (default).** Movement, catching and defense now follow
+> [`docs/tech-spec.md`](docs/tech-spec.md): a momentum core (Movement/TechCore,
+> every number in Config/Tech) with Burst, cuts, jukes, plant stops, slides,
+> slide hops, air dodges, wavedash, reverse snap, burst dive, layouts, tech
+> rolls and Sky; timed catching with Perfect Catch and Hot Hands; Mirror Step
+> and the contact rule; anime-style poses and effects; four **abilities**
+> charged by skill; bots on the same engine. Still to build from the spec:
+> its disc flight model and throw controls (snap release, edge and angle on
+> the mouse, fake switch), the 1.2-stud pivot, hand block / bid, fouls and
+> per-tech training drills. **Menu → Settings → New movement core** off
+> brings back the classic engine. Nothing tells you what chains off what:
+> that is for players to find.
 
 ---
 
@@ -72,19 +76,26 @@ and the `UBInterface` ScreenGui.
 
 ## Controls (defaults, all rebindable in Menu → Controls)
 
-| | Keyboard / mouse | Gamepad | Touch |
-|---|---|---|---|
-| Move · sprint | WASD · **automatic** (or hold Shift) | left stick · auto (L1 / L3) | stick (auto) · SPRINT |
-| Jump · Cut · Slide · Layout · Burst | Space · Q · C (or Ctrl) · E · F | A · X · B · Y · R1 | buttons |
-| Throw (hold) / reach | LMB | R2 | THROW |
-| Fake / mark (hold near the holder) / **tip** (in the air) | RMB | L2 | MARK · FAKE · TIP |
-| With the disc | WASD step around the pivot · Q / E swing · Space hop · C low · Z / X bank · 1–5, T or wheel type · R lead assist | stick · X swing · A hop · B low · D-pad · R3 | SWING L / R · HOP · LOW · BANK · TYPE · LEAD |
-| Menu · free mouse · celebrate | M · LeftAlt · B | Select · — · D-pad down | MENU |
+Everything sits under the left hand around WASD (the tech-spec layout):
 
-New players: hold W to run, walk into the disc to catch it, hold and release
-LMB to throw. The line under the crosshair always shows what your keys do
-right now. **Menu → Training → Movement School** teaches the basics, and the
-Training page lists every signature move and how to do it.
+| | Keyboard / mouse | Gamepad |
+|---|---|---|
+| Move | WASD | left stick |
+| Jump (tap / hold) · Air Dodge (in the air) | Space | A |
+| Burst (hold) · Burst Kick (tap) | Shift | LB |
+| Cut (with a new direction) · Plant Stop (no direction) | Q | RB |
+| Layout / Dive (aims with the camera) | E | X |
+| Slide (hold; in the air: Fast Fall) | C | B |
+| Catch (timed) · Throw (hold, release) | LMB | RT |
+| Fake / mark / tip | RMB | LT |
+| Overhead modifier | F (hold) | Y (hold) |
+| Ability (when FLOW is full) | G | L3 |
+| Menu · free mouse · celebrate | M · LeftAlt · B | Select · — · D-pad down |
+
+Catching is a press: hit LMB as the ring on the disc closes on your hands
+(gold = Perfect). Pick your ability in **Menu → Settings → Ability**; FLOW
+fills from Perfect techs, catches, blocks and goals. The tech debug HUD
+(speed, state, Burst, the last timing in ms) is on in Studio.
 
 ---
 
@@ -161,7 +172,9 @@ lune run tests/flight_table.luau                            # throw table
   plan; the art in `Config/Art.luau` is ForgeGUI-made). Poses are procedural and sounds are engine
   built-ins; the crowd-loop slots are empty for your own uploads.
 * Bots don't tip or chase signature moves.
-* Contact fouls aren't modelled (players don't collide).
-* Everything in `docs/TESTING.md` §2 needs a first run in Studio.
-* Tech spec build steps 3–10 (ground, air, disc, catching, throwing,
-  defense, training drills, network pass).
+* Contact fouls aren't called yet (the contact rule only costs speed).
+* Everything in `docs/TESTING.md` §0 and §2 needs a first run in Studio.
+* From the tech spec: the disc flight model (5), throws 23–27 and 29 (the
+  current throw system stays), Hand Block / Bid / Force (30–31, 33), one
+  training drill per tech (9), and the network pass (10). Bots hold the
+  disc on the classic engine.

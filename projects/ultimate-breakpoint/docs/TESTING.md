@@ -16,7 +16,7 @@ Run everything with `scripts/check.sh` (the header lists tool versions).
 | Lint | Selene 0.27 (Luau std + Roblox globals) | 0 errors, 0 warnings |
 | Types against the **real Roblox API** (catches invented properties and methods) | luau-lsp 1.70 `analyze`, every file `--!strict` | 0 errors |
 | Cross-module calls (`services.X.y`, `controllers.X.y`) exist | `scripts/audit_refs.py` | 0 missing |
-| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **208 passed** |
+| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **230 passed** |
 | Place builds with the right structure and StarterPlayer settings | Rojo 7.4 + `tests/place_check.luau` | OK |
 
 What the tests cover (`lune run tests/run.luau <spec>` runs one):
@@ -52,7 +52,12 @@ What the tests cover (`lune run tests/run.luau <spec>` runs one):
 * **modes (27)**: Mini / Normal rules and fields, eligibility for 0–16
   humans, ranked overrides, private rules, MatchPlan splits, bench rotation,
   exact bot fill, late joiners, leavers, ranked rosters.
-* **tech (20)**, the tech-spec core (build step 1): acceleration and
+* **tech (42)**: every tech in TechCore (Burst and Burst Kick, Perfect /
+  late / buffered / capped cuts, Juke, Plant Stop, Slide, Carve, Landing
+  Slide, Fast Fall, Slide Hop chains, Jump heights, Air Dodge and its hang,
+  Disc Reset, Wavedash, Reverse Snap and its stumble, Burst Dive, Layout,
+  air Layout, Tech Roll, Sky, Mirror Step, the abilities' effects, a
+  40,000-step tech fuzz) and the core (build step 1): acceleration and
   friction times, part-pushed stick, overspeed decay on the ground and in
   the air, the hard cap on flat and fall speed, the turn-rate curve, instant
   slow turns, rate-limited fast turns and drift loss, slow plain reversals,
@@ -75,18 +80,23 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### 0. Tech core (build steps 1–2, the default engine)
-The debug HUD sits top right (always in Studio; Settings → Tech debug HUD
-elsewhere).
-- [ ] Hold W: SPEED climbs to 22 in about 0.37 s and stays there. Let go: you stop in about 0.28 s.
-- [ ] Below 12 you turn on the spot. At full speed a hard turn shows **DRIFT** and SPEED drops; a full reversal is slow (that is what cuts will be for).
-- [ ] You stand at the right height on flat ground, ramps and small steps, with no bobbing, sinking or sliding while standing still.
-- [ ] Walk off a ledge: STATE goes Airborne, you fall faster on the way down, and land cleanly (no bounce, no sinking). The fall animation plays.
-- [ ] Run into a wall at an angle: you slide along it, no sticking or jitter.
-- [ ] Catch a pass at speed: you skid to a stop (STATE HoldingDisc), turn to the camera, and can throw. No travel snap-backs.
-- [ ] Press Space / Q / E / C: nothing moves yet, but BUFFER shows the press for 100 ms.
-- [ ] Settings → **New movement core** off: the classic movement comes back at once; on again: the tech core.
-- [ ] No key hints under the crosshair and no air-move line.
+### 0. Tech engine (the default)
+The debug HUD sits top right (always in Studio): speed, state, Burst, and
+the last timed press in ms ("Cut: 34 ms early").
+- [ ] Running: SPEED reaches 22 in ~0.37 s; hold Shift for 30 while the bar drains; tap Shift for a Burst Kick. A hard turn at speed shows DRIFT.
+- [ ] Standing height is right on flat ground, ramps and steps; no bobbing or sinking.
+- [ ] Q with a new direction cuts (a Perfect pops gold with an impact frame); Q then back to your line jukes; Q with no direction stops dead.
+- [ ] C at speed slides (60°/s), Shift in a slide carves; Space 0.15–0.30 s into a slide hops; hold C through a landing for a Perfect landing slide.
+- [ ] Space taps vs holds give different heights; Space in the air dodges (with a hang); a dodge just before landing wavedashes; standing, hold Space for a Sky.
+- [ ] Backward dodge then Q reverse-snaps; standing tap-jump, diagonal dodge, Q burst-dives.
+- [ ] E at speed lays out toward the camera; Space as you land tech-rolls.
+- [ ] Catching: press LMB as the ring closes (gold = Perfect). No press: it bobbles; press again to save it. A Perfect Catch then LMB throws at once (Hot Hands).
+- [ ] As a defender, Q right after your matchup's plant: "Perfect Cut" (Mirror); if they juked you lose speed.
+- [ ] Running through a player slows you.
+- [ ] Ability: set it in Settings, fill FLOW (bar above Burst), press G. Flash Step blinks (not through walls); The Zone / Sky Walk / Overdrive glow on your character for everyone.
+- [ ] Anime effects: speed lines above run speed, afterimages on dashes and cuts, slash arcs; Settings → Anime effects turns them off.
+- [ ] Bots: cut, dodge, slide, lay out and tech-roll on the new engine; they still pivot and throw as before.
+- [ ] Settings → New movement core off brings back the classic engine at once.
 
 ### 0b. Art (Config/Art, ForgeGUI images on Roblox)
 - [ ] The scoreboard bar and the menu buttons show the new art (not stretched badly, text readable on top).
