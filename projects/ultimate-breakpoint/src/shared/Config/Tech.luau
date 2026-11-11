@@ -46,7 +46,7 @@ Tech.GROUND_SNAP_AIR = 0.15 -- ... while airborne, so a fall lands on touchdown
 Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
--- burst (later step: 3)
+-- burst
 Tech.BURST_TOP_SPEED = 30
 Tech.BURST_ACCEL = 90
 Tech.BURST_DRAIN = 30
@@ -58,7 +58,28 @@ Tech.BURST_KICK_COST = 15
 Tech.BURST_KICK_TAP = 120 -- ms
 Tech.BURST_KICK_COOLDOWN = 0.5
 
--- ground tech (later step: 3)
+-- ground tech
+Tech.CUT_MIN_SPEED = 12
+Tech.CUT_ANGLE = 45 -- ° the stick must turn from your line
+Tech.CUT_RESET_ANGLE = 30 -- ° below which the crossing is forgotten
+Tech.CUT_PLANT_TIME = 0.12
+Tech.CUT_COOLDOWN = 0.35
+Tech.PERFECT_CUT_BONUS = 3
+Tech.JUKE_KEEP = 0.90
+Tech.JUKE_RETURN_ANGLE = 30 -- ° from the old line that counts as "back"
+Tech.PLANT_STOP_TIME = 0.15
+Tech.PLANT_BOOST_TIME = 0.3
+Tech.PLANT_BOOST = 2.0
+Tech.PLANT_BOOST_PERFECT = 2.5
+Tech.PLANT_PERFECT = 100 -- ms
+Tech.SLIDE_TURN = 60 -- °/s
+Tech.CARVE_TURN = 220
+Tech.CARVE_FRICTION = 40
+Tech.LANDING_SLIDE_MIN_SPEED = 12
+Tech.SLIDE_HOP_HEIGHT = 0.6 -- of a tap jump's height
+Tech.SLIDE_HOP_OFF_WINDOW = 2 -- studs/s outside the window
+Tech.HOP_CHAIN_RESET = 1.0 -- s on the ground (not sliding)
+Tech.CATCH_RUNOUT_FRICTION = 50
 Tech.CUT_KEEP = 0.70
 Tech.PERFECT_KEEP = 1.00
 Tech.CUT_PERFECT_WINDOW = 80 -- ms
@@ -73,9 +94,22 @@ Tech.LANDING_SLIDE_PERFECT = 40 -- ms
 Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
 Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
 
--- air tech (later step: 4)
+-- air tech
 Tech.JUMP_TAP = 34
 Tech.JUMP_FULL = 46
+Tech.JUMP_HOLD = 0.2 -- s of hold that adds up to a full jump
+Tech.AIR_ACCEL = 20
+Tech.AIR_TURN = 90 -- °/s
+Tech.AIR_DODGE_NEUTRAL = 20
+Tech.FAST_FALL_MULT = 2.2
+Tech.REVERSE_SNAP_ANGLE = 120 -- ° from your line that counts as a backward dodge
+Tech.REVERSE_SNAP_KEEP = 0.9
+Tech.STUMBLE_TIME = 0.3
+Tech.BURST_DIVE_START_SPEED = 4 -- "from a standstill"
+Tech.BURST_DIVE_DODGE_WINDOW = 80 -- ms after the jump
+Tech.BURST_DIVE_CUT = { 50, 120 } -- ms into the dodge
+Tech.BURST_DIVE_CUT_PERFECT = { 70, 100 }
+Tech.BURST_DIVE_ANGLE = { 15, 75 } -- ° from forward that counts as forward-diagonal
 Tech.AIR_DODGE_WINDOW = 1.25
 Tech.AIR_DODGE_BURST = 12
 Tech.AIR_DODGE_HANG = 0.18
@@ -87,6 +121,22 @@ Tech.REVERSE_SNAP_WINDOW = { 60, 140 } -- ms
 Tech.REVERSE_SNAP_PERFECT = { 80, 110 } -- ms
 Tech.BURST_DIVE_SPEED = 28
 Tech.BURST_DIVE_SPEED_PERFECT = 32
+
+-- layout, tech roll, sky
+Tech.LAYOUT_MIN_SPEED = 15
+Tech.LAYOUT_BOOST = 8
+Tech.LAYOUT_UP = 10
+Tech.LAYOUT_CONE = 45
+Tech.TECH_ROLL_RECOVER = 0.25
+Tech.TECH_ROLL_KEEP = 0.5
+Tech.TECH_ROLL_KEEP_PERFECT = 0.75
+Tech.GETUP_TIME = 0.35 -- Recovering after a full Downed
+Tech.SKY_MAX_SPEED = 10 -- slower than this, Jump charges a Sky instead of jumping
+Tech.SKY_MIN_HOLD = 0.2
+Tech.SKY_SLOW = 0.6
+Tech.SKY_HEIGHT = 1.6
+Tech.SKY_HEIGHT_PERFECT = 1.7
+Tech.SKY_REACH = 1 -- studs of extra reach on a Perfect Sky
 
 -- catching (later step: 6)
 Tech.CATCH_RADIUS = 2.5
