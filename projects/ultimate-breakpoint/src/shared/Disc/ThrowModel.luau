@@ -32,6 +32,7 @@ local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
+local Abilities = require(Shared.Config.Abilities)
 local DiscPhysics = require(script.Parent.DiscPhysics)
 
 local T = DiscConfig.Throw
@@ -54,6 +55,7 @@ export type Params = {
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
 	perfectCatch: boolean?, -- right after a Perfect Catch (halves the run-through cone)
+	tempest: boolean?, -- Tempest Throw is armed (Config/Abilities): faster, more spin
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -229,6 +231,7 @@ function ThrowModel.sanitize(raw: any): Params?
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
 		perfectCatch = raw.perfectCatch == true,
+		tempest = raw.tempest == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -334,6 +337,10 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 		speed *= TechConfig.PINCH_SPEED_PERFECT
 	elseif p.pinch == "Clean" then
 		speed *= TechConfig.PINCH_SPEED
+	end
+	if p.tempest then
+		speed *= Abilities.TempestSpeed
+		spinFactor *= Abilities.TempestSpin
 	end
 
 	-- Run-Through Release (docs/tech-spec.md 29): released on the move (no

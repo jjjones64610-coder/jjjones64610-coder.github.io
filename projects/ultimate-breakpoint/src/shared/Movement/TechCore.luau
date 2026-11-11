@@ -215,6 +215,8 @@ export type State = {
 	extraDodgesLeft: number,
 	skyWalkUntil: number,
 	overdriveUntil: number,
+	overdriveTop: number, -- extra top speed during Overdrive
+	skyWalkGravity: number, -- gravity x this during Sky Walk
 
 	-- defense
 	mirrorArmed: boolean, -- the next cut mirrors your matchup's (Mirror Step)
@@ -335,6 +337,8 @@ function TechCore.new(now: number?): State
 		extraDodgesLeft = 0,
 		skyWalkUntil = -math.huge,
 		overdriveUntil = -math.huge,
+		overdriveTop = 0,
+		skyWalkGravity = 1,
 
 		mirrorArmed = false,
 
@@ -1442,6 +1446,9 @@ local function updateBurst(s: State, input: Input, dt: number)
 	end
 	local boosting = active and s.state ~= "Sliding"
 	s.topSpeed = if boosting then Config.BURST_TOP_SPEED else Config.RUN_TOP_SPEED
+	if boosting and s.now < s.overdriveUntil then
+		s.topSpeed += s.overdriveTop
+	end
 	s.accel = if boosting then Config.BURST_ACCEL else Config.RUN_ACCEL
 end
 
@@ -1584,6 +1591,9 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		if isHeld(input, "Slide") and s.state ~= "Diving" then
 			g = Config.PLAYER_GRAVITY * Config.FAST_FALL_MULT
 		end
+		if s.now < s.skyWalkUntil then
+			g *= s.skyWalkGravity
+		end
 		vy -= g * dt
 		-- holding Jump after a jump adds up to a full jump
 		if jumpHeld and s.now < s.jumpBoostUntil then
@@ -1625,6 +1635,13 @@ function TechCore.advance(s: State, input: Input, env: Env, frameDt: number): Fr
 	return s.frame
 end
 
+-- Adds `amount` studs/s along your line at once (Flash Step's surge);
+-- overspeed decay brings it back down.
+function TechCore.surge(s: State, amount: number)
+	local flat = flatOf(s.vel)
+	setFlat(s, flat + unitOr(flat, s.heading) * amount)
+end
+
 -- Starts an ability's movement effect (Config/Abilities): "Zone",
 -- "SkyWalk" or "Overdrive" for `duration` seconds of sim time. Flash Step
 -- moves the body, so the caller does it (see flashStep).
@@ -1637,10 +1654,12 @@ function TechCore.startAbility(s: State, id: string, duration: number, scale: nu
 		s.skyWalkUntil = untilT
 		s.extraDodges = dodges or 2
 		s.extraDodgesLeft = s.extraDodges
+		s.skyWalkGravity = scale or 1
 	elseif id == "Overdrive" then
 		s.overdriveUntil = untilT
 		s.burst = 100
 		s.burstLocked = false
+		s.overdriveTop = scale or 0
 	end
 	emit(s, "Ability", "Clean", s.heading, id)
 end

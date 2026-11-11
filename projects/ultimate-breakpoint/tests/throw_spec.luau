@@ -398,4 +398,15 @@ test("integration: solver lead passes enter a moving receiver's catch zone", fun
 	end
 end)
 
+test("tempest throw: 35 % faster and more spin; sanitize keeps the flag", function()
+	local base = ThrowModel.sanitize(params({ releaseT = 1 }))
+	local storm = ThrowModel.sanitize(params({ releaseT = 1, tempest = true }))
+	expect(storm and storm.tempest == true, "sanitize keeps it")
+	local a = ThrowModel.launch(base :: any, Vector3.zero, Vector3.zero)
+	local b = ThrowModel.launch(storm :: any, Vector3.zero, Vector3.zero)
+	local k = b.velocity.Magnitude / a.velocity.Magnitude
+	expect(math.abs(k - 1.35) < 0.01, "speed x1.35, got " .. k)
+	expect(math.abs(b.state.spin) > math.abs(a.state.spin) * 1.2, "more spin")
+end)
+
 return nil

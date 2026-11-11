@@ -68,6 +68,7 @@ local TechCore = require(Shared.Movement.TechCore)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Abilities = require(Shared.Config.Abilities)
 local Hitbox = require(Shared.Config.Hitbox)
 local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
@@ -531,10 +532,11 @@ local function sweep(
 ): (CatchGeometry.Evaluation?, number)
 	local n = math.clamp(math.ceil((to - from).Magnitude / SUB_STEP), 1, MAX_SUB)
 	local best: CatchGeometry.Evaluation? = nil
+	local slack = if Abilities.activeOn(player.Character, "MagnetHands", Net.now()) then Abilities.MagnetReach else nil
 	local firstT = tTo
 	for k = 1, n do
 		local a = k / n
-		local ev = CatchGeometry.evaluate(zones, from:Lerp(to, a))
+		local ev = CatchGeometry.evaluate(zones, from:Lerp(to, a), slack)
 		if ev then
 			if best == nil then
 				firstT = tFrom + (tTo - tFrom) * a

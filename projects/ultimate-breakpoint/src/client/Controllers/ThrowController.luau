@@ -64,6 +64,7 @@ local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
+local Abilities = require(Shared.Config.Abilities)
 
 local T = DiscConfig.Throw
 local HD = MovementConfig.Holding
@@ -549,6 +550,11 @@ local function release()
 	local params = currentParams(hold)
 	stopShaping()
 	params.perfectCatch = controllers.CatchController.hotHands() or nil
+	params.tempest = Abilities.activeOn(player.Character, "TempestThrow", now()) or nil
+	if params.tempest then
+		controllers.TechFeedback.play("TEMPEST", "Perfect")
+		controllers.AnimeFX.impactFrame(Abilities.List.TempestThrow.color)
+	end
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then
 		controllers.TechFeedback.play(if params.pinch == "Perfect" then "Perfect Pinch" else "Pinch", params.pinch)
@@ -568,6 +574,7 @@ local function release()
 		swinging = params.swinging,
 		pinch = params.pinch,
 		perfectCatch = params.perfectCatch,
+		tempest = params.tempest,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})

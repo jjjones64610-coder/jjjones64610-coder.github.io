@@ -75,6 +75,8 @@ type Leg = {
 }
 
 type Rig = {
+	wasHolding: boolean,
+	caughtAt: number,
 	model: Model,
 	root: BasePart,
 	humanoid: Humanoid,
@@ -141,6 +143,10 @@ local REMOTE_POSE_DELAY = 0.08 -- other players' poses follow their attributes t
 local SHUFFLE_STRIDE = 2.2 -- studs per step of the mark shuffle
 local SHUFFLE_MAX_CADENCE = 3 -- gait cycles per second at most
 local SHUFFLE_LIFT = 0.3
+
+local NINJA_FROM = 28 -- studs/s: the anime sprint starts past a run's top speed
+local NINJA_FULL = 36
+local CAST_TIME = 0.6 -- s of the ability cast pose
 
 local function now(): number
 	return Net.now()
@@ -317,6 +323,8 @@ local function buildRig(model: Model): Rig?
 		lastVel = vel,
 		accel = Vector3.zero,
 		history = {},
+		wasHolding = false,
+		caughtAt = -math.huge,
 		smoothVel = Vector3.new(vel.X, 0, vel.Z),
 		shufflePhase = 0,
 		msShown = "Ground",
@@ -383,6 +391,8 @@ type Ctx = {
 	celebrateAge: number,
 	leftHanded: boolean,
 	lookAt: Vector3?, -- local space
+	castAge: number, -- s since this body cast an ability (UBAbilityT)
+	catchAge: number, -- s since this body caught the disc (HasDisc went true)
 }
 
 local GROUNDED_MODES: { [string]: boolean } = {
@@ -452,7 +462,15 @@ local function gather(rig: Rig, dt: number): Ctx
 		celebrateAge = math.huge,
 		leftHanded = m:GetAttribute("LeftHanded") == true,
 		lookAt = nil,
+		castAge = t - attrNumber(m, "UBAbilityT"),
+		catchAge = math.huge,
 	}
+	-- the catch: the moment HasDisc turns on
+	if ctx.holding and not rig.wasHolding then
+		rig.caughtAt = t
+	end
+	rig.wasHolding = ctx.holding
+	ctx.catchAge = t - rig.caughtAt
 
 	local vel: Vector3
 	if rig.isLocal then
@@ -744,6 +762,18 @@ local function compute(ctx: Ctx): Pose
 		pose.rate = 30
 	end
 
+	-- the anime sprint: past a run's top speed (Burst, Overdrive, a surge)
+	-- the body pitches low and the arms sweep straight back
+	if ctx.mode == "Ground" and (tech == "" or age > 0.3) then
+		local k = math.clamp((ctx.speed - NINJA_FROM) / (NINJA_FULL - NINJA_FROM), 0, 1)
+		if k > 0 and not ctx.holding then
+			pose.pitch -= 0.5 * k
+			pose.drop = math.max(pose.drop, 0.25 * k)
+			pose.RShoulder = CFrame.Angles(-1.3 * k, 0, 0.3 * k)
+			pose.LShoulder = CFrame.Angles(-1.3 * k, 0, -0.3 * k)
+		end
+	end
+
 	local mode = ctx.mode
 	local airUp = false
 	if mode == "Slide" then
@@ -827,13 +857,21 @@ local function compute(ctx: Ctx): Pose
 		pose.Waist = windupWaist(ctx.windupType)
 		throwSet = true
 		pose.rate = math.max(pose.rate, 22)
-	elseif ctx.releaseAge < 0.25 then
+	elseif ctx.releaseAge < 0.35 then
+		-- the follow-through: the whole body snaps through the release,
+		-- held a beat like a keyframe, then eased out
+		local k = 1 - math.clamp((ctx.releaseAge - 0.18) / 0.17, 0, 1)
 		throwArm = if ctx.releaseType == "Hammer" or ctx.releaseType == "Scoober"
 			then CFrame.Angles(2.2, 0, 0.1)
-			else CFrame.Angles(1.6, 0, 0.25)
-		pose.Waist = if ctx.releaseType == "Forehand" then CFrame.Angles(0, 0.35, 0) else CFrame.Angles(0, -0.45, 0)
+			else CFrame.Angles(1.7, 0, 0.35)
+		pose.Waist = if ctx.releaseType == "Forehand"
+			then CFrame.Angles(0, 0.7 * k, 0)
+			else CFrame.Angles(0, -0.8 * k, 0)
+		pose.pitch -= 0.3 * k
+		pose.drop = math.max(pose.drop, 0.35 * k)
+		pose.roll += (if ctx.releaseType == "Forehand" then 0.2 else -0.2) * k
 		throwSet = true
-		pose.rate = 30
+		pose.rate = 38
 	end
 	if throwSet then
 		if ctx.leftHanded then
@@ -858,6 +896,37 @@ local function compute(ctx: Ctx): Pose
 			pose.LShoulder = arm
 		end
 		pose.rate = 30
+	end
+
+	-- the catch snap: the disc pulled into the chest, a beat of crouch
+	if ctx.catchAge < 0.22 and ctx.grounded and not ctx.windup then
+		local k = 1 - ctx.catchAge / 0.22
+		pose.drop = math.max(pose.drop, 0.45 * k)
+		pose.pitch += 0.15 * k
+		pose.RShoulder = CFrame.Angles(1.2, 0, -0.5)
+		pose.LShoulder = CFrame.Angles(1.2, 0, 0.5)
+		pose.rate = 34
+	end
+
+	-- the ability cast: a crouched, trembling power-up, then the arms flung
+	-- wide with the head thrown back as the aura bursts
+	if ctx.castAge >= 0 and ctx.castAge < CAST_TIME then
+		local a = ctx.castAge
+		if a < CAST_TIME * 0.45 then
+			pose.drop = math.max(pose.drop, 0.6)
+			pose.pitch = 0.25
+			pose.roll = math.sin(a * 60) * 0.06
+			pose.RShoulder = CFrame.Angles(0.4, 0, 0.5)
+			pose.LShoulder = CFrame.Angles(0.4, 0, -0.5)
+			pose.Neck = CFrame.Angles(-0.3, 0, 0)
+		else
+			pose.drop = math.min(pose.drop, 0.1)
+			pose.pitch = 0.18
+			pose.RShoulder = CFrame.Angles(2.2, 0, 1.0)
+			pose.LShoulder = CFrame.Angles(2.2, 0, -1.0)
+			pose.Neck = CFrame.Angles(0.45, 0, 0)
+		end
+		pose.rate = 40
 	end
 
 	-- celebrations

@@ -842,6 +842,36 @@ test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdriv
 	expect(od.s.burst < 100, "drains again after it ends")
 end)
 
+test("abilities: Sky Walk floats, Overdrive adds top speed, Flash Step surges", function()
+	local function apex(gravity: number?): number
+		local w = newWorld(0)
+		if gravity then
+			TechCore.startAbility(w.s, "SkyWalk", 5, gravity, 3)
+		end
+		tap(w, "Jump")
+		local top = 0
+		for _ = 1, 120 do
+			worldRun(w, 1 / 120)
+			top = math.max(top, w.y)
+		end
+		return top
+	end
+	expect(apex(0.75) > apex(nil) + 0.5, "a floatier jump in Sky Walk")
+
+	local function topWith(extra: number): number
+		local w = newWorld(Config.RUN_TOP_SPEED)
+		TechCore.startAbility(w.s, "Overdrive", 5, extra)
+		w.held.Burst = true
+		worldRun(w, 2)
+		return TechCore.flatSpeed(w.s)
+	end
+	expect(topWith(6) > topWith(0) + 4, "Overdrive's top-speed bonus")
+
+	local f = newWorld(Config.RUN_TOP_SPEED)
+	TechCore.surge(f.s, 8)
+	expect(near(TechCore.flatSpeed(f.s), Config.RUN_TOP_SPEED + 8, 0.01), "the surge")
+end)
+
 test("mirror step: an armed cut is Perfect + 2; biting on a juke costs 30 %", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
 	w.move = RIGHT

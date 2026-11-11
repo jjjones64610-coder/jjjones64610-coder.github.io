@@ -26,6 +26,8 @@ Shop.Abilities = {
 	{ id = "Zone", name = "The Zone", price = 1500 },
 	{ id = "Overdrive", name = "Overdrive", price = 2000 },
 	{ id = "SkyWalk", name = "Sky Walk", price = 2500 },
+	{ id = "MagnetHands", name = "Magnet Hands", price = 1800 },
+	{ id = "TempestThrow", name = "Tempest Throw", price = 2200 },
 } :: { any }
 
 export type Product = { id: string, productId: number, coins: number, robux: number, name: string }

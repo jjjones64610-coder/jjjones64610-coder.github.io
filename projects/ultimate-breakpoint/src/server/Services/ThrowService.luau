@@ -57,6 +57,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local TechConfig = require(Shared.Config.Tech)
 local ThrowModel = require(Shared.Disc.ThrowModel)
+local Abilities = require(Shared.Config.Abilities)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local Net = require(Shared.Net)
 
@@ -335,6 +336,17 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 		if not (landedRecently or aboutToLand) then
 			p.pinch = nil
 		end
+	end
+
+	-- Tempest Throw: only while armed, and it is spent by this throw
+	local body = actor.character
+	if Abilities.activeOn(body, "TempestThrow", Net.now()) then
+		p.tempest = true
+		if body then
+			body:SetAttribute("UBAbilityUntil", Net.now())
+		end
+	else
+		p.tempest = nil
 	end
 
 	local launch = ThrowModel.launch(p, prep.rootPos, prep.velocity)

@@ -483,48 +483,78 @@ export type Def = {
 	color: Color3,
 }
 
-Abilities.Order = { "FlashStep", "Zone", "SkyWalk", "Overdrive" }
+Abilities.Order = { "FlashStep", "Zone", "SkyWalk", "Overdrive", "MagnetHands", "TempestThrow" }
 
 Abilities.List = {
 	FlashStep = {
 		id = "FlashStep",
 		name = "FLASH STEP",
-		desc = "Blink 10 studs the way you're moving and keep your speed.",
-		duration = 0,
+		desc = "Vanish 18 studs the way you're moving and surge +8 speed.",
+		duration = 2,
 		color = Color3.fromRGB(90, 230, 255),
 	},
 	Zone = {
 		id = "Zone",
 		name = "THE ZONE",
-		desc = "For 5 s every Perfect timing window is twice as wide.",
-		duration = 5,
+		desc = "For 8 s every Perfect timing window is twice as wide.",
+		duration = 8,
 		color = Color3.fromRGB(255, 215, 80),
 	},
 	SkyWalk = {
 		id = "SkyWalk",
 		name = "SKY WALK",
-		desc = "For 5 s you get two extra Air Dodges every airtime.",
-		duration = 5,
+		desc = "For 8 s: three extra Air Dodges every airtime and floatier jumps.",
+		duration = 8,
 		color = Color3.fromRGB(180, 255, 255),
 	},
 	Overdrive = {
 		id = "Overdrive",
 		name = "OVERDRIVE",
-		desc = "For 4 s Burst is full and never drains.",
-		duration = 4,
+		desc = "For 7 s Burst never drains and your top speed is +6.",
+		duration = 7,
 		color = Color3.fromRGB(255, 110, 60),
+	},
+	MagnetHands = {
+		id = "MagnetHands",
+		name = "MAGNET HANDS",
+		desc = "For 8 s the disc snaps to your hands from 2.5 studs further.",
+		duration = 8,
+		color = Color3.fromRGB(255, 90, 220),
+	},
+	TempestThrow = {
+		id = "TempestThrow",
+		name = "TEMPEST THROW",
+		desc = "Your next throw (within 10 s) flies 35 % faster and holds its line.",
+		duration = 10,
+		color = Color3.fromRGB(60, 230, 200),
 	},
 } :: { [string]: Def }
 
-Abilities.FlashDistance = 10 -- studs
+Abilities.FlashDistance = 18 -- studs
+Abilities.FlashSurge = 8 -- studs/s added on arrival (overspeed decays it)
 Abilities.ZoneScale = 2 -- Perfect windows x this
-Abilities.SkyWalkDodges = 2
+Abilities.SkyWalkDodges = 3
+Abilities.SkyWalkGravity = 0.75 -- gravity x this
+Abilities.OverdriveTop = 6 -- extra top speed while Burst is held
+Abilities.MagnetReach = 2.5 -- studs of extra catch reach
+Abilities.TempestSpeed = 1.35 -- disc speed x this
+Abilities.TempestSpin = 1.3 -- spin x this (holds its line)
 
 function Abilities.get(id: any): Def?
 	if type(id) ~= "string" then
 		return nil
 	end
 	return Abilities.List[id]
+end
+
+-- Is ability `id` running on `model` at time `t` (Net.now())? Read from the
+-- attributes AbilityService stamps; both sides use it.
+function Abilities.activeOn(model: Instance?, id: string, t: number): boolean
+	if not model then
+		return false
+	end
+	local untilT = model:GetAttribute("UBAbilityUntil")
+	return model:GetAttribute("UBAbility") == id and type(untilT) == "number" and t < untilT
 end
 
 return Abilities
@@ -907,6 +937,8 @@ Art.Ui = {
 	Zone = "72311911062044",
 	SkyWalk = "97193595800423",
 	Overdrive = "91517007108188",
+	MagnetHands = "",
+	TempestThrow = "",
 	Emote = "89850613445736",
 	Trail = "103052506400160",
 	Aura = "106340578522274",
@@ -2734,6 +2766,8 @@ Shop.Abilities = {
 	{ id = "Zone", name = "The Zone", price = 1500 },
 	{ id = "Overdrive", name = "Overdrive", price = 2000 },
 	{ id = "SkyWalk", name = "Sky Walk", price = 2500 },
+	{ id = "MagnetHands", name = "Magnet Hands", price = 1800 },
+	{ id = "TempestThrow", name = "Tempest Throw", price = 2200 },
 } :: { any }
 
 export type Product = { id: string, productId: number, coins: number, robux: number, name: string }
@@ -2933,7 +2967,7 @@ local Teams = {
 		-- ForgeGUI-made classic clothing templates (Image ids); empty = the
 		-- jersey is drawn with body colours instead
 		Shirt = "100918681985769", -- ForgeGUI: TIDE jersey
-		Pants = "",
+		Pants = "119376365144429", -- ForgeGUI: TIDE shorts
 	},
 	B = {
 		Name = "BLAZE",
@@ -2941,7 +2975,7 @@ local Teams = {
 		Dark = Color3.fromRGB(120, 50, 10),
 		BrickColor = BrickColor.new("Neon orange"),
 		Shirt = "98553561031499", -- ForgeGUI: BLAZE jersey
-		Pants = "",
+		Pants = "132446203367408", -- ForgeGUI: BLAZE shorts
 	},
 	Neutral = {
 		Name = "SIDELINE",
@@ -3780,6 +3814,7 @@ local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
+local Abilities = require(Shared.Config.Abilities)
 local DiscPhysics = require(script.Parent.DiscPhysics)
 
 local T = DiscConfig.Throw
@@ -3802,6 +3837,7 @@ export type Params = {
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
 	perfectCatch: boolean?, -- right after a Perfect Catch (halves the run-through cone)
+	tempest: boolean?, -- Tempest Throw is armed (Config/Abilities): faster, more spin
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -3977,6 +4013,7 @@ function ThrowModel.sanitize(raw: any): Params?
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
 		perfectCatch = raw.perfectCatch == true,
+		tempest = raw.tempest == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -4082,6 +4119,10 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 		speed *= TechConfig.PINCH_SPEED_PERFECT
 	elseif p.pinch == "Clean" then
 		speed *= TechConfig.PINCH_SPEED
+	end
+	if p.tempest then
+		speed *= Abilities.TempestSpeed
+		spinFactor *= Abilities.TempestSpin
 	end
 
 	-- Run-Through Release (docs/tech-spec.md 29): released on the move (no
@@ -6696,6 +6737,8 @@ export type State = {
 	extraDodgesLeft: number,
 	skyWalkUntil: number,
 	overdriveUntil: number,
+	overdriveTop: number, -- extra top speed during Overdrive
+	skyWalkGravity: number, -- gravity x this during Sky Walk
 
 	-- defense
 	mirrorArmed: boolean, -- the next cut mirrors your matchup's (Mirror Step)
@@ -6816,6 +6859,8 @@ function TechCore.new(now: number?): State
 		extraDodgesLeft = 0,
 		skyWalkUntil = -math.huge,
 		overdriveUntil = -math.huge,
+		overdriveTop = 0,
+		skyWalkGravity = 1,
 
 		mirrorArmed = false,
 
@@ -7923,6 +7968,9 @@ local function updateBurst(s: State, input: Input, dt: number)
 	end
 	local boosting = active and s.state ~= "Sliding"
 	s.topSpeed = if boosting then Config.BURST_TOP_SPEED else Config.RUN_TOP_SPEED
+	if boosting and s.now < s.overdriveUntil then
+		s.topSpeed += s.overdriveTop
+	end
 	s.accel = if boosting then Config.BURST_ACCEL else Config.RUN_ACCEL
 end
 
@@ -8065,6 +8113,9 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		if isHeld(input, "Slide") and s.state ~= "Diving" then
 			g = Config.PLAYER_GRAVITY * Config.FAST_FALL_MULT
 		end
+		if s.now < s.skyWalkUntil then
+			g *= s.skyWalkGravity
+		end
 		vy -= g * dt
 		-- holding Jump after a jump adds up to a full jump
 		if jumpHeld and s.now < s.jumpBoostUntil then
@@ -8106,6 +8157,13 @@ function TechCore.advance(s: State, input: Input, env: Env, frameDt: number): Fr
 	return s.frame
 end
 
+-- Adds `amount` studs/s along your line at once (Flash Step's surge);
+-- overspeed decay brings it back down.
+function TechCore.surge(s: State, amount: number)
+	local flat = flatOf(s.vel)
+	setFlat(s, flat + unitOr(flat, s.heading) * amount)
+end
+
 -- Starts an ability's movement effect (Config/Abilities): "Zone",
 -- "SkyWalk" or "Overdrive" for `duration` seconds of sim time. Flash Step
 -- moves the body, so the caller does it (see flashStep).
@@ -8118,10 +8176,12 @@ function TechCore.startAbility(s: State, id: string, duration: number, scale: nu
 		s.skyWalkUntil = untilT
 		s.extraDodges = dodges or 2
 		s.extraDodgesLeft = s.extraDodges
+		s.skyWalkGravity = scale or 1
 	elseif id == "Overdrive" then
 		s.overdriveUntil = untilT
 		s.burst = 100
 		s.burstLocked = false
+		s.overdriveTop = scale or 0
 	end
 	emit(s, "Ability", "Clean", s.heading, id)
 end
@@ -15914,6 +15974,7 @@ local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Abilities = require(Shared.Config.Abilities)
 local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 local Actors = require(Shared.Actors)
@@ -16149,6 +16210,9 @@ function CatchingService.claim(
 		end
 	end
 	local slack = if actor.isBot then 0 else CatchGeometry.slack(ping, serverVel.Magnitude)
+	if Abilities.activeOn(actor.character, "MagnetHands", Net.now()) then
+		slack += Abilities.MagnetReach
+	end
 	if _kind == "Tip" then
 		-- airborne only: the client says it is in the air (its jump reached
 		-- us before this claim), or our own lagging view agrees
@@ -23049,6 +23113,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
 local TechConfig = require(Shared.Config.Tech)
 local ThrowModel = require(Shared.Disc.ThrowModel)
+local Abilities = require(Shared.Config.Abilities)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local Net = require(Shared.Net)
 
@@ -23327,6 +23392,17 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 		if not (landedRecently or aboutToLand) then
 			p.pinch = nil
 		end
+	end
+
+	-- Tempest Throw: only while armed, and it is spent by this throw
+	local body = actor.character
+	if Abilities.activeOn(body, "TempestThrow", Net.now()) then
+		p.tempest = true
+		if body then
+			body:SetAttribute("UBAbilityUntil", Net.now())
+		end
+	else
+		p.tempest = nil
 	end
 
 	local launch = ThrowModel.launch(p, prep.rootPos, prep.velocity)
@@ -25498,9 +25574,12 @@ end)
 	  * The Ability key asks the server to fire the ability chosen in
 	    Settings (AbilityService checks the FLOW meter).
 	  * When the server stamps UBAbilityT on your character, the effect
-	    starts: Flash Step blinks the body up to 10 studs (stopping short of
-	    walls) and keeps your speed; The Zone, Sky Walk and Overdrive start in
-	    the tech core. Each plays an impact frame and a pop.
+	    starts: Flash Step blinks the body up to 18 studs (stopping short of
+	    walls) and surges your speed; The Zone, Sky Walk and Overdrive start
+	    in the tech core; Magnet Hands and Tempest Throw are read from the
+	    attributes by the catch and throw code (both checked on the server).
+	    Every cast is an anime power-up: impact frame, camera punch, rings
+	    of light, an aura flare and a cast pose (PoseController).
 	  * Everyone with an active ability glows in its colour (a Highlight);
 	    a Flash Step leaves afterimages for everyone.
 	  * A small FLOW bar over the Burst bar, with the ability's name lit when
@@ -25565,8 +25644,49 @@ local function flashStep(c: Model, def: Abilities.Def)
 			dist = math.min(dist, math.max(0, hit.Distance - 1.5))
 		end
 	end
-	controllers.AnimeFX.afterimage(c, def.color, 3)
+	controllers.AnimeFX.afterimage(c, def.color, 5)
+	local from = root.Position
 	root.CFrame += dir * dist
+	controllers.AnimeFX.slash(from:Lerp(root.Position, 0.5), dir, def.color)
+	if controllers.MovementController.engine() == "Tech" then
+		TechCore.surge(controllers.MovementController.techState(), Abilities.FlashSurge)
+	end
+end
+
+-- The tech-core numbers each ability starts with.
+local function techArgs(id: string): (number?, number?)
+	if id == "Zone" then
+		return Abilities.ZoneScale, nil
+	elseif id == "SkyWalk" then
+		return Abilities.SkyWalkGravity, Abilities.SkyWalkDodges
+	elseif id == "Overdrive" then
+		return Abilities.OverdriveTop, nil
+	end
+	return nil, nil
+end
+
+-- The anime power-up: a beat of hit-stop on the camera, a ring of light
+-- rising off the ground, a flare of aura and the pose (PoseController
+-- reads UBAbilityT for the cast pose).
+local function castFx(c: Model, def: Abilities.Def, own: boolean)
+	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+	local pos = root.Position
+	controllers.AnimeFX.impactBurst(pos, def.color, if own then 11 else 7)
+	controllers.AnimeFX.shockwave(pos - Vector3.new(0, 2.8, 0), def.color, if own then 12 else 8)
+	controllers.AnimeFX.auraFlare(c, 1.2)
+	task.delay(0.12, function()
+		if root.Parent then
+			controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), Color3.new(1, 1, 1), 6)
+		end
+	end)
+	if own then
+		controllers.AnimeFX.impactFrame(def.color)
+		controllers.CameraController.kick(0.6)
+		controllers.CameraController.shake(0.35, 0.3)
+	end
 end
 
 local function onStamp(c: Model)
@@ -25577,26 +25697,23 @@ local function onStamp(c: Model)
 	end
 	if c ~= player.Character then
 		if def.id == "FlashStep" then
-			controllers.AnimeFX.afterimage(c, def.color, 3)
+			controllers.AnimeFX.afterimage(c, def.color, 5)
 		end
+		castFx(c, def, false)
 		return
 	end
+	castFx(c, def, true)
 	if def.id == "FlashStep" then
 		flashStep(c, def)
 	elseif controllers.MovementController.engine() == "Tech" then
 		local tech = controllers.MovementController.techState()
-		TechCore.startAbility(tech, def.id, def.duration, Abilities.ZoneScale, Abilities.SkyWalkDodges)
+		local scale, dodges = techArgs(def.id)
+		TechCore.startAbility(tech, def.id, def.duration, scale, dodges)
 	end
 	controllers.TechFeedback.play(def.name, "Perfect")
 	controllers.AudioController.play("Ability")
 	if def.id == "FlashStep" then
 		controllers.AudioController.play("Dash")
-	end
-	controllers.AnimeFX.impactFrame(def.color)
-	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if root then
-		controllers.AnimeFX.impactBurst(root.Position, def.color, 9)
-		controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), def.color, 8)
 	end
 end
 
@@ -26810,6 +26927,7 @@ local TechCore = require(Shared.Movement.TechCore)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
+local Abilities = require(Shared.Config.Abilities)
 local Hitbox = require(Shared.Config.Hitbox)
 local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
@@ -27273,10 +27391,11 @@ local function sweep(
 ): (CatchGeometry.Evaluation?, number)
 	local n = math.clamp(math.ceil((to - from).Magnitude / SUB_STEP), 1, MAX_SUB)
 	local best: CatchGeometry.Evaluation? = nil
+	local slack = if Abilities.activeOn(player.Character, "MagnetHands", Net.now()) then Abilities.MagnetReach else nil
 	local firstT = tTo
 	for k = 1, n do
 		local a = k / n
-		local ev = CatchGeometry.evaluate(zones, from:Lerp(to, a))
+		local ev = CatchGeometry.evaluate(zones, from:Lerp(to, a), slack)
 		if ev then
 			if best == nil then
 				firstT = tFrom + (tTo - tFrom) * a
@@ -31633,6 +31752,8 @@ type Leg = {
 }
 
 type Rig = {
+	wasHolding: boolean,
+	caughtAt: number,
 	model: Model,
 	root: BasePart,
 	humanoid: Humanoid,
@@ -31699,6 +31820,10 @@ local REMOTE_POSE_DELAY = 0.08 -- other players' poses follow their attributes t
 local SHUFFLE_STRIDE = 2.2 -- studs per step of the mark shuffle
 local SHUFFLE_MAX_CADENCE = 3 -- gait cycles per second at most
 local SHUFFLE_LIFT = 0.3
+
+local NINJA_FROM = 28 -- studs/s: the anime sprint starts past a run's top speed
+local NINJA_FULL = 36
+local CAST_TIME = 0.6 -- s of the ability cast pose
 
 local function now(): number
 	return Net.now()
@@ -31875,6 +32000,8 @@ local function buildRig(model: Model): Rig?
 		lastVel = vel,
 		accel = Vector3.zero,
 		history = {},
+		wasHolding = false,
+		caughtAt = -math.huge,
 		smoothVel = Vector3.new(vel.X, 0, vel.Z),
 		shufflePhase = 0,
 		msShown = "Ground",
@@ -31941,6 +32068,8 @@ type Ctx = {
 	celebrateAge: number,
 	leftHanded: boolean,
 	lookAt: Vector3?, -- local space
+	castAge: number, -- s since this body cast an ability (UBAbilityT)
+	catchAge: number, -- s since this body caught the disc (HasDisc went true)
 }
 
 local GROUNDED_MODES: { [string]: boolean } = {
@@ -32010,7 +32139,15 @@ local function gather(rig: Rig, dt: number): Ctx
 		celebrateAge = math.huge,
 		leftHanded = m:GetAttribute("LeftHanded") == true,
 		lookAt = nil,
+		castAge = t - attrNumber(m, "UBAbilityT"),
+		catchAge = math.huge,
 	}
+	-- the catch: the moment HasDisc turns on
+	if ctx.holding and not rig.wasHolding then
+		rig.caughtAt = t
+	end
+	rig.wasHolding = ctx.holding
+	ctx.catchAge = t - rig.caughtAt
 
 	local vel: Vector3
 	if rig.isLocal then
@@ -32302,6 +32439,18 @@ local function compute(ctx: Ctx): Pose
 		pose.rate = 30
 	end
 
+	-- the anime sprint: past a run's top speed (Burst, Overdrive, a surge)
+	-- the body pitches low and the arms sweep straight back
+	if ctx.mode == "Ground" and (tech == "" or age > 0.3) then
+		local k = math.clamp((ctx.speed - NINJA_FROM) / (NINJA_FULL - NINJA_FROM), 0, 1)
+		if k > 0 and not ctx.holding then
+			pose.pitch -= 0.5 * k
+			pose.drop = math.max(pose.drop, 0.25 * k)
+			pose.RShoulder = CFrame.Angles(-1.3 * k, 0, 0.3 * k)
+			pose.LShoulder = CFrame.Angles(-1.3 * k, 0, -0.3 * k)
+		end
+	end
+
 	local mode = ctx.mode
 	local airUp = false
 	if mode == "Slide" then
@@ -32385,13 +32534,21 @@ local function compute(ctx: Ctx): Pose
 		pose.Waist = windupWaist(ctx.windupType)
 		throwSet = true
 		pose.rate = math.max(pose.rate, 22)
-	elseif ctx.releaseAge < 0.25 then
+	elseif ctx.releaseAge < 0.35 then
+		-- the follow-through: the whole body snaps through the release,
+		-- held a beat like a keyframe, then eased out
+		local k = 1 - math.clamp((ctx.releaseAge - 0.18) / 0.17, 0, 1)
 		throwArm = if ctx.releaseType == "Hammer" or ctx.releaseType == "Scoober"
 			then CFrame.Angles(2.2, 0, 0.1)
-			else CFrame.Angles(1.6, 0, 0.25)
-		pose.Waist = if ctx.releaseType == "Forehand" then CFrame.Angles(0, 0.35, 0) else CFrame.Angles(0, -0.45, 0)
+			else CFrame.Angles(1.7, 0, 0.35)
+		pose.Waist = if ctx.releaseType == "Forehand"
+			then CFrame.Angles(0, 0.7 * k, 0)
+			else CFrame.Angles(0, -0.8 * k, 0)
+		pose.pitch -= 0.3 * k
+		pose.drop = math.max(pose.drop, 0.35 * k)
+		pose.roll += (if ctx.releaseType == "Forehand" then 0.2 else -0.2) * k
 		throwSet = true
-		pose.rate = 30
+		pose.rate = 38
 	end
 	if throwSet then
 		if ctx.leftHanded then
@@ -32416,6 +32573,37 @@ local function compute(ctx: Ctx): Pose
 			pose.LShoulder = arm
 		end
 		pose.rate = 30
+	end
+
+	-- the catch snap: the disc pulled into the chest, a beat of crouch
+	if ctx.catchAge < 0.22 and ctx.grounded and not ctx.windup then
+		local k = 1 - ctx.catchAge / 0.22
+		pose.drop = math.max(pose.drop, 0.45 * k)
+		pose.pitch += 0.15 * k
+		pose.RShoulder = CFrame.Angles(1.2, 0, -0.5)
+		pose.LShoulder = CFrame.Angles(1.2, 0, 0.5)
+		pose.rate = 34
+	end
+
+	-- the ability cast: a crouched, trembling power-up, then the arms flung
+	-- wide with the head thrown back as the aura bursts
+	if ctx.castAge >= 0 and ctx.castAge < CAST_TIME then
+		local a = ctx.castAge
+		if a < CAST_TIME * 0.45 then
+			pose.drop = math.max(pose.drop, 0.6)
+			pose.pitch = 0.25
+			pose.roll = math.sin(a * 60) * 0.06
+			pose.RShoulder = CFrame.Angles(0.4, 0, 0.5)
+			pose.LShoulder = CFrame.Angles(0.4, 0, -0.5)
+			pose.Neck = CFrame.Angles(-0.3, 0, 0)
+		else
+			pose.drop = math.min(pose.drop, 0.1)
+			pose.pitch = 0.18
+			pose.RShoulder = CFrame.Angles(2.2, 0, 1.0)
+			pose.LShoulder = CFrame.Angles(2.2, 0, -1.0)
+			pose.Neck = CFrame.Angles(0.45, 0, 0)
+		end
+		pose.rate = 40
 	end
 
 	-- celebrations
@@ -33330,6 +33518,7 @@ local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
+local Abilities = require(Shared.Config.Abilities)
 
 local T = DiscConfig.Throw
 local HD = MovementConfig.Holding
@@ -33815,6 +34004,11 @@ local function release()
 	local params = currentParams(hold)
 	stopShaping()
 	params.perfectCatch = controllers.CatchController.hotHands() or nil
+	params.tempest = Abilities.activeOn(player.Character, "TempestThrow", now()) or nil
+	if params.tempest then
+		controllers.TechFeedback.play("TEMPEST", "Perfect")
+		controllers.AnimeFX.impactFrame(Abilities.List.TempestThrow.color)
+	end
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then
 		controllers.TechFeedback.play(if params.pinch == "Perfect" then "Perfect Pinch" else "Pinch", params.pinch)
@@ -33834,6 +34028,7 @@ local function release()
 		swinging = params.swinging,
 		pinch = params.pinch,
 		perfectCatch = params.perfectCatch,
+		tempest = params.tempest,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})

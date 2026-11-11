@@ -5,9 +5,12 @@
 	  * The Ability key asks the server to fire the ability chosen in
 	    Settings (AbilityService checks the FLOW meter).
 	  * When the server stamps UBAbilityT on your character, the effect
-	    starts: Flash Step blinks the body up to 10 studs (stopping short of
-	    walls) and keeps your speed; The Zone, Sky Walk and Overdrive start in
-	    the tech core. Each plays an impact frame and a pop.
+	    starts: Flash Step blinks the body up to 18 studs (stopping short of
+	    walls) and surges your speed; The Zone, Sky Walk and Overdrive start
+	    in the tech core; Magnet Hands and Tempest Throw are read from the
+	    attributes by the catch and throw code (both checked on the server).
+	    Every cast is an anime power-up: impact frame, camera punch, rings
+	    of light, an aura flare and a cast pose (PoseController).
 	  * Everyone with an active ability glows in its colour (a Highlight);
 	    a Flash Step leaves afterimages for everyone.
 	  * A small FLOW bar over the Burst bar, with the ability's name lit when
@@ -72,8 +75,49 @@ local function flashStep(c: Model, def: Abilities.Def)
 			dist = math.min(dist, math.max(0, hit.Distance - 1.5))
 		end
 	end
-	controllers.AnimeFX.afterimage(c, def.color, 3)
+	controllers.AnimeFX.afterimage(c, def.color, 5)
+	local from = root.Position
 	root.CFrame += dir * dist
+	controllers.AnimeFX.slash(from:Lerp(root.Position, 0.5), dir, def.color)
+	if controllers.MovementController.engine() == "Tech" then
+		TechCore.surge(controllers.MovementController.techState(), Abilities.FlashSurge)
+	end
+end
+
+-- The tech-core numbers each ability starts with.
+local function techArgs(id: string): (number?, number?)
+	if id == "Zone" then
+		return Abilities.ZoneScale, nil
+	elseif id == "SkyWalk" then
+		return Abilities.SkyWalkGravity, Abilities.SkyWalkDodges
+	elseif id == "Overdrive" then
+		return Abilities.OverdriveTop, nil
+	end
+	return nil, nil
+end
+
+-- The anime power-up: a beat of hit-stop on the camera, a ring of light
+-- rising off the ground, a flare of aura and the pose (PoseController
+-- reads UBAbilityT for the cast pose).
+local function castFx(c: Model, def: Abilities.Def, own: boolean)
+	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+	local pos = root.Position
+	controllers.AnimeFX.impactBurst(pos, def.color, if own then 11 else 7)
+	controllers.AnimeFX.shockwave(pos - Vector3.new(0, 2.8, 0), def.color, if own then 12 else 8)
+	controllers.AnimeFX.auraFlare(c, 1.2)
+	task.delay(0.12, function()
+		if root.Parent then
+			controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), Color3.new(1, 1, 1), 6)
+		end
+	end)
+	if own then
+		controllers.AnimeFX.impactFrame(def.color)
+		controllers.CameraController.kick(0.6)
+		controllers.CameraController.shake(0.35, 0.3)
+	end
 end
 
 local function onStamp(c: Model)
@@ -84,26 +128,23 @@ local function onStamp(c: Model)
 	end
 	if c ~= player.Character then
 		if def.id == "FlashStep" then
-			controllers.AnimeFX.afterimage(c, def.color, 3)
+			controllers.AnimeFX.afterimage(c, def.color, 5)
 		end
+		castFx(c, def, false)
 		return
 	end
+	castFx(c, def, true)
 	if def.id == "FlashStep" then
 		flashStep(c, def)
 	elseif controllers.MovementController.engine() == "Tech" then
 		local tech = controllers.MovementController.techState()
-		TechCore.startAbility(tech, def.id, def.duration, Abilities.ZoneScale, Abilities.SkyWalkDodges)
+		local scale, dodges = techArgs(def.id)
+		TechCore.startAbility(tech, def.id, def.duration, scale, dodges)
 	end
 	controllers.TechFeedback.play(def.name, "Perfect")
 	controllers.AudioController.play("Ability")
 	if def.id == "FlashStep" then
 		controllers.AudioController.play("Dash")
-	end
-	controllers.AnimeFX.impactFrame(def.color)
-	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if root then
-		controllers.AnimeFX.impactBurst(root.Position, def.color, 9)
-		controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), def.color, 8)
 	end
 end
 
