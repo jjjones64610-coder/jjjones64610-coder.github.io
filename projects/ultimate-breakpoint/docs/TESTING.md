@@ -16,7 +16,7 @@ Run everything with `scripts/check.sh` (the header lists tool versions).
 | Lint | Selene 0.27 (Luau std + Roblox globals) | 0 errors, 0 warnings |
 | Types against the **real Roblox API** (catches invented properties and methods) | luau-lsp 1.70 `analyze`, every file `--!strict` | 0 errors |
 | Cross-module calls (`services.X.y`, `controllers.X.y`) exist | `scripts/audit_refs.py` | 0 missing |
-| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **236 passed** |
+| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **238 passed** |
 | Place builds with the right structure and StarterPlayer settings | Rojo 7.4 + `tests/place_check.luau` | OK |
 
 What the tests cover (`lune run tests/run.luau <spec>` runs one):
@@ -100,6 +100,8 @@ the last timed press in ms ("Cut: 34 ms early").
 - [ ] Holding the disc: WASD steps the free foot (1.2 studs), a double-tap lunges; no travel snap-backs.
 - [ ] Marking: LMB swings a hand block (a Point Block right on the release). A defender's untimed dive at the disc knocks it down; overlapping the receiver gives it back (foul).
 - [ ] World-class: land your feet on a disc in flight (Flip Reset, stored dodge); a throw on the landing frame (Pinch, much faster); Dive right after a dodge (Stall); Cut right after a wavedash (Zap Dash); jump just as you touch a wall in the air (Wall Kick). Each shows on the timing bar in Training.
+- [ ] Throw shaping: while charging the camera holds still; mouse left/right tilts the edge (bank pip), up/down the launch angle (the preview arc shows both); a hard edge leaves as a Blade. A throw on the move before your pivot plants is a little less accurate the faster you go.
+- [ ] Training → TECH DRILLS: pick one, the panel counts reps to three Perfects.
 - [ ] Music: main theme in warm-up, the chill track in Training, the match track in a point, the fanfare at match end; Settings → Music volume.
 - [ ] Settings → New movement core off brings back the classic engine at once.
 

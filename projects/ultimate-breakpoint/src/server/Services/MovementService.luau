@@ -120,6 +120,12 @@ export type Track = {
 	airLayouts: number,
 	airResets: number, -- accepted Tip Resets + Wall Rebounds
 	lastCatchClock: number, -- os.clock() of the last catch given to this actor
+	-- tech engine, per airtime: dodges used and the dodges given back
+	airDodges: number,
+	airGrants: number, -- Disc Reset, Flip Reset, Wall Kick, Stall
+	airFlips: number, -- stored Flip Resets not yet spent
+	airStalls: number,
+	airWallKicks: number,
 	landedClock: number, -- os.clock() of the last touchdown the server saw
 	airTips: number,
 	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
@@ -247,6 +253,11 @@ local function newTrack(id: number, pos: Vector3): Track
 		airLayouts = 0,
 		airResets = 0,
 		lastCatchClock = -math.huge,
+		airDodges = 0,
+		airGrants = 0,
+		airFlips = 0,
+		airStalls = 0,
+		airWallKicks = 0,
 		landedClock = -math.huge,
 		airTips = 0,
 		lastTakeoffAt = -math.huge,
@@ -770,7 +781,48 @@ end
 
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
+-- Sky Walk (an ability) is live on this character: two extra dodges.
+local function skyWalkDodges(t: Track): number
+	local c = character(t.id)
+	if c and c:GetAttribute("UBAbility") == "SkyWalk" then
+		local untilT = c:GetAttribute("UBAbilityUntil")
+		if type(untilT) == "number" and now() <= untilT + 0.5 then
+			return 2
+		end
+	end
+	return 0
+end
+
 local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
+	-- tech engine air limits (the network pass): one dodge per airtime plus
+	-- one per thing that gives it back; each give-back has its own limit
+	if tech == "AirDodge" then
+		if t.airDodges >= 1 + t.airGrants + skyWalkDodges(t) then
+			return nil
+		end
+		return quality
+	elseif tech == "ResetFlip" then
+		if t.airFlips <= 0 then
+			return nil
+		end
+		return quality
+	elseif tech == "Stall" then
+		if t.airStalls >= 1 or t.airDodges < 1 then
+			return nil
+		end
+		return quality
+	elseif tech == "WallKick" then
+		if t.airWallKicks >= 1 then
+			return nil
+		end
+		return quality
+	elseif tech == "ZapDash" then
+		local wd = t.techAt.Wavedash
+		if wd == nil or ts - wd > 0.35 then
+			return nil
+		end
+		return quality
+	end
 	if tech == "FlipReset" then
 		-- a disc in flight was at this body's feet around ts
 		local pos = MovementService.positionAt(t.id, ts)
@@ -901,6 +953,11 @@ local function endAirtime(id: number, t: Track, ts: number)
 	t.airLayouts = 0
 	t.airResets = 0
 	t.airTips = 0
+	t.airDodges = 0
+	t.airGrants = 0
+	t.airFlips = 0
+	t.airStalls = 0
+	t.airWallKicks = 0
 end
 
 -- A reported movement mode change: tracks takeoffs and landings (on the
@@ -920,6 +977,22 @@ end
 local function record(id: number, t: Track, tech: string, quality: string, dir: Vector3, info: string?, ts: number)
 	t.lastTech = tech
 	t.lastTechAt = ts
+	-- tech engine air bookkeeping
+	if tech == "AirDodge" then
+		t.airDodges += 1
+	elseif tech == "DiscReset" or tech == "WallKick" or tech == "Stall" then
+		t.airGrants += 1
+		if tech == "WallKick" then
+			t.airWallKicks += 1
+		elseif tech == "Stall" then
+			t.airStalls += 1
+		end
+	elseif tech == "FlipReset" then
+		t.airFlips += 1
+	elseif tech == "ResetFlip" then
+		t.airFlips -= 1
+		t.airGrants += 1
+	end
 	-- air moves and resets this airtime
 	if tech == "AirRedirect" then
 		t.airRedirects += 1

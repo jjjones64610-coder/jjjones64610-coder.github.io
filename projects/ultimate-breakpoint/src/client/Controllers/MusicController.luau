@@ -67,7 +67,13 @@ local function wanted(): string
 	return "MainTheme"
 end
 
-local function play(name: string)
+local function play(wantedName: string)
+	-- a track with no id yet falls back to the main theme (never silence)
+	local name = wantedName
+	local t = Music.Tracks[name]
+	if not t or t.id == "" then
+		name = "MainTheme"
+	end
 	if name == currentName then
 		return
 	end

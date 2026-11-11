@@ -13,7 +13,7 @@ only fill empty spots, and everyone plays with the same **fixed hitbox**.
 * **Testing:** [`docs/TESTING.md`](docs/TESTING.md) covers what was verified offline and the Studio test plan.
 
 > **Status — honest version.** The full game is written in strict Luau. It
-> type-checks against the real Roblox API, lints clean and passes 236
+> type-checks against the real Roblox API, lints clean and passes 238
 > offline tests: movement fuzzing with resets, rules, physics, catch and tip
 > geometry, signature moves, modes and teams. **It has not been run in Roblox
 > Studio.** This version reworks movement after the first playtest (the
@@ -179,11 +179,8 @@ lune run tests/flight_table.luau                            # throw table
 * Bots don't tip or chase signature moves.
 * Contact fouls aren't called yet (the contact rule only costs speed).
 * Everything in `docs/TESTING.md` §0 and §2 needs a first run in Studio.
-* From the tech spec: its own disc flight model (5; the existing
-  lift/drag/spin model stays, already curving by edge and fading on low
-  spin), edge and launch angle on the mouse while charging (26; Z/X bank and
-  the camera pitch still do it), run-through aim cones (29), a separate
-  drill per tech (9; Training shows every press on the timing bar instead),
-  and a full network pass (10). Bots hold the disc on the classic engine.
-* Two crowd sound effects failed at ForgeGUI (a worker restart); the crowd
-  loop slots stay empty.
+* Still on the classic engine: a bot holding the disc (it now uses the
+  same 1.2-stud footwork and lunge as players).
+* Two crowd sound effects and two soundtrack tracks (the match loop and the
+  universe-point track) failed at ForgeGUI after a worker restart; their
+  slots are empty (points play the main theme meanwhile).

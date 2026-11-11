@@ -787,7 +787,13 @@ local function runPresses(b: Bot, input: MovementSim.Input, env: MovementSim.Env
 		if t - p.at > 0.5 then
 			continue -- stale (frozen, teleported, ...)
 		end
-		if p.action == "Swing" then
+		if p.action == "Swing" and TechConfig.BOTS_USE_TECH then
+			-- a lunge to the side (PIVOT_LUNGE), like a player's double-tap
+			local aim = b.aim or b.facing
+			local right = Vector3.new(-aim.Z, 0, aim.X)
+			local side = if p.side == 0 then (if b.rng:next() < 0.5 then -1 else 1) else p.side
+			b.step = VecMath.flatUnit(right) * (side * TechConfig.PIVOT_LUNGE)
+		elseif p.action == "Swing" then
 			MovementSim.swing(sim, p.side, env)
 		elseif p.action == "Fake" then
 			MovementSim.fakeStep(sim, p.side)
@@ -2168,7 +2174,14 @@ local function planRelease(b: Bot, w: World, h: HoldPlan, rec: Body, P: Vector3,
 		h.swingEnd = t + delay + HD.SwingTime
 	else
 		local stepLen = if OVERHEAD[throwType] then 0.25 * R else (0.6 + 0.4 * b.skill) * R
-		b.step = ra * (side * stepLen) + aim * (0.1 * R)
+		local fwd = 0.1 * R
+		if TechConfig.BOTS_USE_TECH then
+			-- the tech-engine pivot: the same 1.2-stud footwork players get
+			local k = TechConfig.PIVOT_REACH / R
+			stepLen *= k
+			fwd *= k
+		end
+		b.step = ra * (side * stepLen) + aim * fwd
 		services.ThrowService.beginCharge(b.id, throwType)
 		h.charged = t
 		h.phase = "Setup"
