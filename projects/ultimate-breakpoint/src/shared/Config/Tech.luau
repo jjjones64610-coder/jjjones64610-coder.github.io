@@ -204,5 +204,6 @@ Tech.MIRROR_BONUS = 2
 Tech.JUKED_LOSS = 0.30
 Tech.CONTACT_LOSS = 0.30 -- speed lost running through a player
 Tech.CONTACT_RADIUS = 2 -- studs between roots that counts as overlapping
+Tech.FOUL_WINDOW = 0.3 -- s: a defender's touch this close to the receiver's claim, overlapping, is a foul
 
 return Tech

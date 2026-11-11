@@ -430,12 +430,54 @@ function CatchingService.resolve(d: any)
 	local discVel: Vector3 = w.discVel or services.DiscService.velocity(d)
 	local isDefender = d.throwerTeam ~= nil and d.throwerTeam ~= "" and w.team ~= d.throwerTeam and not d.pull
 	local outcome = if w.tip then "Tip" else CatchGeometry.outcome(resolution, isDefender)
-	local untimedBobble = outcome == "Catch" and w.untimed == true
-	if untimedBobble then
-		-- no timed Catch press: it pops out of the hands (one re-catch allowed)
-		outcome = "Bobble"
-		d.untimedAt = d.untimedAt or {}
-		d.untimedAt[w.id] = now()
+	local untimedBobble = false
+	if outcome == "Catch" and w.untimed == true then
+		if isDefender then
+			-- a defender's untimed touch (a Bid: dive at it, or just get a
+			-- hand on it) knocks it down instead of catching it
+			outcome = "Block"
+		else
+			-- no timed Catch press: it pops out of the hands (one re-catch allowed)
+			untimedBobble = true
+			outcome = "Bobble"
+			d.untimedAt = d.untimedAt or {}
+			d.untimedAt[w.id] = now()
+		end
+	end
+	-- the contact rule's foul: a defender who blocks or intercepts while
+	-- overlapping a receiver who was also going for it gives it back
+	if isDefender and (outcome == "Block" or outcome == "Catch") then
+		local defenderPos = services.MovementService.positionAt(w.id, w.t)
+		for _, c in d.claims do
+			if c.id ~= w.id and c.team == d.throwerTeam and math.abs(c.t - w.t) <= TechConfig.FOUL_WINDOW then
+				local receiverPos = services.MovementService.positionAt(c.id, w.t)
+				local gap = Vector3.new(receiverPos.X - defenderPos.X, 0, receiverPos.Z - defenderPos.Z)
+				if gap.Magnitude <= TechConfig.CONTACT_RADIUS then
+					notifyClaimers(d, c.id, "Catch")
+					d.claims = {}
+					d.resolveAt = nil
+					services.DiscService.giveTo(d, c.id)
+					Net.event("Effect"):FireAllClients("Foul", discPos, w.id, c.quality, c.zone)
+					services.MovementService.noteCatch(c.id, d.id, false, w.t)
+					d.handler.onCaught(d, {
+						id = c.id,
+						team = c.team,
+						pos = c.body or discPos,
+						grounded = true,
+						jumpOrigin = c.body or discPos,
+						quality = c.quality,
+						zone = c.zone,
+						depth = c.depth,
+						relativeSpeed = c.relativeSpeed,
+						contested = true,
+						t = c.t,
+						discPos = discPos,
+						claims = {},
+					})
+					return
+				end
+			end
+		end
 	end
 
 	notifyClaimers(d, w.id, outcome)
