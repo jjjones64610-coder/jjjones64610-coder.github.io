@@ -1201,8 +1201,12 @@ return Hitbox
             <string name="Name">Input</string>
             <string name="Source"><![CDATA[--!strict
 -- DEFAULT BINDINGS
--- One small vocabulary. Advanced techniques come from pressing these in
--- context and on time (see MovementSim header), not from extra keys.
+-- The tech-spec layout (docs/tech-spec.md, Controls): everything sits under
+-- the left hand around WASD — Space jump / air dodge, Shift Burst, Q cut,
+-- E dive, C slide, F overhead — with throws on the mouse. Advanced
+-- techniques come from pressing these in context and on time (TechCore), not
+-- from extra keys. What chains off what is for players to find.
+-- (The classic engine's notes follow.)
 --   Movement actions: Sprint, Jump, Cut, Slide, Dive, Burst
 --   Disc actions:     Primary (throw / reach), Secondary (fake / mark; in the air: tip)
 --   With the disc:    Q / E quick swing left / right (the Cut / Dive keys),
@@ -1225,6 +1229,7 @@ Input.Actions = {
 	"Slide",
 	"Dive",
 	"Burst",
+	"Overhead",
 	"Primary",
 	"Secondary",
 	"BankLeft",
@@ -1248,7 +1253,8 @@ Input.Display = {
 	Cut = "Cut (Snap / Plant / Air Redirect) · Swing Left (with disc)",
 	Slide = "Slide / Precision Landing · Low Release · Mark Stance",
 	Dive = "Layout Dive · Swing Right (with disc)",
-	Burst = "Burst Step (also restarts a plant)",
+	Burst = "Burst (hold) / Burst Kick (tap)",
+	Overhead = "Overhead modifier (hold while throwing)",
 	Primary = "Throw (hold) / Reach",
 	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
 	BankLeft = "Bank Left (with disc)",
@@ -1269,12 +1275,13 @@ Input.Display = {
 -- Values are Enum.KeyCode / Enum.UserInputType names so they can be saved.
 -- The first key of each list is the one shown in HUD key pips.
 Input.Keyboard = {
-	Sprint = { "LeftShift" },
+	Sprint = {}, -- classic engine only (auto-sprint); Shift is Burst
 	Jump = { "Space" },
 	Cut = { "Q" },
 	Slide = { "C", "LeftControl" },
 	Dive = { "E" },
-	Burst = { "F" },
+	Burst = { "LeftShift" },
+	Overhead = { "F" },
 	Primary = { "MouseButton1" },
 	Secondary = { "MouseButton2" },
 	BankLeft = { "Z" },
@@ -1293,12 +1300,13 @@ Input.Keyboard = {
 } :: { [string]: { string } }
 
 Input.Gamepad = {
-	Sprint = { "ButtonL1", "ButtonL3" },
+	Sprint = { "ButtonL3" },
 	Jump = { "ButtonA" },
-	Cut = { "ButtonX" },
+	Cut = { "ButtonR1" },
 	Slide = { "ButtonB" },
-	Dive = { "ButtonY" },
-	Burst = { "ButtonR1" },
+	Dive = { "ButtonX" },
+	Burst = { "ButtonL1" },
+	Overhead = { "ButtonY" },
 	Primary = { "ButtonR2" },
 	Secondary = { "ButtonL2" },
 	BankLeft = { "DPadLeft" },
@@ -1389,9 +1397,10 @@ end
 -- Bump SettingsVersion when a default changes on purpose; keys listed under
 -- the new version in Migrations are reset to their default for profiles saved
 -- by an older version (everything else a player saved is kept).
-Input.SettingsVersion = 2
+Input.SettingsVersion = 3
 Input.Migrations = {
 	[2] = { "ShowTechLabels" }, -- technique labels are now off by default (less HUD noise)
+	[3] = { "Bindings" }, -- the tech-spec key layout replaces saved rebinds once
 } :: { [number]: { string } }
 
 Input.DefaultSettings = {
@@ -1706,6 +1715,8 @@ return Modes
 -- bonus. Technique speed thresholds are scaled x1.08 from the original tuning
 -- to keep their relation to the faster sprint (26 -> 28).
 
+local Tech = require(script.Parent.Tech)
+
 local Movement = {
 	-- Locomotion -----------------------------------------------------------
 	JogSpeed = 18,
@@ -2001,6 +2012,21 @@ local Movement = {
 		PivotSwing = 120,
 		Break = 250,
 		TipReset = 220,
+		-- tech engine (Movement/TechCore)
+		Cut = 100,
+		Juke = 130,
+		PlantStop = 110,
+		LandingSlide = 120,
+		SlideHop = 110,
+		BurstKick = 70,
+		AirDodge = 90,
+		Wavedash = 160,
+		ReverseSnap = 200,
+		BurstDive = 220,
+		DiscReset = 220,
+		Layout = 160,
+		TechRoll = 150,
+		Sky = 140,
 	},
 
 	-- Display names for UI / feedback.
@@ -2021,6 +2047,20 @@ local Movement = {
 		PivotSwing = "Pivot Swing",
 		Break = "Break",
 		TipReset = "Tip Reset",
+		Cut = "Cut",
+		Juke = "Juke",
+		PlantStop = "Plant Stop",
+		LandingSlide = "Landing Slide",
+		SlideHop = "Slide Hop",
+		BurstKick = "Burst Kick",
+		AirDodge = "Air Dodge",
+		Wavedash = "Wavedash",
+		ReverseSnap = "Reverse Snap",
+		BurstDive = "Burst Dive",
+		DiscReset = "Disc Reset",
+		TechRoll = "Tech Roll",
+		Sky = "Sky",
+		Layout = "Layout",
 		Signature = "Signature",
 	},
 }
@@ -2048,6 +2088,21 @@ Movement.TechCosts = {
 	Jump = 0,
 	Break = 0,
 	TipReset = 0,
+	-- tech engine
+	Cut = 0,
+	Juke = 0,
+	PlantStop = 0,
+	LandingSlide = 0,
+	SlideHop = 0,
+	BurstKick = 0,
+	AirDodge = 0,
+	Wavedash = 0,
+	ReverseSnap = 0,
+	BurstDive = 0,
+	DiscReset = 0,
+	Layout = 0,
+	TechRoll = 0,
+	Sky = 0,
 }
 
 Movement.TechCooldowns = {
@@ -2067,6 +2122,21 @@ Movement.TechCooldowns = {
 	Jump = 0,
 	Break = 0,
 	TipReset = Movement.Reset.TipCooldown,
+	-- tech engine
+	Cut = Tech.CUT_COOLDOWN,
+	Juke = Tech.CUT_COOLDOWN,
+	PlantStop = 0,
+	LandingSlide = 0,
+	SlideHop = 0,
+	BurstKick = Tech.BURST_KICK_COOLDOWN,
+	AirDodge = 0,
+	Wavedash = 0,
+	ReverseSnap = 0,
+	BurstDive = 0,
+	DiscReset = 0,
+	Layout = 0,
+	TechRoll = 0,
+	Sky = 0,
 }
 
 return Movement
@@ -27529,6 +27599,31 @@ local function techFace(v: Vector3): (Vector3?, boolean)
 	return travel, false
 end
 
+-- Techs that only get a sound (a pop for every jump would be noise).
+local QUIET_TECH = { Jump = true, AirDodge = true }
+
+-- A tech the core reports: feedback at once, and (unless it was a miss) the
+-- combo chain and the server, like any technique.
+local function techEvent(e: TechCore.TechEvent)
+	local name = (MovementConfig.TechNames :: any)[e.tech] or e.tech
+	if e.quality == "Perfect" or not QUIET_TECH[e.tech] then
+		local label = if e.quality == "Perfect" then "Perfect " .. name else name
+		controllers.TechFeedback.play(label, e.quality)
+	end
+	if e.quality == "Miss" then
+		return
+	end
+	local t = now()
+	queueEvent({
+		tech = e.tech,
+		quality = e.quality,
+		t = t,
+		dir = e.dir,
+		chain = ComboEvaluator.active(combo, t) ~= nil,
+		info = e.info,
+	})
+end
+
 -- One frame on the tech engine.
 local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 	refreshFilter()
@@ -27563,17 +27658,40 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		end
 	end
 
+	-- time to land (wavedash), from a long ray when airborne
+	local ttl: number? = nil
+	if groundY == nil then
+		local far = workspace:Raycast(pos, Vector3.new(0, -120, 0), rayParams)
+		if far then
+			local height = math.max(0, pos.Y - standHeight - far.Position.Y)
+			lastAirHeight = height
+			local g = TechConfig.PLAYER_GRAVITY * TechConfig.FALL_GRAVITY_MULT
+			ttl = (vy + math.sqrt(math.max(vy * vy + 2 * g * height, 0))) / g
+		end
+	end
+
 	updateHolding(groundY ~= nil)
 	if sim.holding then
 		syncPivot(c)
 	end
 
-	local report = TechCore.advance(
-		tech,
-		{ move = controllers.InputController.moveVector() },
-		{ grounded = groundY ~= nil, wallNormal = wallNormal },
-		dt
-	)
+	local inputs = controllers.InputController
+	local menu = inputs.menuOpen()
+	local report = TechCore.advance(tech, {
+		move = if menu then Vector3.zero else inputs.moveVector(),
+		held = if menu
+			then {}
+			else {
+				Burst = inputs.isHeld("Burst"),
+				Slide = inputs.isHeld("Slide"),
+				Jump = inputs.isHeld("Jump"),
+				Cut = inputs.isHeld("Cut"),
+			},
+		aim = VecMath.flatUnit(controllers.CameraController.forward()),
+	}, { grounded = groundY ~= nil, wallNormal = wallNormal, timeToLand = ttl }, dt)
+	for _, e in TechCore.drainEvents(tech) do
+		techEvent(e)
+	end
 
 	local flat = VecMath.flat(tech.vel)
 	local lined = applyLine(c, pos, flat)
@@ -27856,9 +27974,15 @@ function MovementController.Start()
 
 	-- signature move inputs from the catch path
 	catch.Tipped:Connect(function(discId: string, defender: boolean)
+		if engineOn then
+			TechCore.discContact(tech) -- Disc Reset
+		end
 		feedSignatures({ kind = "Tip", t = now(), discId = discId, defender = defender })
 	end)
 	catch.Caught:Connect(function(discId: string, interception: boolean)
+		if engineOn then
+			TechCore.discContact(tech) -- a catch in the air is a Disc Reset too
+		end
 		local at = claimAir[discId]
 		claimAir[discId] = nil
 		local airborne = if at then at.airborne else MovementSim.isAirborne(sim)
@@ -29111,8 +29235,9 @@ local function applyProfile(profile: any)
 		end
 		values.SettingsVersion = InputConfig.SettingsVersion
 	end
+	local keepBindings = not (type(s.values) == "table" and migratedKeys(s.values.SettingsVersion).Bindings)
 	for _, scheme in { "keyboard", "gamepad" } do
-		if type(s[scheme]) == "table" then
+		if keepBindings and type(s[scheme]) == "table" then
 			for action, keys in s[scheme] do
 				if type(keys) == "table" and #keys > 0 then
 					(overrides :: any)[scheme][action] = keys
@@ -31554,13 +31679,18 @@ function Hud.update(_dt: number)
 
 	-- exertion and cooldown pips
 	local sim = controllers.MovementController.sim()
-	local ex = sim.exertion / MovementConfig.ExertionMax
+	-- the tech engine's Burst meter, or the classic exertion
+	local movement = controllers.MovementController
+	local ex = if movement.engine() == "Tech"
+		then movement.techState().burst / 100
+		else sim.exertion / MovementConfig.ExertionMax
 	local bar = refs.exertion :: Frame
 	bar.Size = UDim2.fromScale(math.clamp(ex, 0, 1), 1)
 	bar.BackgroundColor3 = if ex > 0.5 then C.Good elseif ex > 0.2 then C.Gold else C.Bad
-	local low = sim.exertion < LOW_EXERTION
+	local techOn = movement.engine() == "Tech"
+	local low = if techOn then movement.techState().burstLocked else sim.exertion < LOW_EXERTION
 	bar.BackgroundTransparency = if low then 0.3 + 0.3 * math.sin(clock * 9) else 0
-	refs.exertionHint.Visible = low
+	refs.exertionHint.Visible = low and not techOn
 	if low then
 		refs.exertionHint.Text = exertionHint()
 	end
@@ -33749,6 +33879,21 @@ Theme.TechColors = {
 	Jump = Color3.fromRGB(200, 210, 230),
 	PivotSwing = Color3.fromRGB(120, 220, 255),
 	Break = Color3.fromRGB(255, 215, 80),
+	-- tech engine
+	Cut = Color3.fromRGB(90, 230, 255),
+	Juke = Color3.fromRGB(200, 160, 255),
+	PlantStop = Color3.fromRGB(255, 120, 200),
+	LandingSlide = Color3.fromRGB(255, 215, 80),
+	SlideHop = Color3.fromRGB(250, 230, 120),
+	BurstKick = Color3.fromRGB(255, 150, 40),
+	AirDodge = Color3.fromRGB(140, 180, 255),
+	Wavedash = Color3.fromRGB(120, 255, 230),
+	ReverseSnap = Color3.fromRGB(255, 90, 200),
+	BurstDive = Color3.fromRGB(255, 110, 60),
+	DiscReset = Color3.fromRGB(90, 230, 255),
+	Layout = Color3.fromRGB(255, 255, 255),
+	TechRoll = Color3.fromRGB(120, 255, 170),
+	Sky = Color3.fromRGB(180, 255, 255),
 }
 
 -- Combo tier words (ComboEvaluator.Tiers) and their colours.

@@ -744,6 +744,31 @@ local function techFace(v: Vector3): (Vector3?, boolean)
 	return travel, false
 end
 
+-- Techs that only get a sound (a pop for every jump would be noise).
+local QUIET_TECH = { Jump = true, AirDodge = true }
+
+-- A tech the core reports: feedback at once, and (unless it was a miss) the
+-- combo chain and the server, like any technique.
+local function techEvent(e: TechCore.TechEvent)
+	local name = (MovementConfig.TechNames :: any)[e.tech] or e.tech
+	if e.quality == "Perfect" or not QUIET_TECH[e.tech] then
+		local label = if e.quality == "Perfect" then "Perfect " .. name else name
+		controllers.TechFeedback.play(label, e.quality)
+	end
+	if e.quality == "Miss" then
+		return
+	end
+	local t = now()
+	queueEvent({
+		tech = e.tech,
+		quality = e.quality,
+		t = t,
+		dir = e.dir,
+		chain = ComboEvaluator.active(combo, t) ~= nil,
+		info = e.info,
+	})
+end
+
 -- One frame on the tech engine.
 local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 	refreshFilter()
@@ -778,17 +803,40 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		end
 	end
 
+	-- time to land (wavedash), from a long ray when airborne
+	local ttl: number? = nil
+	if groundY == nil then
+		local far = workspace:Raycast(pos, Vector3.new(0, -120, 0), rayParams)
+		if far then
+			local height = math.max(0, pos.Y - standHeight - far.Position.Y)
+			lastAirHeight = height
+			local g = TechConfig.PLAYER_GRAVITY * TechConfig.FALL_GRAVITY_MULT
+			ttl = (vy + math.sqrt(math.max(vy * vy + 2 * g * height, 0))) / g
+		end
+	end
+
 	updateHolding(groundY ~= nil)
 	if sim.holding then
 		syncPivot(c)
 	end
 
-	local report = TechCore.advance(
-		tech,
-		{ move = controllers.InputController.moveVector() },
-		{ grounded = groundY ~= nil, wallNormal = wallNormal },
-		dt
-	)
+	local inputs = controllers.InputController
+	local menu = inputs.menuOpen()
+	local report = TechCore.advance(tech, {
+		move = if menu then Vector3.zero else inputs.moveVector(),
+		held = if menu
+			then {}
+			else {
+				Burst = inputs.isHeld("Burst"),
+				Slide = inputs.isHeld("Slide"),
+				Jump = inputs.isHeld("Jump"),
+				Cut = inputs.isHeld("Cut"),
+			},
+		aim = VecMath.flatUnit(controllers.CameraController.forward()),
+	}, { grounded = groundY ~= nil, wallNormal = wallNormal, timeToLand = ttl }, dt)
+	for _, e in TechCore.drainEvents(tech) do
+		techEvent(e)
+	end
 
 	local flat = VecMath.flat(tech.vel)
 	local lined = applyLine(c, pos, flat)
@@ -1071,9 +1119,15 @@ function MovementController.Start()
 
 	-- signature move inputs from the catch path
 	catch.Tipped:Connect(function(discId: string, defender: boolean)
+		if engineOn then
+			TechCore.discContact(tech) -- Disc Reset
+		end
 		feedSignatures({ kind = "Tip", t = now(), discId = discId, defender = defender })
 	end)
 	catch.Caught:Connect(function(discId: string, interception: boolean)
+		if engineOn then
+			TechCore.discContact(tech) -- a catch in the air is a Disc Reset too
+		end
 		local at = claimAir[discId]
 		claimAir[discId] = nil
 		local airborne = if at then at.airborne else MovementSim.isAirborne(sim)

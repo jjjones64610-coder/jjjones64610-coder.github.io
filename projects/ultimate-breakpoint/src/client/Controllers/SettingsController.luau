@@ -123,8 +123,9 @@ local function applyProfile(profile: any)
 		end
 		values.SettingsVersion = InputConfig.SettingsVersion
 	end
+	local keepBindings = not (type(s.values) == "table" and migratedKeys(s.values.SettingsVersion).Bindings)
 	for _, scheme in { "keyboard", "gamepad" } do
-		if type(s[scheme]) == "table" then
+		if keepBindings and type(s[scheme]) == "table" then
 			for action, keys in s[scheme] do
 				if type(keys) == "table" and #keys > 0 then
 					(overrides :: any)[scheme][action] = keys

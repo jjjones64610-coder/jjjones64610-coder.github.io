@@ -13,6 +13,8 @@
 -- bonus. Technique speed thresholds are scaled x1.08 from the original tuning
 -- to keep their relation to the faster sprint (26 -> 28).
 
+local Tech = require(script.Parent.Tech)
+
 local Movement = {
 	-- Locomotion -----------------------------------------------------------
 	JogSpeed = 18,
@@ -308,6 +310,21 @@ local Movement = {
 		PivotSwing = 120,
 		Break = 250,
 		TipReset = 220,
+		-- tech engine (Movement/TechCore)
+		Cut = 100,
+		Juke = 130,
+		PlantStop = 110,
+		LandingSlide = 120,
+		SlideHop = 110,
+		BurstKick = 70,
+		AirDodge = 90,
+		Wavedash = 160,
+		ReverseSnap = 200,
+		BurstDive = 220,
+		DiscReset = 220,
+		Layout = 160,
+		TechRoll = 150,
+		Sky = 140,
 	},
 
 	-- Display names for UI / feedback.
@@ -328,6 +345,20 @@ local Movement = {
 		PivotSwing = "Pivot Swing",
 		Break = "Break",
 		TipReset = "Tip Reset",
+		Cut = "Cut",
+		Juke = "Juke",
+		PlantStop = "Plant Stop",
+		LandingSlide = "Landing Slide",
+		SlideHop = "Slide Hop",
+		BurstKick = "Burst Kick",
+		AirDodge = "Air Dodge",
+		Wavedash = "Wavedash",
+		ReverseSnap = "Reverse Snap",
+		BurstDive = "Burst Dive",
+		DiscReset = "Disc Reset",
+		TechRoll = "Tech Roll",
+		Sky = "Sky",
+		Layout = "Layout",
 		Signature = "Signature",
 	},
 }
@@ -355,6 +386,21 @@ Movement.TechCosts = {
 	Jump = 0,
 	Break = 0,
 	TipReset = 0,
+	-- tech engine
+	Cut = 0,
+	Juke = 0,
+	PlantStop = 0,
+	LandingSlide = 0,
+	SlideHop = 0,
+	BurstKick = 0,
+	AirDodge = 0,
+	Wavedash = 0,
+	ReverseSnap = 0,
+	BurstDive = 0,
+	DiscReset = 0,
+	Layout = 0,
+	TechRoll = 0,
+	Sky = 0,
 }
 
 Movement.TechCooldowns = {
@@ -374,6 +420,21 @@ Movement.TechCooldowns = {
 	Jump = 0,
 	Break = 0,
 	TipReset = Movement.Reset.TipCooldown,
+	-- tech engine
+	Cut = Tech.CUT_COOLDOWN,
+	Juke = Tech.CUT_COOLDOWN,
+	PlantStop = 0,
+	LandingSlide = 0,
+	SlideHop = 0,
+	BurstKick = Tech.BURST_KICK_COOLDOWN,
+	AirDodge = 0,
+	Wavedash = 0,
+	ReverseSnap = 0,
+	BurstDive = 0,
+	DiscReset = 0,
+	Layout = 0,
+	TechRoll = 0,
+	Sky = 0,
 }
 
 return Movement

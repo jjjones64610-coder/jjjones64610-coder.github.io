@@ -1,7 +1,11 @@
 --!strict
 -- DEFAULT BINDINGS
--- One small vocabulary. Advanced techniques come from pressing these in
--- context and on time (see MovementSim header), not from extra keys.
+-- The tech-spec layout (docs/tech-spec.md, Controls): everything sits under
+-- the left hand around WASD — Space jump / air dodge, Shift Burst, Q cut,
+-- E dive, C slide, F overhead — with throws on the mouse. Advanced
+-- techniques come from pressing these in context and on time (TechCore), not
+-- from extra keys. What chains off what is for players to find.
+-- (The classic engine's notes follow.)
 --   Movement actions: Sprint, Jump, Cut, Slide, Dive, Burst
 --   Disc actions:     Primary (throw / reach), Secondary (fake / mark; in the air: tip)
 --   With the disc:    Q / E quick swing left / right (the Cut / Dive keys),
@@ -24,6 +28,7 @@ Input.Actions = {
 	"Slide",
 	"Dive",
 	"Burst",
+	"Overhead",
 	"Primary",
 	"Secondary",
 	"BankLeft",
@@ -47,7 +52,8 @@ Input.Display = {
 	Cut = "Cut (Snap / Plant / Air Redirect) · Swing Left (with disc)",
 	Slide = "Slide / Precision Landing · Low Release · Mark Stance",
 	Dive = "Layout Dive · Swing Right (with disc)",
-	Burst = "Burst Step (also restarts a plant)",
+	Burst = "Burst (hold) / Burst Kick (tap)",
+	Overhead = "Overhead modifier (hold while throwing)",
 	Primary = "Throw (hold) / Reach",
 	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
 	BankLeft = "Bank Left (with disc)",
@@ -68,12 +74,13 @@ Input.Display = {
 -- Values are Enum.KeyCode / Enum.UserInputType names so they can be saved.
 -- The first key of each list is the one shown in HUD key pips.
 Input.Keyboard = {
-	Sprint = { "LeftShift" },
+	Sprint = {}, -- classic engine only (auto-sprint); Shift is Burst
 	Jump = { "Space" },
 	Cut = { "Q" },
 	Slide = { "C", "LeftControl" },
 	Dive = { "E" },
-	Burst = { "F" },
+	Burst = { "LeftShift" },
+	Overhead = { "F" },
 	Primary = { "MouseButton1" },
 	Secondary = { "MouseButton2" },
 	BankLeft = { "Z" },
@@ -92,12 +99,13 @@ Input.Keyboard = {
 } :: { [string]: { string } }
 
 Input.Gamepad = {
-	Sprint = { "ButtonL1", "ButtonL3" },
+	Sprint = { "ButtonL3" },
 	Jump = { "ButtonA" },
-	Cut = { "ButtonX" },
+	Cut = { "ButtonR1" },
 	Slide = { "ButtonB" },
-	Dive = { "ButtonY" },
-	Burst = { "ButtonR1" },
+	Dive = { "ButtonX" },
+	Burst = { "ButtonL1" },
+	Overhead = { "ButtonY" },
 	Primary = { "ButtonR2" },
 	Secondary = { "ButtonL2" },
 	BankLeft = { "DPadLeft" },
@@ -188,9 +196,10 @@ end
 -- Bump SettingsVersion when a default changes on purpose; keys listed under
 -- the new version in Migrations are reset to their default for profiles saved
 -- by an older version (everything else a player saved is kept).
-Input.SettingsVersion = 2
+Input.SettingsVersion = 3
 Input.Migrations = {
 	[2] = { "ShowTechLabels" }, -- technique labels are now off by default (less HUD noise)
+	[3] = { "Bindings" }, -- the tech-spec key layout replaces saved rebinds once
 } :: { [number]: { string } }
 
 Input.DefaultSettings = {

@@ -52,6 +52,21 @@ Theme.TechColors = {
 	Jump = Color3.fromRGB(200, 210, 230),
 	PivotSwing = Color3.fromRGB(120, 220, 255),
 	Break = Color3.fromRGB(255, 215, 80),
+	-- tech engine
+	Cut = Color3.fromRGB(90, 230, 255),
+	Juke = Color3.fromRGB(200, 160, 255),
+	PlantStop = Color3.fromRGB(255, 120, 200),
+	LandingSlide = Color3.fromRGB(255, 215, 80),
+	SlideHop = Color3.fromRGB(250, 230, 120),
+	BurstKick = Color3.fromRGB(255, 150, 40),
+	AirDodge = Color3.fromRGB(140, 180, 255),
+	Wavedash = Color3.fromRGB(120, 255, 230),
+	ReverseSnap = Color3.fromRGB(255, 90, 200),
+	BurstDive = Color3.fromRGB(255, 110, 60),
+	DiscReset = Color3.fromRGB(90, 230, 255),
+	Layout = Color3.fromRGB(255, 255, 255),
+	TechRoll = Color3.fromRGB(120, 255, 170),
+	Sky = Color3.fromRGB(180, 255, 255),
 }
 
 -- Combo tier words (ComboEvaluator.Tiers) and their colours.

@@ -947,13 +947,18 @@ function Hud.update(_dt: number)
 
 	-- exertion and cooldown pips
 	local sim = controllers.MovementController.sim()
-	local ex = sim.exertion / MovementConfig.ExertionMax
+	-- the tech engine's Burst meter, or the classic exertion
+	local movement = controllers.MovementController
+	local ex = if movement.engine() == "Tech"
+		then movement.techState().burst / 100
+		else sim.exertion / MovementConfig.ExertionMax
 	local bar = refs.exertion :: Frame
 	bar.Size = UDim2.fromScale(math.clamp(ex, 0, 1), 1)
 	bar.BackgroundColor3 = if ex > 0.5 then C.Good elseif ex > 0.2 then C.Gold else C.Bad
-	local low = sim.exertion < LOW_EXERTION
+	local techOn = movement.engine() == "Tech"
+	local low = if techOn then movement.techState().burstLocked else sim.exertion < LOW_EXERTION
 	bar.BackgroundTransparency = if low then 0.3 + 0.3 * math.sin(clock * 9) else 0
-	refs.exertionHint.Visible = low
+	refs.exertionHint.Visible = low and not techOn
 	if low then
 		refs.exertionHint.Text = exertionHint()
 	end
