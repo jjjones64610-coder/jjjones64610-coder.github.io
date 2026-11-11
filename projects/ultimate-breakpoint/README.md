@@ -13,7 +13,7 @@ only fill empty spots, and everyone plays with the same **fixed hitbox**.
 * **Testing:** [`docs/TESTING.md`](docs/TESTING.md) covers what was verified offline and the Studio test plan.
 
 > **Status — honest version.** The full game is written in strict Luau. It
-> type-checks against the real Roblox API, lints clean and passes 230
+> type-checks against the real Roblox API, lints clean and passes 236
 > offline tests: movement fuzzing with resets, rules, physics, catch and tip
 > geometry, signature moves, modes and teams. **It has not been run in Roblox
 > Studio.** This version reworks movement after the first playtest (the
@@ -23,18 +23,20 @@ only fill empty spots, and everyone plays with the same **fixed hitbox**.
 > is the checklist. If something errors, copy the red `[Breakpoint]` or
 > `MOVEMENT ERROR` lines from the Output window.
 
-> **The tech engine (default).** Movement, catching and defense now follow
-> [`docs/tech-spec.md`](docs/tech-spec.md): a momentum core (Movement/TechCore,
-> every number in Config/Tech) with Burst, cuts, jukes, plant stops, slides,
-> slide hops, air dodges, wavedash, reverse snap, burst dive, layouts, tech
-> rolls and Sky; timed catching with Perfect Catch and Hot Hands; Mirror Step
-> and the contact rule; anime-style poses and effects; four **abilities**
-> charged by skill; bots on the same engine. Still to build from the spec:
-> its disc flight model and throw controls (snap release, edge and angle on
-> the mouse, fake switch), the 1.2-stud pivot, hand block / bid, fouls and
-> per-tech training drills. **Menu → Settings → New movement core** off
-> brings back the classic engine. Nothing tells you what chains off what:
-> that is for players to find.
+> **The tech engine (default).** Movement, catching, throwing and defense
+> follow [`docs/tech-spec.md`](docs/tech-spec.md): a momentum core
+> (Movement/TechCore, every number in Config/Tech) with Burst, cuts, jukes,
+> plant stops, slides, slide hops, air dodges, wavedash, reverse snap, burst
+> dive, layouts, tech rolls and Sky; timed catching with Perfect Catch and
+> Hot Hands; snap releases, button throw types, pump fakes and the fake
+> switch; the 1.2-stud pivot and lunge; hand blocks, point blocks, bids,
+> Mirror Step, the contact rule and fouls. On top of the spec, **world-class
+> tech**: Flip Reset (feet on a disc in flight store a dodge), Pinch (a
+> throw on the frame you land), Stall, Zap Dash and Wall Kick, with
+> signature moves built from them. Anime-style poses and ForgeGUI effects
+> and sounds, four **abilities** charged by skill, bots on the same engine,
+> and an original soundtrack. **Menu → Settings → New movement core** off
+> brings back the classic engine. Nothing tells you what chains off what.
 
 ---
 
@@ -86,14 +88,17 @@ Everything sits under the left hand around WASD (the tech-spec layout):
 | Cut (with a new direction) · Plant Stop (no direction) | Q | RB |
 | Layout / Dive (aims with the camera) | E | X |
 | Slide (hold; in the air: Fast Fall) | C | B |
-| Catch (timed) · Throw (hold, release) | LMB | RT |
-| Fake / mark / tip | RMB | LT |
-| Overhead modifier | F (hold) | Y (hold) |
+| Catch (timed) · Backhand throw (hold, release) · Hand Block while marking | LMB | RT |
+| Forehand throw (holding the disc) · mark (hold near the holder) · tip (in the air) | RMB | LT |
+| Overhead (hold): LMB scoober, RMB hammer | F | Y |
+| Pump fake (while charging) | C | B |
 | Ability (when FLOW is full) | G | L3 |
 | Menu · free mouse · celebrate | M · LeftAlt · B | Select · — · D-pad down |
 
 Catching is a press: hit LMB as the ring on the disc closes on your hands
-(gold = Perfect). Pick your ability in **Menu → Settings → Ability**; FLOW
+(gold = Perfect). Throws charge over a second: release in the pale zone,
+on the gold line for a Snap Release. Holding the disc, WASD steps around
+your pivot; double-tap to lunge. Pick your ability in **Menu → Settings → Ability**; FLOW
 fills from Perfect techs, catches, blocks and goals. The tech debug HUD
 (speed, state, Burst, the last timing in ms) is on in Studio.
 
@@ -174,7 +179,11 @@ lune run tests/flight_table.luau                            # throw table
 * Bots don't tip or chase signature moves.
 * Contact fouls aren't called yet (the contact rule only costs speed).
 * Everything in `docs/TESTING.md` §0 and §2 needs a first run in Studio.
-* From the tech spec: the disc flight model (5), throws 23–27 and 29 (the
-  current throw system stays), Hand Block / Bid / Force (30–31, 33), one
-  training drill per tech (9), and the network pass (10). Bots hold the
-  disc on the classic engine.
+* From the tech spec: its own disc flight model (5; the existing
+  lift/drag/spin model stays, already curving by edge and fading on low
+  spin), edge and launch angle on the mouse while charging (26; Z/X bank and
+  the camera pitch still do it), run-through aim cones (29), a separate
+  drill per tech (9; Training shows every press on the timing bar instead),
+  and a full network pass (10). Bots hold the disc on the classic engine.
+* Two crowd sound effects failed at ForgeGUI (a worker restart); the crowd
+  loop slots stay empty.

@@ -16,7 +16,7 @@ Run everything with `scripts/check.sh` (the header lists tool versions).
 | Lint | Selene 0.27 (Luau std + Roblox globals) | 0 errors, 0 warnings |
 | Types against the **real Roblox API** (catches invented properties and methods) | luau-lsp 1.70 `analyze`, every file `--!strict` | 0 errors |
 | Cross-module calls (`services.X.y`, `controllers.X.y`) exist | `scripts/audit_refs.py` | 0 missing |
-| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **230 passed** |
+| Unit + integration tests | Lune 0.9 (`lune run tests/run.luau`) | **236 passed** |
 | Place builds with the right structure and StarterPlayer settings | Rojo 7.4 + `tests/place_check.luau` | OK |
 
 What the tests cover (`lune run tests/run.luau <spec>` runs one):
@@ -96,6 +96,11 @@ the last timed press in ms ("Cut: 34 ms early").
 - [ ] Ability: set it in Settings, fill FLOW (bar above Burst), press G. Flash Step blinks (not through walls); The Zone / Sky Walk / Overdrive glow on your character for everyone.
 - [ ] Anime effects: speed lines above run speed, afterimages on dashes and cuts, slash arcs; Settings → Anime effects turns them off.
 - [ ] Bots: cut, dodge, slide, lay out and tech-roll on the new engine; they still pivot and throw as before.
+- [ ] Throwing: LMB backhand / RMB forehand, F + either for overheads; the meter's pale zone and gold Snap line; C mid-charge fakes; the other throw within 150 ms is a Fake Switch.
+- [ ] Holding the disc: WASD steps the free foot (1.2 studs), a double-tap lunges; no travel snap-backs.
+- [ ] Marking: LMB swings a hand block (a Point Block right on the release). A defender's untimed dive at the disc knocks it down; overlapping the receiver gives it back (foul).
+- [ ] World-class: land your feet on a disc in flight (Flip Reset, stored dodge); a throw on the landing frame (Pinch, much faster); Dive right after a dodge (Stall); Cut right after a wavedash (Zap Dash); jump just as you touch a wall in the air (Wall Kick). Each shows on the timing bar in Training.
+- [ ] Music: main theme in warm-up, the chill track in Training, the match track in a point, the fanfare at match end; Settings → Music volume.
 - [ ] Settings → New movement core off brings back the classic engine at once.
 
 ### 0b. Art (Config/Art, ForgeGUI images on Roblox)
