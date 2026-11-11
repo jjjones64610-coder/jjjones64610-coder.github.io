@@ -132,6 +132,7 @@ local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
 local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
 local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
+local lastTTL: number? = nil -- time to land last frame (airborne)
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -206,6 +207,16 @@ end
 -- The tech core's state (debug HUD, later tech).
 function MovementController.techState(): TechCore.State
 	return tech
+end
+
+-- A throw is leaving your hand: is it a Pinch (within PINCH_WINDOW of your
+-- feet touching down)? Returns its quality or nil; the core records the
+-- timing and the event.
+function MovementController.pinch(): string?
+	if not engineOn then
+		return nil
+	end
+	return TechCore.pinch(tech, lastTTL)
 end
 
 local function refreshFilter(force: boolean?)
@@ -841,11 +852,25 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 
 	-- walls: along the velocity, at root and knee height
 	local wallNormal: Vector3? = nil
+	-- walls: along the velocity (and, in the air, along the stick too, for
+	-- the Wall Kick), at root and knee height
 	local flatVel = VecMath.flat(tech.vel)
+	local probes: { Vector3 } = {}
 	if flatVel.Magnitude > 0.5 then
-		local ahead = flatVel.Unit * TECH_WALL_RAY
+		table.insert(probes, flatVel.Unit)
+	end
+	if not tech.grounded then
+		local stick = VecMath.flat(controllers.InputController.moveVector())
+		if stick.Magnitude > 0.3 then
+			table.insert(probes, stick.Unit)
+		end
+	end
+	for _, dir in probes do
+		if wallNormal then
+			break
+		end
 		for _, origin in { pos, pos - Vector3.new(0, standHeight * 0.6, 0) } do
-			local w = workspace:Raycast(origin, ahead, rayParams)
+			local w = workspace:Raycast(origin, dir * TECH_WALL_RAY, rayParams)
 			if w and math.abs(w.Normal.Y) < 0.7 then
 				wallNormal = VecMath.flatUnit(w.Normal)
 				break
@@ -853,8 +878,24 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		end
 	end
 
+	-- Flip Reset: falling onto a disc in flight with your feet
+	if not tech.grounded and vy <= 0 and tech.storedFlips == 0 then
+		local feet = pos - Vector3.new(0, standHeight, 0)
+		for _, f in controllers.DiscRenderer.folders() do
+			local id = f:GetAttribute("Id")
+			if type(id) == "string" and f:GetAttribute("Mode") == "Flight" then
+				local dp = controllers.DiscRenderer.positionOf(id)
+				if dp and (dp - feet).Magnitude <= TechConfig.FLIP_RESET_RADIUS and dp.Y <= feet.Y + 1.2 then
+					TechCore.footContact(tech)
+					break
+				end
+			end
+		end
+	end
+
 	-- time to land (wavedash), from a long ray when airborne
 	local ttl: number? = nil
+	lastTTL = nil
 	if groundY == nil then
 		local far = workspace:Raycast(pos, Vector3.new(0, -120, 0), rayParams)
 		if far then
@@ -862,6 +903,7 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 			lastAirHeight = height
 			local g = TechConfig.PLAYER_GRAVITY * TechConfig.FALL_GRAVITY_MULT
 			ttl = (vy + math.sqrt(math.max(vy * vy + 2 * g * height, 0))) / g
+			lastTTL = ttl
 		end
 	end
 

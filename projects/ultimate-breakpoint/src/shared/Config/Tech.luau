@@ -125,6 +125,26 @@ Tech.REVERSE_SNAP_PERFECT = { 80, 110 } -- ms
 Tech.BURST_DIVE_SPEED = 28
 Tech.BURST_DIVE_SPEED_PERFECT = 32
 
+-- world-class tech (TechCore header)
+Tech.STALL_WINDOW = 30 -- ms after the dodge
+Tech.STALL_PERFECT = 15
+Tech.STALL_HANG = 0.25
+Tech.ZAP_WINDOW = 60 -- ms after the wavedash lands
+Tech.ZAP_PERFECT = 25
+Tech.ZAP_BURST = 8
+Tech.ZAP_BURST_PERFECT = 11
+Tech.WALL_KICK_WINDOW = 80 -- ms after touching the wall
+Tech.WALL_KICK_PERFECT = 30
+Tech.WALL_KICK_PUSH = 10
+Tech.WALL_KICK_PERFECT_BONUS = 4
+Tech.WALL_KICK_KEEP = 0.9
+Tech.WALL_KICK_UP = 30
+Tech.FLIP_RESET_RADIUS = 1.8 -- studs from the soles to the disc
+Tech.PINCH_WINDOW = 40 -- ms either side of touchdown
+Tech.PINCH_PERFECT = 15
+Tech.PINCH_SPEED = 1.3 -- disc speed x this
+Tech.PINCH_SPEED_PERFECT = 1.4
+
 -- layout, tech roll, sky
 Tech.LAYOUT_MIN_SPEED = 15
 Tech.LAYOUT_BOOST = 8

@@ -846,6 +846,115 @@ test("mirror step: an armed cut is Perfect + 2; biting on a juke costs 30 %", fu
 	expect(near(TechCore.flatSpeed(w.s), sp * (1 - Config.JUKED_LOSS), 0.01), "juked")
 end)
 
+test("flip reset: feet on the disc store a dodge with no time limit, kept until landing", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	w.held.Jump = true
+	tap(w, "Jump")
+	worldRun(w, 0.15)
+	w.move = RIGHT
+	tap(w, "Jump")
+	worldRun(w, 0.05) -- the normal dodge is spent
+	expect(not w.s.dodgeAvailable, "spent")
+	-- well past the 1.25 s window would be impossible to reach here, so
+	-- check the store survives time instead: touch, wait, then dodge
+	expect(TechCore.footContact(w.s), "flip reset")
+	expect(not TechCore.footContact(w.s), "one in store at a time")
+	worldRun(w, 0.1)
+	tap(w, "Jump")
+	worldStep(w)
+	expect(#events(w.s, "ResetFlip") == 1 and #events(w.s, "AirDodge") == 2, "spent the stored flip")
+	expect(TechCore.footContact(w.s), "a second reset in one airtime")
+	worldUntil(w, function(x)
+		return x.s.grounded
+	end, 3)
+	worldStep(w)
+	expect(w.s.storedFlips == 0, "landing clears the store")
+end)
+
+test("stall: Dive within 30 ms of a dodge cancels it into a hang and gives it back", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	tap(w, "Jump")
+	worldRun(w, 0.15)
+	w.move = RIGHT
+	local before = Vector3.new(w.s.vel.X, 0, w.s.vel.Z)
+	tap(w, "Jump")
+	worldStep(w)
+	tap(w, "Dive")
+	worldStep(w)
+	local e = events(w.s, "Stall")
+	expect(#e == 1, "stalled")
+	expect(w.s.dodgeAvailable and w.s.state ~= "Diving", "dodge back, no layout")
+	expect((Vector3.new(w.s.vel.X, 0, w.s.vel.Z) - before).Magnitude < 1, "the dodge's burst is cancelled")
+	local y0 = w.y
+	worldRun(w, 0.2)
+	expect(math.abs(w.y - y0) < 0.05, "hangs")
+	local late = newWorld(Config.RUN_TOP_SPEED)
+	tap(late, "Jump")
+	worldRun(late, 0.15)
+	late.move = RIGHT
+	tap(late, "Jump")
+	worldRun(late, 0.06)
+	tap(late, "Dive")
+	worldStep(late)
+	expect(#events(late.s, "Stall") == 0, "too late: no stall")
+end)
+
+test("zap dash: a Cut right out of a wavedash bursts again", function()
+	local w = newWorld(8)
+	tap(w, "Jump")
+	worldStep(w)
+	worldUntil(w, function(x)
+		return x.s.vel.Y < 0 and x.y < 0.6
+	end, 2)
+	w.move = RIGHT
+	tap(w, "Jump")
+	worldUntil(w, function(x)
+		return #events(x.s, "Wavedash") > 0
+	end, 1)
+	local before = TechCore.flatSpeed(w.s)
+	tap(w, "Cut")
+	worldStep(w)
+	local e = events(w.s, "ZapDash")
+	expect(#e == 1 and e[1].quality == "Perfect", "zap dash")
+	expect(TechCore.flatSpeed(w.s) > before + Config.ZAP_BURST, "second burst")
+end)
+
+test("wall kick: jump right after touching a wall kicks off it with the dodge back", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	tap(w, "Jump")
+	worldRun(w, 0.1)
+	w.move = RIGHT
+	tap(w, "Jump")
+	worldRun(w, 0.2) -- dodge spent
+	local wall = -FWD.Unit -- wall ahead, normal facing back at us
+	local function wallStep()
+		local s = w.s
+		TechCore.step(s, { move = w.move, held = w.held }, { grounded = false, wallNormal = wall }, TechCore.STEP)
+		w.y = math.max(0, w.y + s.vel.Y * TechCore.STEP)
+	end
+	wallStep()
+	tap(w, "Jump")
+	wallStep()
+	local e = events(w.s, "WallKick")
+	expect(#e == 1 and e[1].quality == "Perfect", "wall kick")
+	expect(w.s.vel:Dot(-FWD) > 0 and w.s.vel.Y > 20, "kicked back and up")
+	expect(w.s.dodgeAvailable, "dodge back")
+end)
+
+test("pinch: a throw within 40 ms of touchdown", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	expect(TechCore.pinch(w.s, nil) == nil, "standing for ages: no pinch")
+	tap(w, "Jump")
+	worldStep(w)
+	expect(TechCore.pinch(w.s, 0.5) == nil, "high in the air: no pinch")
+	expect(TechCore.pinch(w.s, 0.01) == "Perfect", "10 ms before landing")
+	worldUntil(w, function(x)
+		return x.s.grounded
+	end, 2)
+	worldRun(w, 0.02)
+	expect(TechCore.pinch(w.s, nil) == "Clean", "~30 ms after")
+end)
+
 test("tech fuzz: random presses and holds never break the cap or the states", function()
 	local Rng = H.require("Util/Rng")
 	local rng = Rng.new(11)
@@ -865,6 +974,9 @@ test("tech fuzz: random presses and holds never break the cap or the states", fu
 		end
 		if i % 1500 == 0 then
 			TechCore.discContact(w.s)
+		end
+		if i % 1700 == 0 then
+			TechCore.footContact(w.s)
 		end
 		worldStep(w)
 		local v = w.s.vel

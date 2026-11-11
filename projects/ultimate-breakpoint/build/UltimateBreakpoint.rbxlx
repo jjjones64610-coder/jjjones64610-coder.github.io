@@ -2109,6 +2109,12 @@ local Movement = {
 		TipReset = 220,
 		-- tech engine (Movement/TechCore)
 		PerfectCatch = 150,
+		FlipReset = 300,
+		ResetFlip = 250,
+		Stall = 220,
+		ZapDash = 240,
+		WallKick = 200,
+		Pinch = 260,
 		Cut = 100,
 		Juke = 130,
 		PlantStop = 110,
@@ -2158,6 +2164,12 @@ local Movement = {
 		Sky = "Sky",
 		Plant = "Plant",
 		PerfectCatch = "Perfect Catch",
+		FlipReset = "Flip Reset",
+		ResetFlip = "Reset Flip",
+		Stall = "Stall",
+		ZapDash = "Zap Dash",
+		WallKick = "Wall Kick",
+		Pinch = "Pinch",
 		Layout = "Layout",
 		Signature = "Signature",
 	},
@@ -2189,6 +2201,12 @@ Movement.TechCosts = {
 	-- tech engine
 	Plant = 0,
 	PerfectCatch = 0,
+	FlipReset = 0,
+	ResetFlip = 0,
+	Stall = 0,
+	ZapDash = 0,
+	WallKick = 0,
+	Pinch = 0,
 	Cut = 0,
 	Juke = 0,
 	PlantStop = 0,
@@ -2225,6 +2243,12 @@ Movement.TechCooldowns = {
 	-- tech engine
 	Plant = 0,
 	PerfectCatch = 0,
+	FlipReset = 0,
+	ResetFlip = 0,
+	Stall = 0,
+	ZapDash = 0,
+	WallKick = 0,
+	Pinch = 0,
 	Cut = Tech.CUT_COOLDOWN,
 	Juke = Tech.CUT_COOLDOWN,
 	PlantStop = 0,
@@ -2565,6 +2589,42 @@ export type Def = {
 local Signatures = {}
 
 Signatures.List = {
+	-- world-class (tech engine)
+	DoubleFlip = {
+		id = "DoubleFlip",
+		name = "DOUBLE FLIP RESET",
+		points = 3500,
+		how = "Land your feet on a disc in the air, spend the reset, and land on a disc again before touching down.",
+		tier = 3,
+	},
+	FlipCatch = {
+		id = "FlipCatch",
+		name = "FLIP RESET GRAB",
+		points = 3000,
+		how = "Flip Reset off a disc, spend the stored dodge, then catch a disc before you land.",
+		tier = 3,
+	},
+	WallFlip = {
+		id = "WallFlip",
+		name = "WALL FLIP RESET",
+		points = 2800,
+		how = "Wall Kick, then Flip Reset off a disc in the same airtime.",
+		tier = 3,
+	},
+	ZapChain = {
+		id = "ZapChain",
+		name = "ZAP CHAIN",
+		points = 1800,
+		how = "Wavedash, Zap Dash, then a Perfect Cut, each right after the last.",
+		tier = 2,
+	},
+	StallGrab = {
+		id = "StallGrab",
+		name = "STALL GRAB",
+		points = 1500,
+		how = "Stall in the air and catch the disc before you land.",
+		tier = 2,
+	},
 	DoubleTip = {
 		id = "DoubleTip",
 		name = "DOUBLE TIP",
@@ -2632,6 +2692,9 @@ Signatures.List = {
 
 -- Priority when one event completes several.
 Signatures.Order = {
+	"DoubleFlip",
+	"FlipCatch",
+	"WallFlip",
 	"DoubleTip",
 	"WallTip",
 	"ResetGrab",
@@ -2639,6 +2702,8 @@ Signatures.Order = {
 	"DoubleLayout",
 	"ResetLoop",
 	"Greatest",
+	"StallGrab",
+	"ZapChain",
 	"Skyball",
 	"TipReset",
 }
@@ -2648,6 +2713,7 @@ Signatures.SkyHeight = 5 -- feet above the ground for a Skyball
 Signatures.LoopStep = 0.7 -- Reset Loop: each step within this of the previous
 Signatures.LoopGap = 2.0 -- ... and the second loop within this of the first
 Signatures.SelfDWindow = 2.5 -- Self-D: the catch within this of the defender's tip
+Signatures.ZapStep = 0.7 -- Zap Chain: each step within this of the previous
 Signatures.LayoutWindow = 2.5 -- Double Layout: pop-up -> air layout -> catch within this
 
 return Signatures
@@ -2814,6 +2880,26 @@ Tech.REVERSE_SNAP_WINDOW = { 60, 140 } -- ms
 Tech.REVERSE_SNAP_PERFECT = { 80, 110 } -- ms
 Tech.BURST_DIVE_SPEED = 28
 Tech.BURST_DIVE_SPEED_PERFECT = 32
+
+-- world-class tech (TechCore header)
+Tech.STALL_WINDOW = 30 -- ms after the dodge
+Tech.STALL_PERFECT = 15
+Tech.STALL_HANG = 0.25
+Tech.ZAP_WINDOW = 60 -- ms after the wavedash lands
+Tech.ZAP_PERFECT = 25
+Tech.ZAP_BURST = 8
+Tech.ZAP_BURST_PERFECT = 11
+Tech.WALL_KICK_WINDOW = 80 -- ms after touching the wall
+Tech.WALL_KICK_PERFECT = 30
+Tech.WALL_KICK_PUSH = 10
+Tech.WALL_KICK_PERFECT_BONUS = 4
+Tech.WALL_KICK_KEEP = 0.9
+Tech.WALL_KICK_UP = 30
+Tech.FLIP_RESET_RADIUS = 1.8 -- studs from the soles to the disc
+Tech.PINCH_WINDOW = 40 -- ms either side of touchdown
+Tech.PINCH_PERFECT = 15
+Tech.PINCH_SPEED = 1.3 -- disc speed x this
+Tech.PINCH_SPEED_PERFECT = 1.4
 
 -- layout, tech roll, sky
 Tech.LAYOUT_MIN_SPEED = 15
@@ -3446,6 +3532,7 @@ return Solver
 local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
+local TechConfig = require(Shared.Config.Tech)
 local DiscPhysics = require(script.Parent.DiscPhysics)
 
 local T = DiscConfig.Throw
@@ -3466,6 +3553,7 @@ export type Params = {
 	pivot: Vector3?, -- planted pivot foot P (root height); nil = release from the root
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
+	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -3613,6 +3701,7 @@ function ThrowModel.sanitize(raw: any): Params?
 		pivot = finiteVector(raw.pivot),
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
+		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -3712,6 +3801,12 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 	local speed = (T.MinSpeed + (T.MaxSpeed - T.MinSpeed) * (power ^ T.PowerCurve)) * info.SpeedMult
 	if quality == "Perfect" then
 		speed *= T.PerfectSpeedMult
+	end
+	-- the Pinch: squeezed out against the ground as the feet land
+	if p.pinch == "Perfect" then
+		speed *= TechConfig.PINCH_SPEED_PERFECT
+	elseif p.pinch == "Clean" then
+		speed *= TechConfig.PINCH_SPEED
 	end
 
 	local forward, right = ThrowModel.basis(p.yaw)
@@ -6157,6 +6252,20 @@ return MovementSim
 	                       0.25 s keeping 50 % (Perfect 40 ms: 75 %)
 	  Sky                  standing or jogging, hold Jump: release after
 	                       0.2 s for a charged leap up to 1.6x (1.7x Perfect)
+
+	WORLD-CLASS TECH (not in the spec; the gap between good and great)
+	  Flip Reset           your FEET touch a disc in flight (footContact()):
+	                       a stored dodge with no time limit, kept until you
+	                       land; spending it is a ResetFlip
+	  Stall                Dive within 30 ms of an air dodge cancels it into
+	                       a 0.25 s hang and gives the dodge back (once per
+	                       airtime)
+	  Zap Dash             Cut within 60 ms of a wavedash landing: a second
+	                       burst with no plant (Perfect within 25 ms)
+	  Wall Kick            Jump within 80 ms of touching a wall in the air:
+	                       kick off it with your dodge back (Perfect 30 ms)
+	  Pinch                a throw released within 40 ms of your feet
+	                       touching down (pinch(), ThrowController)
 ]]
 
 local Config = require(script.Parent.Parent.Config.Tech)
@@ -6277,6 +6386,7 @@ export type State = {
 		burstDive: boolean,
 		speed: number,
 		resolved: boolean,
+		preVel: Vector3, -- velocity before the dodge (a Stall restores it)
 	}?,
 	wavedash: { dir: Vector3, perfect: boolean }?,
 	stumbleOnLand: boolean,
@@ -6298,6 +6408,17 @@ export type State = {
 
 	-- defense
 	mirrorArmed: boolean, -- the next cut mirrors your matchup's (Mirror Step)
+
+	-- world-class tech
+	storedFlips: number, -- Flip Reset dodges in store (kept until landing)
+	flipResetsAir: number, -- Flip Resets this airtime
+	stallUsed: boolean,
+	stallUntil: number,
+	wavedashAt: number, -- landing time of the last wavedash (Zap Dash window)
+	wallTouchAt: number?, -- first contact with the current wall (airborne)
+	wallNormal: Vector3?,
+	wallLostAt: number,
+	wallKickUsed: boolean,
 }
 
 local STEP = 1 / Config.PHYSICS_RATE
@@ -6406,6 +6527,16 @@ function TechCore.new(now: number?): State
 		overdriveUntil = -math.huge,
 
 		mirrorArmed = false,
+
+		storedFlips = 0,
+		flipResetsAir = 0,
+		stallUsed = false,
+		stallUntil = -math.huge,
+		wavedashAt = -math.huge,
+		wallTouchAt = nil,
+		wallNormal = nil,
+		wallLostAt = -math.huge,
+		wallKickUsed = false,
 	}
 end
 
@@ -6718,7 +6849,22 @@ end
 -- Cut on the ground: a plant (the redirect lands when it ends), or a Plant
 -- Stop with no stick. Returns whether the press was used.
 local function tryCut(s: State, input: Input, at: number): boolean
-	if not RUNNING[s.state] or s.plant or s.plantStop or s.now < s.cutReadyAt or s.holding then
+	if not RUNNING[s.state] or s.plant or s.plantStop or s.holding then
+		return false
+	end
+	-- Zap Dash: a Cut right out of a wavedash bursts again, no plant
+	local zapMs = (at - s.wavedashAt) * 1000
+	local zapDir = stickDir(input)
+	if zapDir and zapMs >= -Config.INPUT_BUFFER and zapMs <= Config.ZAP_WINDOW then
+		local quality = noteRange(s, "Zap Dash", math.max(zapMs, 0), 0, Config.ZAP_WINDOW, 0, Config.ZAP_PERFECT)
+		local boost = if quality == "Perfect" then Config.ZAP_BURST_PERFECT else Config.ZAP_BURST
+		setFlat(s, flatOf(s.vel) + zapDir * boost)
+		s.wavedashAt = -math.huge
+		s.cutReadyAt = s.now + Config.CUT_COOLDOWN
+		emit(s, "ZapDash", quality, zapDir)
+		return true
+	end
+	if s.now < s.cutReadyAt then
 		return false
 	end
 	local speed = flatOf(s.vel).Magnitude
@@ -6854,12 +7000,18 @@ local function tryAirDodge(s: State, input: Input, env: Env): boolean
 	end
 	local skyWalk = s.now < s.skyWalkUntil and s.extraDodgesLeft > 0
 	if not s.dodgeAvailable or s.now - s.airborneSince > Config.AIR_DODGE_WINDOW then
-		if not skyWalk then
+		if s.storedFlips > 0 then
+			-- a Flip Reset: the stored dodge has no time limit
+			s.storedFlips -= 1
+			s.dodgeAvailable = true
+			emit(s, "ResetFlip", "Perfect", stickDir(input) or Vector3.yAxis, tostring(s.flipResetsAir))
+		elseif skyWalk then
+			-- Sky Walk: an extra dodge
+			s.extraDodgesLeft -= 1
+			s.dodgeAvailable = true
+		else
 			return false
 		end
-		-- Sky Walk: an extra dodge
-		s.extraDodgesLeft -= 1
-		s.dodgeAvailable = true
 	end
 	local dir = stickDir(input)
 	local ttl = env.timeToLand
@@ -6882,6 +7034,7 @@ local function tryAirDodge(s: State, input: Input, env: Env): boolean
 		and (s.now - s.jumpAt) * 1000 <= Config.BURST_DIVE_DODGE_WINDOW
 		and fwdAngle >= Config.BURST_DIVE_ANGLE[1]
 		and fwdAngle <= Config.BURST_DIVE_ANGLE[2]
+	local preVel = s.vel
 	local nv = flat + dir * Config.AIR_DODGE_BURST
 	s.vel = Vector3.new(nv.X, 0, nv.Z)
 	s.dodge = {
@@ -6891,6 +7044,7 @@ local function tryAirDodge(s: State, input: Input, env: Env): boolean
 		burstDive = burstDive,
 		speed = nv.Magnitude,
 		resolved = false,
+		preVel = preVel,
 	}
 	TechCore.enter(s, "AirDodging", true)
 	emit(s, "AirDodge", "Clean", dir)
@@ -6998,6 +7152,58 @@ local function tryTechRoll(s: State, at: number): boolean
 	return true
 end
 
+-- Jump in the air right after touching a wall: the Wall Kick.
+local function tryWallKick(s: State): boolean
+	local at, n = s.wallTouchAt, s.wallNormal
+	if at == nil or n == nil or s.wallKickUsed or s.state == "Diving" then
+		return false
+	end
+	local ms = (s.now - at) * 1000
+	if ms > Config.WALL_KICK_WINDOW then
+		return false
+	end
+	local quality = noteRange(s, "Wall Kick", ms, 0, Config.WALL_KICK_WINDOW, 0, Config.WALL_KICK_PERFECT)
+	local flat = flatOf(s.vel)
+	local into = flat:Dot(n)
+	local reflected = flat - n * (2 * math.min(into, 0))
+	local push = Config.WALL_KICK_PUSH + (if quality == "Perfect" then Config.WALL_KICK_PERFECT_BONUS else 0)
+	local nv = reflected * Config.WALL_KICK_KEEP + n * push
+	s.vel = Vector3.new(nv.X, Config.WALL_KICK_UP, nv.Z)
+	s.heading = unitOr(nv, s.heading)
+	s.takeoffSpeed = math.max(s.takeoffSpeed, nv.Magnitude)
+	s.wallKickUsed = true
+	s.dodgeAvailable = true
+	s.airborneSince = s.now
+	s.dodge = nil
+	TechCore.enter(s, "Airborne", true)
+	emit(s, "WallKick", quality, n)
+	return true
+end
+
+-- Dive right after an air dodge: the Stall cancels the dodge into a hang and
+-- gives it back. Returns whether the press was used.
+local function tryStall(s: State): boolean
+	local d = s.dodge
+	if s.state ~= "AirDodging" or not d or s.stallUsed then
+		return false
+	end
+	local ms = (s.now - d.startAt) * 1000
+	if ms > Config.STALL_WINDOW then
+		return false
+	end
+	local quality = noteRange(s, "Stall", ms, 0, Config.STALL_WINDOW, 0, Config.STALL_PERFECT)
+	local pre = flatOf(d.preVel)
+	s.vel = Vector3.new(pre.X, 0, pre.Z)
+	s.stallUsed = true
+	s.stallUntil = s.now + Config.STALL_HANG
+	s.dodgeAvailable = true
+	s.airborneSince = s.now
+	s.dodge = nil
+	TechCore.enter(s, "Airborne", true)
+	emit(s, "Stall", quality, Vector3.yAxis)
+	return true
+end
+
 -- A Jump press on the ground: a Slide Hop from a slide, a Sky charge when
 -- slow, or a jump.
 local function tryJump(s: State, input: Input, env: Env, at: number): boolean
@@ -7005,7 +7211,7 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 		return tryTechRoll(s, at)
 	end
 	if AIR[s.state] then
-		return tryAirDodge(s, input, env)
+		return tryWallKick(s) or tryAirDodge(s, input, env)
 	end
 	if s.plant or s.plantStop or s.state == "Recovering" then
 		return false
@@ -7123,6 +7329,38 @@ function TechCore.discContact(s: State): boolean
 	return true
 end
 
+-- Your FEET touched a disc in flight while airborne: the Flip Reset. Stores
+-- a dodge with no time limit (one in store at a time; kept until landing).
+function TechCore.footContact(s: State): boolean
+	if s.grounded or s.storedFlips > 0 or s.state == "Diving" then
+		return false
+	end
+	s.storedFlips = 1
+	s.flipResetsAir += 1
+	emit(s, "FlipReset", "Perfect", Vector3.yAxis, tostring(s.flipResetsAir))
+	return true
+end
+
+-- A throw at this moment: is it a Pinch (released within PINCH_WINDOW ms of
+-- the feet touching down)? `ttl` is the time to land when airborne. Returns
+-- the quality ("Perfect" / "Clean") or nil, and records the timing.
+function TechCore.pinch(s: State, ttl: number?): string?
+	local ms: number
+	if s.grounded then
+		ms = (s.now - s.landedAt) * 1000
+	elseif ttl then
+		ms = -ttl * 1000
+	else
+		return nil
+	end
+	if math.abs(ms) > Config.PINCH_WINDOW then
+		return nil
+	end
+	local timing = TechCore.noteTiming(s, "Pinch", ms, Config.PINCH_WINDOW, Config.PINCH_PERFECT)
+	emit(s, "Pinch", timing.quality, s.heading)
+	return timing.quality
+end
+
 -- How much extra catch reach the body has right now (Perfect Sky hands up).
 function TechCore.reachBonus(s: State): number
 	if not s.grounded and s.now < s.skyPerfectUntil then
@@ -7154,7 +7392,7 @@ local function tryPresses(s: State, input: Input, env: Env)
 		return tryJump(s, input, env, at)
 	end)
 	attempt("Dive", function()
-		return tryLayout(s, input)
+		return tryStall(s) or tryLayout(s, input)
 	end)
 	attempt("Slide", function(at)
 		if AIR[s.state] then
@@ -7178,6 +7416,12 @@ local function onLand(s: State, input: Input)
 	s.extraDodgesLeft = s.extraDodges
 	s.skyPerfectUntil = -math.huge
 	s.dodge = nil
+	s.storedFlips = 0
+	s.flipResetsAir = 0
+	s.stallUsed = false
+	s.stallUntil = -math.huge
+	s.wallKickUsed = false
+	s.wallTouchAt = nil
 
 	if s.state == "Diving" then
 		s.downedUntil = s.now + Config.LAYOUT_DOWN_TIME
@@ -7192,6 +7436,7 @@ local function onLand(s: State, input: Input)
 		s.state = baseState(s)
 		s.stateSince = s.now
 		setFlat(s, flat + wd.dir * boost)
+		s.wavedashAt = s.now
 		emit(s, "Wavedash", if wd.perfect then "Perfect" else "Clean", wd.dir)
 		return
 	end
@@ -7418,6 +7663,18 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	end
 	s.slidePrimed = (not s.grounded) and isHeld(input, "Slide")
 
+	-- the wall you're touching in the air (Wall Kick window)
+	if not s.grounded and env.wallNormal then
+		if s.wallTouchAt == nil then
+			s.wallTouchAt = s.now
+		end
+		s.wallNormal = env.wallNormal
+		s.wallLostAt = s.now
+	elseif s.wallTouchAt and s.now - s.wallLostAt > 0.15 then
+		s.wallTouchAt = nil
+		s.wallNormal = nil
+	end
+
 	tryPresses(s, input, env)
 
 	-- timers
@@ -7497,8 +7754,8 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 
 	-- vertical
 	local vy = s.vel.Y
-	if s.grounded or s.state == "AirDodging" then
-		vy = 0 -- on the ground, or the dodge's hang
+	if s.grounded or s.state == "AirDodging" or s.now < s.stallUntil then
+		vy = 0 -- on the ground, the dodge's hang, or a Stall
 	else
 		local g = Config.PLAYER_GRAVITY * (if vy < 0 then Config.FALL_GRAVITY_MULT else 1)
 		if isHeld(input, "Slide") and s.state ~= "Diving" then
@@ -10156,6 +10413,10 @@ type Air = {
 	tipResetPaid: boolean,
 	popAt: number?, -- a Perfect recovery pop-up started this airtime
 	popLayout: boolean, -- ... and an air layout followed it
+	flipResets: number, -- Flip Resets this airtime
+	resetFlipUsed: boolean, -- a stored flip was spent
+	wallFlipPaid: boolean,
+	stalled: boolean,
 }
 
 export type Tracker = {
@@ -10167,6 +10428,9 @@ export type Tracker = {
 	loopAt: number,
 	loops: { number }, -- completion times of recent loops
 	defenderTips: { [string]: number }, -- discId -> time of this player's defensive tip
+	-- Zap Chain: wavedash -> zap dash -> Perfect cut
+	zapStage: number,
+	zapAt: number,
 }
 
 local function newAir(): Air
@@ -10178,6 +10442,10 @@ local function newAir(): Air
 		tipResetPaid = false,
 		popAt = nil,
 		popLayout = false,
+		flipResets = 0,
+		resetFlipUsed = false,
+		wallFlipPaid = false,
+		stalled = false,
 	}
 end
 
@@ -10190,6 +10458,8 @@ function Signatures.new(): Tracker
 		loopAt = -math.huge,
 		loops = {},
 		defenderTips = {},
+		zapStage = 0,
+		zapAt = -math.huge,
 	}
 end
 
@@ -10205,7 +10475,34 @@ end
 local function onTech(tr: Tracker, e: Event, out: { Hit })
 	local air = tr.air
 	local tech = e.tech
-	if tech == "WallRebound" then
+	-- world-class tech
+	if tech == "FlipReset" then
+		air.flipResets += 1
+		if air.flipResets == 2 and air.resetFlipUsed then
+			table.insert(out, hit("DoubleFlip", e.t))
+		elseif air.walls >= 1 and not air.wallFlipPaid then
+			air.wallFlipPaid = true
+			table.insert(out, hit("WallFlip", e.t))
+		end
+	elseif tech == "ResetFlip" then
+		air.resetFlipUsed = true
+	elseif tech == "Stall" then
+		air.stalled = true
+	end
+	if tech == "Wavedash" then
+		tr.zapStage, tr.zapAt = 1, e.t
+	elseif tech == "ZapDash" and tr.zapStage == 1 and e.t - tr.zapAt <= Config.ZapStep then
+		tr.zapStage, tr.zapAt = 2, e.t
+	elseif tech == "Cut" and tr.zapStage == 2 and e.t - tr.zapAt <= Config.ZapStep then
+		tr.zapStage = 0
+		if e.quality == "Perfect" then
+			table.insert(out, hit("ZapChain", e.t))
+		end
+	elseif tech ~= "Plant" and tr.zapStage > 0 and e.t - tr.zapAt > Config.ZapStep then
+		tr.zapStage = 0
+	end
+
+	if tech == "WallRebound" or tech == "WallKick" then
 		air.walls += 1
 	elseif tech == "RecoveryChain" and e.quality == "Perfect" and e.info == "Jump" then
 		-- a Perfect pop-up out of a layout: the next airtime can hold a second layout
@@ -10256,6 +10553,12 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 	local tipped = disc ~= nil and air.tipDiscs[disc :: string] == true
 	local done: { [string]: boolean } = {}
 	if e.airborne then
+		if air.flipResets >= 1 and air.resetFlipUsed then
+			done.FlipCatch = true
+		end
+		if air.stalled then
+			done.StallGrab = true
+		end
 		if air.tips >= 2 and tipped then
 			done.DoubleTip = true
 		end
@@ -10295,6 +10598,9 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 		air.walls = 0
 		air.popAt = nil
 		air.popLayout = false
+		air.flipResets = 0
+		air.resetFlipUsed = false
+		air.stalled = false
 	end
 end
 
@@ -19196,6 +19502,7 @@ export type Track = {
 	airLayouts: number,
 	airResets: number, -- accepted Tip Resets + Wall Rebounds
 	lastCatchClock: number, -- os.clock() of the last catch given to this actor
+	landedClock: number, -- os.clock() of the last touchdown the server saw
 	airTips: number,
 	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
 	lastLandAt: number, -- ... and of the last airborne -> grounded one
@@ -19322,6 +19629,7 @@ local function newTrack(id: number, pos: Vector3): Track
 		airLayouts = 0,
 		airResets = 0,
 		lastCatchClock = -math.huge,
+		landedClock = -math.huge,
 		airTips = 0,
 		lastTakeoffAt = -math.huge,
 		lastLandAt = -math.huge,
@@ -19724,6 +20032,9 @@ local function updateKinematics()
 					t.airborneSince = clock
 				end
 			end
+			if grounded and not t.wasGrounded then
+				t.landedClock = clock
+			end
 			if grounded and not t.wasGrounded and t.pendingLanding then
 				t.pendingLanding = false
 				MovementService.Landed:Fire(actor.id, t.lastGroundedPos)
@@ -19842,7 +20153,23 @@ end
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
 local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
-	if tech == "PerfectCatch" then
+	if tech == "FlipReset" then
+		-- a disc in flight was at this body's feet around ts
+		local pos = MovementService.positionAt(t.id, ts)
+		local feet = pos - Vector3.new(0, t.stand, 0)
+		local slack = TechConfig.FLIP_RESET_RADIUS + 2.5 + 20 * math.min(MovementService.ping(t.id), 0.3)
+		for _, d in services.DiscService.all() do
+			if d.mode == "Flight" then
+				for _, dt in { -0.1, 0, 0.1 } do
+					local dp = services.DiscService.positionAt(d, ts + dt)
+					if dp and (dp - feet).Magnitude <= slack then
+						return quality
+					end
+				end
+			end
+		end
+		return nil
+	elseif tech == "PerfectCatch" then
 		-- only a catch the server just gave this player
 		if os.clock() - t.lastCatchClock > 1.5 then
 			return nil
@@ -21928,6 +22255,22 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 		end
 	end
 	chargeStart[actorId] = nil
+
+	-- a Pinch needs the feet to really be touching down: a touchdown the
+	-- server saw just now, or a body about to land
+	if p.pinch and not bot then
+		local track = services.MovementService.track(actorId)
+		local ping = services.MovementService.ping(actorId)
+		local landedRecently = track ~= nil
+			and os.clock() - track.landedClock <= TechConfig.PINCH_WINDOW / 1000 + 0.15 + 2 * ping
+		local aboutToLand = track ~= nil
+			and not track.grounded
+			and track.heightAboveGround - track.stand < 2
+			and track.vel.Y < 0
+		if not (landedRecently or aboutToLand) then
+			p.pinch = nil
+		end
+	end
 
 	local launch = ThrowModel.launch(p, prep.rootPos, prep.velocity)
 	lastThrow[actorId] = clock
@@ -24380,6 +24723,10 @@ local GHOSTS: { [string]: number } = {
 	Layout = 2,
 	TechRoll = 1,
 	SlideHop = 1,
+	ResetFlip = 3,
+	ZapDash = 3,
+	WallKick = 2,
+	Stall = 1,
 	-- classic engine
 	SnapCut = 1,
 	BurstStep = 2,
@@ -24387,7 +24734,7 @@ local GHOSTS: { [string]: number } = {
 	AirRedirect = 2,
 }
 
-local SLASH: { [string]: boolean } = { Cut = true, Wavedash = true, PlantStop = true, Juke = true }
+local SLASH: { [string]: boolean } = { Cut = true, Wavedash = true, PlantStop = true, Juke = true, ZapDash = true }
 
 local lines: { Frame } = {}
 local lineGui: ScreenGui? = nil
@@ -27061,6 +27408,12 @@ local FX_ALIAS: { [string]: string } = {
 	DiscReset = "TipReset",
 	TechRoll = "RecoveryChain",
 	SlideHop = "RecoveryChain",
+	FlipReset = "TipReset",
+	ResetFlip = "AirRedirect",
+	Stall = "TipReset",
+	ZapDash = "BurstStep",
+	WallKick = "WallRebound",
+	Pinch = "Break",
 }
 
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)
@@ -28336,6 +28689,7 @@ local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
 local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
 local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
+local lastTTL: number? = nil -- time to land last frame (airborne)
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -28410,6 +28764,16 @@ end
 -- The tech core's state (debug HUD, later tech).
 function MovementController.techState(): TechCore.State
 	return tech
+end
+
+-- A throw is leaving your hand: is it a Pinch (within PINCH_WINDOW of your
+-- feet touching down)? Returns its quality or nil; the core records the
+-- timing and the event.
+function MovementController.pinch(): string?
+	if not engineOn then
+		return nil
+	end
+	return TechCore.pinch(tech, lastTTL)
 end
 
 local function refreshFilter(force: boolean?)
@@ -29045,11 +29409,25 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 
 	-- walls: along the velocity, at root and knee height
 	local wallNormal: Vector3? = nil
+	-- walls: along the velocity (and, in the air, along the stick too, for
+	-- the Wall Kick), at root and knee height
 	local flatVel = VecMath.flat(tech.vel)
+	local probes: { Vector3 } = {}
 	if flatVel.Magnitude > 0.5 then
-		local ahead = flatVel.Unit * TECH_WALL_RAY
+		table.insert(probes, flatVel.Unit)
+	end
+	if not tech.grounded then
+		local stick = VecMath.flat(controllers.InputController.moveVector())
+		if stick.Magnitude > 0.3 then
+			table.insert(probes, stick.Unit)
+		end
+	end
+	for _, dir in probes do
+		if wallNormal then
+			break
+		end
 		for _, origin in { pos, pos - Vector3.new(0, standHeight * 0.6, 0) } do
-			local w = workspace:Raycast(origin, ahead, rayParams)
+			local w = workspace:Raycast(origin, dir * TECH_WALL_RAY, rayParams)
 			if w and math.abs(w.Normal.Y) < 0.7 then
 				wallNormal = VecMath.flatUnit(w.Normal)
 				break
@@ -29057,8 +29435,24 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		end
 	end
 
+	-- Flip Reset: falling onto a disc in flight with your feet
+	if not tech.grounded and vy <= 0 and tech.storedFlips == 0 then
+		local feet = pos - Vector3.new(0, standHeight, 0)
+		for _, f in controllers.DiscRenderer.folders() do
+			local id = f:GetAttribute("Id")
+			if type(id) == "string" and f:GetAttribute("Mode") == "Flight" then
+				local dp = controllers.DiscRenderer.positionOf(id)
+				if dp and (dp - feet).Magnitude <= TechConfig.FLIP_RESET_RADIUS and dp.Y <= feet.Y + 1.2 then
+					TechCore.footContact(tech)
+					break
+				end
+			end
+		end
+	end
+
 	-- time to land (wavedash), from a long ray when airborne
 	local ttl: number? = nil
+	lastTTL = nil
 	if groundY == nil then
 		local far = workspace:Raycast(pos, Vector3.new(0, -120, 0), rayParams)
 		if far then
@@ -29066,6 +29460,7 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 			lastAirHeight = height
 			local g = TechConfig.PLAYER_GRAVITY * TechConfig.FALL_GRAVITY_MULT
 			ttl = (vy + math.sqrt(math.max(vy * vy + 2 * g * height, 0))) / g
+			lastTTL = ttl
 		end
 	end
 
@@ -30192,6 +30587,32 @@ local function compute(ctx: Ctx): Pose
 		pose.drop, pose.pitch = 1.1, -0.9
 		pose.yaw = age / 0.25 * math.pi * 2
 		pose.rate = 36
+	elseif tech == "FlipReset" and age < 0.3 then
+		-- feet planted on the disc, crouched, arms out for balance
+		pose.drop, pose.pitch = 0.9, 0.15
+		pose.RShoulder = CFrame.Angles(0.2, 0, 1.4)
+		pose.LShoulder = CFrame.Angles(0.2, 0, -1.4)
+		pose.rate = 36
+	elseif tech == "ResetFlip" and age < 0.3 then
+		-- the reset spent: a full front flip
+		pose.yaw = (age / 0.3) * math.pi * 2
+		pose.pitch = -0.6
+		pose.rate = 36
+	elseif tech == "Stall" and age < 0.25 then
+		-- frozen mid-air in a spread pose
+		pose.pitch = 0.05
+		pose.RShoulder = CFrame.Angles(0, 0, 1.55)
+		pose.LShoulder = CFrame.Angles(0, 0, -1.55)
+		pose.rate = 40
+	elseif tech == "ZapDash" and age < 0.22 then
+		pose.drop, pose.pitch = 0.6, -0.85
+		pose.RShoulder = CFrame.Angles(-1.0, 0, 0.4)
+		pose.LShoulder = CFrame.Angles(-1.0, 0, -0.4)
+		pose.rate = 38
+	elseif tech == "WallKick" and age < 0.3 then
+		pose.pitch, pose.roll = 0.35, -math.sign(dx) * 0.6
+		pose.yaw = (age / 0.3) * math.pi
+		pose.rate = 34
 	elseif tech == "DiscReset" and age < 0.25 then
 		pose.RShoulder = CFrame.Angles(2.4, 0, 1.0)
 		pose.LShoulder = CFrame.Angles(2.4, 0, -1.0)
@@ -31443,6 +31864,10 @@ local function release()
 	end
 	local hold = os.clock() - state.chargeStart
 	local params = currentParams(hold)
+	params.pinch = controllers.MovementController.pinch()
+	if params.pinch then
+		controllers.TechFeedback.play(if params.pinch == "Perfect" then "Perfect Pinch" else "Pinch", params.pinch)
+	end
 	local releaseT = now()
 	Net.event("Throw"):FireServer({
 		throwType = params.throwType,
@@ -31456,6 +31881,7 @@ local function release()
 		step = params.step,
 		pivot = params.pivot,
 		swinging = params.swinging,
+		pinch = params.pinch,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})
@@ -35459,6 +35885,13 @@ Theme.TechColors = {
 	Layout = Color3.fromRGB(255, 255, 255),
 	TechRoll = Color3.fromRGB(120, 255, 170),
 	Sky = Color3.fromRGB(180, 255, 255),
+	-- world-class tech
+	FlipReset = Color3.fromRGB(255, 70, 220),
+	ResetFlip = Color3.fromRGB(255, 70, 220),
+	Stall = Color3.fromRGB(160, 120, 255),
+	ZapDash = Color3.fromRGB(120, 255, 255),
+	WallKick = Color3.fromRGB(255, 160, 60),
+	Pinch = Color3.fromRGB(255, 60, 90),
 }
 
 -- Combo tier words (ComboEvaluator.Tiers) and their colours.

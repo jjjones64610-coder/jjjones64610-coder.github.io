@@ -31,6 +31,7 @@
 local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
+local TechConfig = require(Shared.Config.Tech)
 local DiscPhysics = require(script.Parent.DiscPhysics)
 
 local T = DiscConfig.Throw
@@ -51,6 +52,7 @@ export type Params = {
 	pivot: Vector3?, -- planted pivot foot P (root height); nil = release from the root
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
+	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -198,6 +200,7 @@ function ThrowModel.sanitize(raw: any): Params?
 		pivot = finiteVector(raw.pivot),
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
+		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -297,6 +300,12 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 	local speed = (T.MinSpeed + (T.MaxSpeed - T.MinSpeed) * (power ^ T.PowerCurve)) * info.SpeedMult
 	if quality == "Perfect" then
 		speed *= T.PerfectSpeedMult
+	end
+	-- the Pinch: squeezed out against the ground as the feet land
+	if p.pinch == "Perfect" then
+		speed *= TechConfig.PINCH_SPEED_PERFECT
+	elseif p.pinch == "Clean" then
+		speed *= TechConfig.PINCH_SPEED
 	end
 
 	local forward, right = ThrowModel.basis(p.yaw)

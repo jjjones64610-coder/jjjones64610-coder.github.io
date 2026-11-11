@@ -67,6 +67,13 @@ Theme.TechColors = {
 	Layout = Color3.fromRGB(255, 255, 255),
 	TechRoll = Color3.fromRGB(120, 255, 170),
 	Sky = Color3.fromRGB(180, 255, 255),
+	-- world-class tech
+	FlipReset = Color3.fromRGB(255, 70, 220),
+	ResetFlip = Color3.fromRGB(255, 70, 220),
+	Stall = Color3.fromRGB(160, 120, 255),
+	ZapDash = Color3.fromRGB(120, 255, 255),
+	WallKick = Color3.fromRGB(255, 160, 60),
+	Pinch = Color3.fromRGB(255, 60, 90),
 }
 
 -- Combo tier words (ComboEvaluator.Tiers) and their colours.

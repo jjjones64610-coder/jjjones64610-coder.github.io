@@ -19,6 +19,42 @@ export type Def = {
 local Signatures = {}
 
 Signatures.List = {
+	-- world-class (tech engine)
+	DoubleFlip = {
+		id = "DoubleFlip",
+		name = "DOUBLE FLIP RESET",
+		points = 3500,
+		how = "Land your feet on a disc in the air, spend the reset, and land on a disc again before touching down.",
+		tier = 3,
+	},
+	FlipCatch = {
+		id = "FlipCatch",
+		name = "FLIP RESET GRAB",
+		points = 3000,
+		how = "Flip Reset off a disc, spend the stored dodge, then catch a disc before you land.",
+		tier = 3,
+	},
+	WallFlip = {
+		id = "WallFlip",
+		name = "WALL FLIP RESET",
+		points = 2800,
+		how = "Wall Kick, then Flip Reset off a disc in the same airtime.",
+		tier = 3,
+	},
+	ZapChain = {
+		id = "ZapChain",
+		name = "ZAP CHAIN",
+		points = 1800,
+		how = "Wavedash, Zap Dash, then a Perfect Cut, each right after the last.",
+		tier = 2,
+	},
+	StallGrab = {
+		id = "StallGrab",
+		name = "STALL GRAB",
+		points = 1500,
+		how = "Stall in the air and catch the disc before you land.",
+		tier = 2,
+	},
 	DoubleTip = {
 		id = "DoubleTip",
 		name = "DOUBLE TIP",
@@ -86,6 +122,9 @@ Signatures.List = {
 
 -- Priority when one event completes several.
 Signatures.Order = {
+	"DoubleFlip",
+	"FlipCatch",
+	"WallFlip",
 	"DoubleTip",
 	"WallTip",
 	"ResetGrab",
@@ -93,6 +132,8 @@ Signatures.Order = {
 	"DoubleLayout",
 	"ResetLoop",
 	"Greatest",
+	"StallGrab",
+	"ZapChain",
 	"Skyball",
 	"TipReset",
 }
@@ -102,6 +143,7 @@ Signatures.SkyHeight = 5 -- feet above the ground for a Skyball
 Signatures.LoopStep = 0.7 -- Reset Loop: each step within this of the previous
 Signatures.LoopGap = 2.0 -- ... and the second loop within this of the first
 Signatures.SelfDWindow = 2.5 -- Self-D: the catch within this of the defender's tip
+Signatures.ZapStep = 0.7 -- Zap Chain: each step within this of the previous
 Signatures.LayoutWindow = 2.5 -- Double Layout: pop-up -> air layout -> catch within this
 
 return Signatures

@@ -47,6 +47,10 @@ local GHOSTS: { [string]: number } = {
 	Layout = 2,
 	TechRoll = 1,
 	SlideHop = 1,
+	ResetFlip = 3,
+	ZapDash = 3,
+	WallKick = 2,
+	Stall = 1,
 	-- classic engine
 	SnapCut = 1,
 	BurstStep = 2,
@@ -54,7 +58,7 @@ local GHOSTS: { [string]: number } = {
 	AirRedirect = 2,
 }
 
-local SLASH: { [string]: boolean } = { Cut = true, Wavedash = true, PlantStop = true, Juke = true }
+local SLASH: { [string]: boolean } = { Cut = true, Wavedash = true, PlantStop = true, Juke = true, ZapDash = true }
 
 local lines: { Frame } = {}
 local lineGui: ScreenGui? = nil

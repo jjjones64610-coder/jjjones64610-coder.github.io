@@ -226,6 +226,12 @@ local FX_ALIAS: { [string]: string } = {
 	DiscReset = "TipReset",
 	TechRoll = "RecoveryChain",
 	SlideHop = "RecoveryChain",
+	FlipReset = "TipReset",
+	ResetFlip = "AirRedirect",
+	Stall = "TipReset",
+	ZapDash = "BurstStep",
+	WallKick = "WallRebound",
+	Pinch = "Break",
 }
 
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)

@@ -491,6 +491,10 @@ local function release()
 	end
 	local hold = os.clock() - state.chargeStart
 	local params = currentParams(hold)
+	params.pinch = controllers.MovementController.pinch()
+	if params.pinch then
+		controllers.TechFeedback.play(if params.pinch == "Perfect" then "Perfect Pinch" else "Pinch", params.pinch)
+	end
 	local releaseT = now()
 	Net.event("Throw"):FireServer({
 		throwType = params.throwType,
@@ -504,6 +508,7 @@ local function release()
 		step = params.step,
 		pivot = params.pivot,
 		swinging = params.swinging,
+		pinch = params.pinch,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})

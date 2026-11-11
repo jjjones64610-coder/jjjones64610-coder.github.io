@@ -313,6 +313,22 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	end
 	chargeStart[actorId] = nil
 
+	-- a Pinch needs the feet to really be touching down: a touchdown the
+	-- server saw just now, or a body about to land
+	if p.pinch and not bot then
+		local track = services.MovementService.track(actorId)
+		local ping = services.MovementService.ping(actorId)
+		local landedRecently = track ~= nil
+			and os.clock() - track.landedClock <= TechConfig.PINCH_WINDOW / 1000 + 0.15 + 2 * ping
+		local aboutToLand = track ~= nil
+			and not track.grounded
+			and track.heightAboveGround - track.stand < 2
+			and track.vel.Y < 0
+		if not (landedRecently or aboutToLand) then
+			p.pinch = nil
+		end
+	end
+
 	local launch = ThrowModel.launch(p, prep.rootPos, prep.velocity)
 	lastThrow[actorId] = clock
 	local t0 = prep.t0

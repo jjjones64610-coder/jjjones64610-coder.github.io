@@ -59,6 +59,10 @@ type Air = {
 	tipResetPaid: boolean,
 	popAt: number?, -- a Perfect recovery pop-up started this airtime
 	popLayout: boolean, -- ... and an air layout followed it
+	flipResets: number, -- Flip Resets this airtime
+	resetFlipUsed: boolean, -- a stored flip was spent
+	wallFlipPaid: boolean,
+	stalled: boolean,
 }
 
 export type Tracker = {
@@ -70,6 +74,9 @@ export type Tracker = {
 	loopAt: number,
 	loops: { number }, -- completion times of recent loops
 	defenderTips: { [string]: number }, -- discId -> time of this player's defensive tip
+	-- Zap Chain: wavedash -> zap dash -> Perfect cut
+	zapStage: number,
+	zapAt: number,
 }
 
 local function newAir(): Air
@@ -81,6 +88,10 @@ local function newAir(): Air
 		tipResetPaid = false,
 		popAt = nil,
 		popLayout = false,
+		flipResets = 0,
+		resetFlipUsed = false,
+		wallFlipPaid = false,
+		stalled = false,
 	}
 end
 
@@ -93,6 +104,8 @@ function Signatures.new(): Tracker
 		loopAt = -math.huge,
 		loops = {},
 		defenderTips = {},
+		zapStage = 0,
+		zapAt = -math.huge,
 	}
 end
 
@@ -108,7 +121,34 @@ end
 local function onTech(tr: Tracker, e: Event, out: { Hit })
 	local air = tr.air
 	local tech = e.tech
-	if tech == "WallRebound" then
+	-- world-class tech
+	if tech == "FlipReset" then
+		air.flipResets += 1
+		if air.flipResets == 2 and air.resetFlipUsed then
+			table.insert(out, hit("DoubleFlip", e.t))
+		elseif air.walls >= 1 and not air.wallFlipPaid then
+			air.wallFlipPaid = true
+			table.insert(out, hit("WallFlip", e.t))
+		end
+	elseif tech == "ResetFlip" then
+		air.resetFlipUsed = true
+	elseif tech == "Stall" then
+		air.stalled = true
+	end
+	if tech == "Wavedash" then
+		tr.zapStage, tr.zapAt = 1, e.t
+	elseif tech == "ZapDash" and tr.zapStage == 1 and e.t - tr.zapAt <= Config.ZapStep then
+		tr.zapStage, tr.zapAt = 2, e.t
+	elseif tech == "Cut" and tr.zapStage == 2 and e.t - tr.zapAt <= Config.ZapStep then
+		tr.zapStage = 0
+		if e.quality == "Perfect" then
+			table.insert(out, hit("ZapChain", e.t))
+		end
+	elseif tech ~= "Plant" and tr.zapStage > 0 and e.t - tr.zapAt > Config.ZapStep then
+		tr.zapStage = 0
+	end
+
+	if tech == "WallRebound" or tech == "WallKick" then
 		air.walls += 1
 	elseif tech == "RecoveryChain" and e.quality == "Perfect" and e.info == "Jump" then
 		-- a Perfect pop-up out of a layout: the next airtime can hold a second layout
@@ -159,6 +199,12 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 	local tipped = disc ~= nil and air.tipDiscs[disc :: string] == true
 	local done: { [string]: boolean } = {}
 	if e.airborne then
+		if air.flipResets >= 1 and air.resetFlipUsed then
+			done.FlipCatch = true
+		end
+		if air.stalled then
+			done.StallGrab = true
+		end
 		if air.tips >= 2 and tipped then
 			done.DoubleTip = true
 		end
@@ -198,6 +244,9 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 		air.walls = 0
 		air.popAt = nil
 		air.popLayout = false
+		air.flipResets = 0
+		air.resetFlipUsed = false
+		air.stalled = false
 	end
 end
 

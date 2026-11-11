@@ -712,6 +712,32 @@ local function compute(ctx: Ctx): Pose
 		pose.drop, pose.pitch = 1.1, -0.9
 		pose.yaw = age / 0.25 * math.pi * 2
 		pose.rate = 36
+	elseif tech == "FlipReset" and age < 0.3 then
+		-- feet planted on the disc, crouched, arms out for balance
+		pose.drop, pose.pitch = 0.9, 0.15
+		pose.RShoulder = CFrame.Angles(0.2, 0, 1.4)
+		pose.LShoulder = CFrame.Angles(0.2, 0, -1.4)
+		pose.rate = 36
+	elseif tech == "ResetFlip" and age < 0.3 then
+		-- the reset spent: a full front flip
+		pose.yaw = (age / 0.3) * math.pi * 2
+		pose.pitch = -0.6
+		pose.rate = 36
+	elseif tech == "Stall" and age < 0.25 then
+		-- frozen mid-air in a spread pose
+		pose.pitch = 0.05
+		pose.RShoulder = CFrame.Angles(0, 0, 1.55)
+		pose.LShoulder = CFrame.Angles(0, 0, -1.55)
+		pose.rate = 40
+	elseif tech == "ZapDash" and age < 0.22 then
+		pose.drop, pose.pitch = 0.6, -0.85
+		pose.RShoulder = CFrame.Angles(-1.0, 0, 0.4)
+		pose.LShoulder = CFrame.Angles(-1.0, 0, -0.4)
+		pose.rate = 38
+	elseif tech == "WallKick" and age < 0.3 then
+		pose.pitch, pose.roll = 0.35, -math.sign(dx) * 0.6
+		pose.yaw = (age / 0.3) * math.pi
+		pose.rate = 34
 	elseif tech == "DiscReset" and age < 0.25 then
 		pose.RShoulder = CFrame.Angles(2.4, 0, 1.0)
 		pose.LShoulder = CFrame.Angles(2.4, 0, -1.0)

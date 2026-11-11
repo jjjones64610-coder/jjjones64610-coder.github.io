@@ -174,6 +174,38 @@ test("self-D: a defender's tip and then their own catch", function()
 	expect(#late == 0, "too late")
 end)
 
+test("world-class: double flip reset, flip reset grab, wall flip, zap chain, stall grab", function()
+	local dbl = play({
+		tech("Jump"),
+		tech("FlipReset", "Perfect"),
+		tech("ResetFlip", "Perfect"),
+		tech("FlipReset", "Perfect"),
+	})
+	expect(dbl[1] == "DoubleFlip", "double flip, got " .. table.concat(dbl, ","))
+	local grab = play({
+		tech("Jump"),
+		tech("FlipReset", "Perfect"),
+		tech("ResetFlip", "Perfect"),
+		{ kind = "Catch", discId = "d1", airborne = true, height = 2 },
+	})
+	expect(grab[#grab] == "FlipCatch", "flip reset grab, got " .. table.concat(grab, ","))
+	local unspent = play({
+		tech("Jump"),
+		tech("FlipReset", "Perfect"),
+		{ kind = "Catch", discId = "d1", airborne = true, height = 2 },
+	})
+	expect(not has(unspent, "FlipCatch"), "the reset must be spent")
+	local wall = play({ tech("Jump"), tech("WallKick", "Clean"), tech("FlipReset", "Perfect") })
+	expect(wall[1] == "WallFlip", "wall flip")
+	local zap = play({ tech("Wavedash", "Clean"), tech("ZapDash", "Perfect"), tech("Plant"), tech("Cut", "Perfect") })
+	expect(zap[1] == "ZapChain", "zap chain, got " .. table.concat(zap, ","))
+	local zapClean = play({ tech("Wavedash", "Clean"), tech("ZapDash", "Perfect"), tech("Cut", "Clean") })
+	expect(#zapClean == 0, "the cut must be Perfect")
+	local stall =
+		play({ tech("Jump"), tech("Stall", "Clean"), { kind = "Catch", discId = "d1", airborne = true, height = 2 } })
+	expect(stall[#stall] == "StallGrab", "stall grab")
+end)
+
 test("the greatest is passed straight through", function()
 	local hits = play({ { kind = "Greatest" } })
 	expect(hits[1] == "Greatest", "Greatest")

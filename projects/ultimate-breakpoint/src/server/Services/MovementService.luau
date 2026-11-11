@@ -120,6 +120,7 @@ export type Track = {
 	airLayouts: number,
 	airResets: number, -- accepted Tip Resets + Wall Rebounds
 	lastCatchClock: number, -- os.clock() of the last catch given to this actor
+	landedClock: number, -- os.clock() of the last touchdown the server saw
 	airTips: number,
 	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
 	lastLandAt: number, -- ... and of the last airborne -> grounded one
@@ -246,6 +247,7 @@ local function newTrack(id: number, pos: Vector3): Track
 		airLayouts = 0,
 		airResets = 0,
 		lastCatchClock = -math.huge,
+		landedClock = -math.huge,
 		airTips = 0,
 		lastTakeoffAt = -math.huge,
 		lastLandAt = -math.huge,
@@ -648,6 +650,9 @@ local function updateKinematics()
 					t.airborneSince = clock
 				end
 			end
+			if grounded and not t.wasGrounded then
+				t.landedClock = clock
+			end
 			if grounded and not t.wasGrounded and t.pendingLanding then
 				t.pendingLanding = false
 				MovementService.Landed:Fire(actor.id, t.lastGroundedPos)
@@ -766,7 +771,23 @@ end
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
 local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
-	if tech == "PerfectCatch" then
+	if tech == "FlipReset" then
+		-- a disc in flight was at this body's feet around ts
+		local pos = MovementService.positionAt(t.id, ts)
+		local feet = pos - Vector3.new(0, t.stand, 0)
+		local slack = TechConfig.FLIP_RESET_RADIUS + 2.5 + 20 * math.min(MovementService.ping(t.id), 0.3)
+		for _, d in services.DiscService.all() do
+			if d.mode == "Flight" then
+				for _, dt in { -0.1, 0, 0.1 } do
+					local dp = services.DiscService.positionAt(d, ts + dt)
+					if dp and (dp - feet).Magnitude <= slack then
+						return quality
+					end
+				end
+			end
+		end
+		return nil
+	elseif tech == "PerfectCatch" then
 		-- only a catch the server just gave this player
 		if os.clock() - t.lastCatchClock > 1.5 then
 			return nil
