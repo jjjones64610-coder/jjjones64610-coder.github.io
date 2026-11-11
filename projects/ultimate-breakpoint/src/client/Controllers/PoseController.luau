@@ -106,7 +106,7 @@ type Rig = {
 local rigs: { [Model]: Rig } = {}
 local firstSeen: { [Model]: number } = {}
 local warned: { [Model]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local localTech = { name = "", t = -math.huge, dir = Vector3.zero }
+local localTech = { name = "", t = -math.huge, dir = Vector3.zero, info = "" }
 
 -- Rest C0 per motor, and what we last wrote (to tell our offsets from a
 -- genuine new rest pose written by avatar scaling).
@@ -367,6 +367,7 @@ type Ctx = {
 	tech: string,
 	techAge: number,
 	techDir: Vector3, -- local space
+	techInfo: string,
 	reachAge: number,
 	reachDir: Vector3, -- local space
 	windup: boolean,
@@ -436,6 +437,7 @@ local function gather(rig: Rig, dt: number): Ctx
 		tech = "",
 		techAge = math.huge,
 		techDir = Vector3.zero,
+		techInfo = "",
 		reachAge = math.huge,
 		reachDir = Vector3.new(0, 0, -1),
 		windup = false,
@@ -468,6 +470,7 @@ local function gather(rig: Rig, dt: number): Ctx
 		ctx.tech = localTech.name
 		ctx.techAge = t - localTech.t
 		ctx.techDir = toLocal(root, localTech.dir)
+		ctx.techInfo = localTech.info
 		local reachAt, reachDir = controllers.CatchController.reachState()
 		ctx.reachAge = t - reachAt
 		ctx.reachDir = toLocal(root, reachDir)
@@ -512,6 +515,8 @@ local function gather(rig: Rig, dt: number): Ctx
 		ctx.techAge = t - attrNumber(m, "TechT") - REMOTE_POSE_DELAY
 		local td = m:GetAttribute("TechDir")
 		ctx.techDir = if typeof(td) == "Vector3" then toLocal(root, td) else Vector3.zero
+		local ti = m:GetAttribute("TechInfo")
+		ctx.techInfo = if type(ti) == "string" then ti else ""
 		ctx.reachAge = t - attrNumber(m, "Reach")
 		local rd = m:GetAttribute("ReachDir")
 		ctx.reachDir = if typeof(rd) == "Vector3" then toLocal(root, rd) else Vector3.new(0, 0, -1)
@@ -649,6 +654,68 @@ local function compute(ctx: Ctx): Pose
 	elseif tech == "WallRebound" and age < 0.3 then
 		pose.pitch, pose.roll = 0.2, -math.sign(dx) * 0.5
 		pose.rate = 24
+	-- tech engine: anime-style, snappy and exaggerated
+	elseif tech == "Plant" and age < 0.14 then
+		-- the plant reads the same for a real cut and a juke
+		pose.drop, pose.pitch, pose.roll = 0.5, -0.05, -math.sign(dx) * 0.6
+		pose.RShoulder = CFrame.Angles(0.3, 0, 1.15)
+		pose.LShoulder = CFrame.Angles(0.3, 0, -1.15)
+		pose.rate = 36
+	elseif (tech == "Cut" or tech == "Juke") and age < 0.2 then
+		pose.drop, pose.pitch, pose.roll = 0.25, -0.6, -math.sign(dx) * 0.35
+		pose.RShoulder = CFrame.Angles(-0.7, 0, 0.3)
+		pose.LShoulder = CFrame.Angles(1.1, 0, -0.2)
+		pose.rate = 32
+	elseif tech == "PlantStop" and age < 0.3 then
+		pose.drop, pose.pitch = 0.75, 0.45
+		pose.RShoulder = CFrame.Angles(0.6, 0, 0.9)
+		pose.LShoulder = CFrame.Angles(0.6, 0, -0.9)
+		pose.rate = 30
+	elseif tech == "BurstKick" and age < 0.25 then
+		pose.drop, pose.pitch = 0.2, -0.7
+		pose.RShoulder = CFrame.Angles(-0.9, 0, 0.35)
+		pose.LShoulder = CFrame.Angles(-0.9, 0, -0.35)
+		pose.rate = 32
+	elseif tech == "AirDodge" and age < 0.22 then
+		if ctx.techInfo == "Up" then
+			-- neutral dodge: a corkscrew with the arms tucked
+			pose.yaw = age / 0.22 * math.pi * 2
+			pose.RShoulder = CFrame.Angles(0.2, 0, 0.3)
+			pose.LShoulder = CFrame.Angles(0.2, 0, -0.3)
+		else
+			-- the dash: nearly flat, arms swept back
+			pose.pitch, pose.roll = -0.95, -math.clamp(dx, -1, 1) * 0.4
+			pose.RShoulder = CFrame.Angles(-0.8, 0, 0.6)
+			pose.LShoulder = CFrame.Angles(-0.8, 0, -0.6)
+		end
+		pose.rate = 34
+	elseif tech == "Wavedash" and age < 0.25 then
+		pose.drop, pose.pitch, pose.roll = 1.0, 0.3, -math.clamp(dx, -1, 1) * 0.4
+		pose.RShoulder = CFrame.Angles(0.4, 0, 1.3)
+		pose.LShoulder = CFrame.Angles(0.4, 0, -1.3)
+		pose.rate = 34
+	elseif tech == "ReverseSnap" and age < 0.3 then
+		pose.yaw = (1 - age / 0.3) * math.pi * 2
+		pose.pitch = -0.4
+		pose.rate = 30
+	elseif tech == "BurstDive" and age < 0.3 then
+		pose.pitch = -1.25
+		pose.RShoulder = CFrame.Angles(2.95, 0, 0.1)
+		pose.LShoulder = CFrame.Angles(2.95, 0, -0.1)
+		pose.rate = 30
+	elseif tech == "SlideHop" and age < 0.25 then
+		pose.pitch = -0.35
+		pose.RShoulder = CFrame.Angles(2.2, 0, 0.5)
+		pose.LShoulder = CFrame.Angles(2.2, 0, -0.5)
+		pose.rate = 28
+	elseif tech == "TechRoll" and age < 0.25 then
+		pose.drop, pose.pitch = 1.1, -0.9
+		pose.yaw = age / 0.25 * math.pi * 2
+		pose.rate = 36
+	elseif tech == "DiscReset" and age < 0.25 then
+		pose.RShoulder = CFrame.Angles(2.4, 0, 1.0)
+		pose.LShoulder = CFrame.Angles(2.4, 0, -1.0)
+		pose.rate = 30
 	end
 
 	local mode = ctx.mode
@@ -712,6 +779,11 @@ local function compute(ctx: Ctx): Pose
 		pose.drop, pose.pitch = 0.25, -0.1
 		pose.legs = "stance"
 		pose.stance = "high"
+	elseif airUp and tech == "Sky" and age < 1.2 then
+		-- Sky: both hands straight up, reaching over the defender
+		pose.RShoulder = CFrame.Angles(3.05, 0, 0.12)
+		pose.LShoulder = CFrame.Angles(3.05, 0, -0.12)
+		pose.pitch = 0.1
 	elseif airUp then
 		pose.RShoulder = CFrame.Angles(0.7, 0, 0.35)
 		pose.LShoulder = CFrame.Angles(0.7, 0, -0.35)
@@ -1077,10 +1149,10 @@ end
 function PoseController.Start()
 	controllers.MovementController.Tech:Connect(function(e)
 		local name = if e.tech == "FakeCommit" then "Lean" else e.tech
-		localTech = { name = name, t = now(), dir = e.dir }
+		localTech = { name = name, t = now(), dir = e.dir, info = e.info or "" }
 	end)
 	player.CharacterAdded:Connect(function()
-		localTech = { name = "", t = -math.huge, dir = Vector3.zero }
+		localTech = { name = "", t = -math.huge, dir = Vector3.zero, info = "" }
 	end)
 	RunService:BindToRenderStep("UBPose", Enum.RenderPriority.Character.Value + 1, step)
 end

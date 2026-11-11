@@ -635,6 +635,8 @@ local function tryCut(s: State, input: Input, at: number): boolean
 	}
 	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
 	s.lastCutAt = s.now
+	-- the plant everyone sees (identical for a cut and a juke)
+	emit(s, "Plant", "Clean", want)
 	return true
 end
 

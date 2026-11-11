@@ -745,7 +745,7 @@ local function techFace(v: Vector3): (Vector3?, boolean)
 end
 
 -- Techs that only get a sound (a pop for every jump would be noise).
-local QUIET_TECH = { Jump = true, AirDodge = true }
+local QUIET_TECH = { Jump = true, AirDodge = true, Plant = true }
 
 -- A tech the core reports: feedback at once, and (unless it was a miss) the
 -- combo chain and the server, like any technique.
@@ -759,6 +759,12 @@ local function techEvent(e: TechCore.TechEvent)
 		return
 	end
 	local t = now()
+	if e.tech == "Plant" then
+		-- the start of a cut or a juke: posed everywhere, scores nothing
+		table.insert(pending, { tech = e.tech, quality = e.quality, dir = e.dir, t = t })
+		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = t, dir = e.dir, chain = false })
+		return
+	end
 	queueEvent({
 		tech = e.tech,
 		quality = e.quality,

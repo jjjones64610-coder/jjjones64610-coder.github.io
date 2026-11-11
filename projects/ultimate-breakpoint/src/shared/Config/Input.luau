@@ -214,6 +214,7 @@ Input.DefaultSettings = {
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
+	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	AutoSprint = true,
 	ToggleSprint = false,

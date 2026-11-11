@@ -209,6 +209,25 @@ local function resetFlash(root: BasePart, isLocal: boolean)
 	end
 end
 
+-- Tech-engine techniques reuse the classic effect that looks the part (their
+-- own colour still comes from Theme.TechColors); AnimeFX adds the rest.
+local FX_ALIAS: { [string]: string } = {
+	Cut = "SnapCut",
+	Juke = "SnapCut",
+	PlantStop = "MomentumCancel",
+	Wavedash = "MomentumCancel",
+	BurstKick = "BurstStep",
+	BurstDive = "BurstStep",
+	LandingSlide = "PrecisionLanding",
+	Sky = "PrecisionLanding",
+	AirDodge = "AirRedirect",
+	ReverseSnap = "AirRedirect",
+	Layout = "Dive",
+	DiscReset = "TipReset",
+	TechRoll = "RecoveryChain",
+	SlideHop = "RecoveryChain",
+}
+
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
@@ -221,48 +240,50 @@ function EffectsController.tech(model: Model, tech: string, quality: string, dir
 	local feet = root.Position - Vector3.new(0, 2.9, 0)
 	local isLocal = model == player.Character
 	local perfect = quality == "Perfect"
-	if tech == "SnapCut" or tech == "SlideCut" then
+	local fx = FX_ALIAS[tech] or tech
+	if fx == "SnapCut" or fx == "SlideCut" then
 		EffectsController.dust(feet, 6)
 		streak(model, color, 0.25)
 		if perfect then
 			EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 3, 0.25)
 		end
-	elseif tech == "MomentumCancel" then
+	elseif fx == "MomentumCancel" then
 		EffectsController.dust(feet, 12)
 		skid(feet, dir)
-	elseif tech == "BurstStep" then
+	elseif fx == "BurstStep" then
 		EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 4.5, 0.3)
 		streak(model, color, 0.35)
 		if isLocal then
 			controllers.CameraController.kick(2)
 		end
-	elseif tech == "Slide" then
+	elseif fx == "Slide" then
 		EffectsController.dust(feet, 12)
-	elseif tech == "Dive" then
+	elseif fx == "Dive" then
 		streak(model, color, 0.45)
-	elseif tech == "AirRedirect" then
+	elseif fx == "AirRedirect" then
 		EffectsController.ring(root.Position, color, 3.2, 0.3, dir)
-	elseif tech == "PrecisionLanding" then
+	elseif fx == "PrecisionLanding" then
 		EffectsController.ring(feet + Vector3.new(0, 0.1, 0), if perfect then Theme.Colors.Perfect else color, 5, 0.35)
 		EffectsController.dust(feet, 6)
-	elseif tech == "WallRebound" then
+	elseif fx == "WallRebound" then
 		EffectsController.burst(root.Position - dir * 1.5, color, 16, 14)
 		resetFlash(root, isLocal)
-	elseif tech == "TipReset" then
+	elseif fx == "TipReset" then
 		resetFlash(root, isLocal)
-	elseif tech == "RecoveryChain" then
+	elseif fx == "RecoveryChain" then
 		EffectsController.burst(feet + Vector3.new(0, 1, 0), color, 10, 8)
-	elseif tech == "PivotSwing" then
+	elseif fx == "PivotSwing" then
 		EffectsController.dust(feet + dir * 1.5, 3)
 		if perfect then
 			EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 2.4, 0.2)
 		end
-	elseif tech == "Break" then
+	elseif fx == "Break" then
 		EffectsController.burst(root.Position + Vector3.new(0, 1, 0), color, 14, 10)
 	end
+	controllers.AnimeFX.tech(model, tech, quality, dir)
 	-- (FakeCommit / "Lean" deliberately has no visual: a fake must look real)
 	if isLocal then
-		if tech == "BurstStep" or tech == "Dive" then
+		if fx == "BurstStep" or fx == "Dive" then
 			controllers.AudioController.play("Burst", 0.1)
 		elseif perfect and tech ~= "Jump" and tech ~= "FakeCommit" then
 			controllers.AudioController.play("TechPerfect", 0.15)

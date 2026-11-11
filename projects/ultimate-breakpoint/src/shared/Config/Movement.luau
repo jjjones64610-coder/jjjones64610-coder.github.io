@@ -358,6 +358,7 @@ local Movement = {
 		DiscReset = "Disc Reset",
 		TechRoll = "Tech Roll",
 		Sky = "Sky",
+		Plant = "Plant",
 		Layout = "Layout",
 		Signature = "Signature",
 	},
@@ -387,6 +388,7 @@ Movement.TechCosts = {
 	Break = 0,
 	TipReset = 0,
 	-- tech engine
+	Plant = 0,
 	Cut = 0,
 	Juke = 0,
 	PlantStop = 0,
@@ -421,6 +423,7 @@ Movement.TechCooldowns = {
 	Break = 0,
 	TipReset = Movement.Reset.TipCooldown,
 	-- tech engine
+	Plant = 0,
 	Cut = Tech.CUT_COOLDOWN,
 	Juke = Tech.CUT_COOLDOWN,
 	PlantStop = 0,

@@ -1415,6 +1415,7 @@ Input.DefaultSettings = {
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
+	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	AutoSprint = true,
 	ToggleSprint = false,
@@ -2060,6 +2061,7 @@ local Movement = {
 		DiscReset = "Disc Reset",
 		TechRoll = "Tech Roll",
 		Sky = "Sky",
+		Plant = "Plant",
 		Layout = "Layout",
 		Signature = "Signature",
 	},
@@ -2089,6 +2091,7 @@ Movement.TechCosts = {
 	Break = 0,
 	TipReset = 0,
 	-- tech engine
+	Plant = 0,
 	Cut = 0,
 	Juke = 0,
 	PlantStop = 0,
@@ -2123,6 +2126,7 @@ Movement.TechCooldowns = {
 	Break = 0,
 	TipReset = Movement.Reset.TipCooldown,
 	-- tech engine
+	Plant = 0,
 	Cut = Tech.CUT_COOLDOWN,
 	Juke = Tech.CUT_COOLDOWN,
 	PlantStop = 0,
@@ -6617,6 +6621,8 @@ local function tryCut(s: State, input: Input, at: number): boolean
 	}
 	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
 	s.lastCutAt = s.now
+	-- the plant everyone sees (identical for a cut and a juke)
+	emit(s, "Plant", "Clean", want)
 	return true
 end
 
@@ -23464,6 +23470,315 @@ end)
           </Properties>
           <Item class="ModuleScript" referent="70">
             <Properties>
+              <string name="Name">AnimeFX</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	AnimeFX — anime-style flair on top of the poses (PoseController) and the
+	plain technique effects (EffectsController):
+
+	  * Speed lines: radial streaks at the screen edge once you pass run
+	    speed, denser the faster you go; a burst of them on every Perfect.
+	  * Afterimages: neon ghost copies of the body that fade out, left behind
+	    by dashes, dodges, cuts and dives (everyone sees everyone's).
+	  * Impact frames: on your own Perfect techs, two frames of high-contrast
+	    black-and-white with a colour tint, then back to normal.
+	  * Slash arcs: a bright flat ring that snaps open where a cut, wavedash
+	    or plant stop bit into the ground.
+
+	Setting AnimeEffects (default on) turns all of it off; the speed lines
+	also follow CameraShake's spirit and stay subtle.
+]]
+
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local Theme = require(script.Parent.Parent.UI.Theme)
+
+local AnimeFX = {}
+
+local controllers: any
+local player = Players.LocalPlayer
+
+local LINE_COUNT = 28
+local LINE_START = 25 -- studs/s where speed lines begin
+local LINE_FULL = 42
+local GHOST_LIFE = 0.32
+local GHOST_MAX_PARTS = 16
+local IMPACT_TIME = 0.07
+
+-- which techs leave afterimages, and how many ghosts
+local GHOSTS: { [string]: number } = {
+	Cut = 1,
+	Juke = 1,
+	BurstKick = 2,
+	AirDodge = 2,
+	Wavedash = 2,
+	ReverseSnap = 3,
+	BurstDive = 3,
+	Layout = 2,
+	TechRoll = 1,
+	SlideHop = 1,
+	-- classic engine
+	SnapCut = 1,
+	BurstStep = 2,
+	Dive = 2,
+	AirRedirect = 2,
+}
+
+local SLASH: { [string]: boolean } = { Cut = true, Wavedash = true, PlantStop = true, Juke = true }
+
+local lines: { Frame } = {}
+local lineGui: ScreenGui? = nil
+local pulseUntil = 0
+local impact: ColorCorrectionEffect? = nil
+local fxFolder: Folder? = nil
+
+local function enabled(): boolean
+	return controllers.SettingsController.get("AnimeEffects") ~= false
+end
+
+local function folder(): Folder
+	local f = fxFolder
+	if f and f.Parent then
+		return f
+	end
+	local parent = workspace:FindFirstChild("UBVisuals")
+	if not parent then
+		local nf = Instance.new("Folder")
+		nf.Name = "UBVisuals"
+		nf.Parent = workspace
+		parent = nf
+	end
+	local created = Instance.new("Folder")
+	created.Name = "AnimeFX"
+	created.Parent = parent
+	fxFolder = created
+	return created
+end
+
+---------------------------------------------------------------------------
+-- afterimages
+---------------------------------------------------------------------------
+
+-- Leaves `count` fading neon copies of the body, the first one now.
+function AnimeFX.afterimage(model: Model, color: Color3, count: number?)
+	if not enabled() then
+		return
+	end
+	local n = math.clamp(count or 1, 1, 4)
+	for i = 0, n - 1 do
+		task.delay(i * 0.045, function()
+			if not model.Parent then
+				return
+			end
+			local made = 0
+			for _, part in model:GetDescendants() do
+				if made >= GHOST_MAX_PARTS then
+					break
+				end
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and part.Transparency < 0.9 then
+					local accessory = part.Parent and part.Parent:IsA("Accessory")
+					if not accessory then
+						made += 1
+						local g = Instance.new("Part")
+						g.Name = "Ghost"
+						g.Anchored = true
+						g.CanCollide = false
+						g.CanQuery = false
+						g.CanTouch = false
+						g.CastShadow = false
+						g.Material = Enum.Material.Neon
+						g.Color = color
+						g.Size = part.Size
+						g.CFrame = part.CFrame
+						g.Transparency = 0.45 + i * 0.12
+						g.Parent = folder()
+						TweenService:Create(g, TweenInfo.new(GHOST_LIFE), { Transparency = 1 }):Play()
+						task.delay(GHOST_LIFE + 0.05, function()
+							g:Destroy()
+						end)
+					end
+				end
+			end
+		end)
+	end
+end
+
+---------------------------------------------------------------------------
+-- slash arcs
+---------------------------------------------------------------------------
+
+function AnimeFX.slash(pos: Vector3, dir: Vector3, color: Color3)
+	if not enabled() then
+		return
+	end
+	local p = Instance.new("Part")
+	p.Name = "Slash"
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Material = Enum.Material.Neon
+	p.Color = color
+	p.Size = Vector3.new(0.15, 0.08, 1)
+	local flat = Vector3.new(dir.X, 0, dir.Z)
+	local look = if flat.Magnitude > 0.1 then flat.Unit else Vector3.new(0, 0, -1)
+	p.CFrame = CFrame.lookAt(pos, pos + look)
+	p.Transparency = 0.1
+	p.Parent = folder()
+	TweenService:Create(p, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(7, 0.08, 1.4),
+		Transparency = 1,
+	}):Play()
+	task.delay(0.3, function()
+		p:Destroy()
+	end)
+end
+
+---------------------------------------------------------------------------
+-- impact frame
+---------------------------------------------------------------------------
+
+function AnimeFX.impactFrame(tint: Color3)
+	if not enabled() then
+		return
+	end
+	local cc = impact
+	if not cc or not cc.Parent then
+		local made = Instance.new("ColorCorrectionEffect")
+		made.Name = "UBImpactFrame"
+		made.Enabled = false
+		made.Parent = Lighting
+		cc = made
+		impact = made
+	end
+	local e = cc :: ColorCorrectionEffect
+	e.Contrast = 0.9
+	e.Saturation = -1
+	e.Brightness = 0.05
+	e.TintColor = tint
+	e.Enabled = true
+	task.delay(IMPACT_TIME, function()
+		e.Enabled = false
+	end)
+	pulseUntil = os.clock() + 0.25
+end
+
+---------------------------------------------------------------------------
+-- speed lines
+---------------------------------------------------------------------------
+
+local function buildLines()
+	local g = Instance.new("ScreenGui")
+	g.Name = "UBSpeedLines"
+	g.IgnoreGuiInset = true
+	g.ResetOnSpawn = false
+	g.DisplayOrder = 2
+	g.Parent = player:WaitForChild("PlayerGui")
+	for i = 1, LINE_COUNT do
+		local f = Instance.new("Frame")
+		f.Name = "Line" .. i
+		f.AnchorPoint = Vector2.new(0.5, 0.5)
+		f.BackgroundColor3 = Color3.new(1, 1, 1)
+		f.BorderSizePixel = 0
+		f.BackgroundTransparency = 1
+		f.Parent = g
+		table.insert(lines, f)
+	end
+	lineGui = g
+end
+
+local rng = Random.new()
+local lineClock = 0
+
+local function updateLines(dt: number)
+	local g = lineGui
+	if not g then
+		return
+	end
+	local root = controllers.MovementController.root()
+	local speed = 0
+	if root then
+		local v = root.AssemblyLinearVelocity
+		speed = Vector3.new(v.X, 0, v.Z).Magnitude
+	end
+	local k = math.clamp((speed - LINE_START) / (LINE_FULL - LINE_START), 0, 1)
+	local pulse = os.clock() < pulseUntil
+	if pulse then
+		k = math.max(k, 0.8)
+	end
+	if not enabled() or k <= 0 then
+		if g.Enabled then
+			g.Enabled = false
+		end
+		return
+	end
+	g.Enabled = true
+	lineClock += dt
+	if lineClock < 0.05 then
+		return
+	end
+	lineClock = 0
+	-- re-scatter the streaks around the edge each tick (the flicker)
+	local shown = math.floor(LINE_COUNT * (0.35 + 0.65 * k))
+	for i, f in lines do
+		if i > shown then
+			f.BackgroundTransparency = 1
+		else
+			local a = rng:NextNumber() * math.pi * 2
+			local r = 0.42 + rng:NextNumber() * 0.12
+			local len = 60 + 140 * k * rng:NextNumber()
+			f.Position = UDim2.fromScale(0.5 + math.cos(a) * r, 0.5 + math.sin(a) * r * 0.9)
+			f.Size = UDim2.fromOffset(len, 2)
+			f.Rotation = math.deg(a)
+			f.BackgroundColor3 = if pulse then Theme.Colors.Perfect else Color3.new(1, 1, 1)
+			f.BackgroundTransparency = 0.75 - 0.4 * k
+		end
+	end
+end
+
+---------------------------------------------------------------------------
+-- hooks
+---------------------------------------------------------------------------
+
+-- Called by EffectsController for every technique, local or remote.
+function AnimeFX.tech(model: Model, tech: string, quality: string, dir: Vector3)
+	if not enabled() then
+		return
+	end
+	local color = (Theme.TechColors :: any)[tech] or Theme.Colors.Accent
+	local perfect = quality == "Perfect"
+	local ghosts = GHOSTS[tech]
+	if ghosts then
+		AnimeFX.afterimage(model, if perfect then Theme.Colors.Perfect else color, ghosts + (if perfect then 1 else 0))
+	end
+	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if root and SLASH[tech] then
+		AnimeFX.slash(root.Position - Vector3.new(0, 2.8, 0), dir, if perfect then Theme.Colors.Perfect else color)
+	end
+	if perfect and model == player.Character and tech ~= "Plant" then
+		AnimeFX.impactFrame(color)
+	end
+end
+
+function AnimeFX.Init(c: any)
+	controllers = c
+end
+
+function AnimeFX.Start()
+	buildLines()
+	RunService.RenderStepped:Connect(updateLines)
+end
+
+return AnimeFX
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="71">
+            <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
 -- AudioController — plays cues from Config/Audio, 2D or positioned in the world.
@@ -23602,7 +23917,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -23883,7 +24198,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -24636,7 +24951,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -25502,7 +25817,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25716,6 +26031,25 @@ local function resetFlash(root: BasePart, isLocal: boolean)
 	end
 end
 
+-- Tech-engine techniques reuse the classic effect that looks the part (their
+-- own colour still comes from Theme.TechColors); AnimeFX adds the rest.
+local FX_ALIAS: { [string]: string } = {
+	Cut = "SnapCut",
+	Juke = "SnapCut",
+	PlantStop = "MomentumCancel",
+	Wavedash = "MomentumCancel",
+	BurstKick = "BurstStep",
+	BurstDive = "BurstStep",
+	LandingSlide = "PrecisionLanding",
+	Sky = "PrecisionLanding",
+	AirDodge = "AirRedirect",
+	ReverseSnap = "AirRedirect",
+	Layout = "Dive",
+	DiscReset = "TipReset",
+	TechRoll = "RecoveryChain",
+	SlideHop = "RecoveryChain",
+}
+
 function EffectsController.tech(model: Model, tech: string, quality: string, dir: Vector3)
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
@@ -25728,48 +26062,50 @@ function EffectsController.tech(model: Model, tech: string, quality: string, dir
 	local feet = root.Position - Vector3.new(0, 2.9, 0)
 	local isLocal = model == player.Character
 	local perfect = quality == "Perfect"
-	if tech == "SnapCut" or tech == "SlideCut" then
+	local fx = FX_ALIAS[tech] or tech
+	if fx == "SnapCut" or fx == "SlideCut" then
 		EffectsController.dust(feet, 6)
 		streak(model, color, 0.25)
 		if perfect then
 			EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 3, 0.25)
 		end
-	elseif tech == "MomentumCancel" then
+	elseif fx == "MomentumCancel" then
 		EffectsController.dust(feet, 12)
 		skid(feet, dir)
-	elseif tech == "BurstStep" then
+	elseif fx == "BurstStep" then
 		EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 4.5, 0.3)
 		streak(model, color, 0.35)
 		if isLocal then
 			controllers.CameraController.kick(2)
 		end
-	elseif tech == "Slide" then
+	elseif fx == "Slide" then
 		EffectsController.dust(feet, 12)
-	elseif tech == "Dive" then
+	elseif fx == "Dive" then
 		streak(model, color, 0.45)
-	elseif tech == "AirRedirect" then
+	elseif fx == "AirRedirect" then
 		EffectsController.ring(root.Position, color, 3.2, 0.3, dir)
-	elseif tech == "PrecisionLanding" then
+	elseif fx == "PrecisionLanding" then
 		EffectsController.ring(feet + Vector3.new(0, 0.1, 0), if perfect then Theme.Colors.Perfect else color, 5, 0.35)
 		EffectsController.dust(feet, 6)
-	elseif tech == "WallRebound" then
+	elseif fx == "WallRebound" then
 		EffectsController.burst(root.Position - dir * 1.5, color, 16, 14)
 		resetFlash(root, isLocal)
-	elseif tech == "TipReset" then
+	elseif fx == "TipReset" then
 		resetFlash(root, isLocal)
-	elseif tech == "RecoveryChain" then
+	elseif fx == "RecoveryChain" then
 		EffectsController.burst(feet + Vector3.new(0, 1, 0), color, 10, 8)
-	elseif tech == "PivotSwing" then
+	elseif fx == "PivotSwing" then
 		EffectsController.dust(feet + dir * 1.5, 3)
 		if perfect then
 			EffectsController.ring(feet + Vector3.new(0, 0.1, 0), color, 2.4, 0.2)
 		end
-	elseif tech == "Break" then
+	elseif fx == "Break" then
 		EffectsController.burst(root.Position + Vector3.new(0, 1, 0), color, 14, 10)
 	end
+	controllers.AnimeFX.tech(model, tech, quality, dir)
 	-- (FakeCommit / "Lean" deliberately has no visual: a fake must look real)
 	if isLocal then
-		if tech == "BurstStep" or tech == "Dive" then
+		if fx == "BurstStep" or fx == "Dive" then
 			controllers.AudioController.play("Burst", 0.1)
 		elseif perfect and tech ~= "Jump" and tech ~= "FakeCommit" then
 			controllers.AudioController.play("TechPerfect", 0.15)
@@ -26436,7 +26772,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26850,7 +27186,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27600,7 +27936,7 @@ local function techFace(v: Vector3): (Vector3?, boolean)
 end
 
 -- Techs that only get a sound (a pop for every jump would be noise).
-local QUIET_TECH = { Jump = true, AirDodge = true }
+local QUIET_TECH = { Jump = true, AirDodge = true, Plant = true }
 
 -- A tech the core reports: feedback at once, and (unless it was a miss) the
 -- combo chain and the server, like any technique.
@@ -27614,6 +27950,12 @@ local function techEvent(e: TechCore.TechEvent)
 		return
 	end
 	local t = now()
+	if e.tech == "Plant" then
+		-- the start of a cut or a juke: posed everywhere, scores nothing
+		table.insert(pending, { tech = e.tech, quality = e.quality, dir = e.dir, t = t })
+		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = t, dir = e.dir, chain = false })
+		return
+	end
 	queueEvent({
 		tech = e.tech,
 		quality = e.quality,
@@ -28013,7 +28355,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28124,7 +28466,7 @@ type Rig = {
 local rigs: { [Model]: Rig } = {}
 local firstSeen: { [Model]: number } = {}
 local warned: { [Model]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local localTech = { name = "", t = -math.huge, dir = Vector3.zero }
+local localTech = { name = "", t = -math.huge, dir = Vector3.zero, info = "" }
 
 -- Rest C0 per motor, and what we last wrote (to tell our offsets from a
 -- genuine new rest pose written by avatar scaling).
@@ -28385,6 +28727,7 @@ type Ctx = {
 	tech: string,
 	techAge: number,
 	techDir: Vector3, -- local space
+	techInfo: string,
 	reachAge: number,
 	reachDir: Vector3, -- local space
 	windup: boolean,
@@ -28454,6 +28797,7 @@ local function gather(rig: Rig, dt: number): Ctx
 		tech = "",
 		techAge = math.huge,
 		techDir = Vector3.zero,
+		techInfo = "",
 		reachAge = math.huge,
 		reachDir = Vector3.new(0, 0, -1),
 		windup = false,
@@ -28486,6 +28830,7 @@ local function gather(rig: Rig, dt: number): Ctx
 		ctx.tech = localTech.name
 		ctx.techAge = t - localTech.t
 		ctx.techDir = toLocal(root, localTech.dir)
+		ctx.techInfo = localTech.info
 		local reachAt, reachDir = controllers.CatchController.reachState()
 		ctx.reachAge = t - reachAt
 		ctx.reachDir = toLocal(root, reachDir)
@@ -28530,6 +28875,8 @@ local function gather(rig: Rig, dt: number): Ctx
 		ctx.techAge = t - attrNumber(m, "TechT") - REMOTE_POSE_DELAY
 		local td = m:GetAttribute("TechDir")
 		ctx.techDir = if typeof(td) == "Vector3" then toLocal(root, td) else Vector3.zero
+		local ti = m:GetAttribute("TechInfo")
+		ctx.techInfo = if type(ti) == "string" then ti else ""
 		ctx.reachAge = t - attrNumber(m, "Reach")
 		local rd = m:GetAttribute("ReachDir")
 		ctx.reachDir = if typeof(rd) == "Vector3" then toLocal(root, rd) else Vector3.new(0, 0, -1)
@@ -28667,6 +29014,68 @@ local function compute(ctx: Ctx): Pose
 	elseif tech == "WallRebound" and age < 0.3 then
 		pose.pitch, pose.roll = 0.2, -math.sign(dx) * 0.5
 		pose.rate = 24
+	-- tech engine: anime-style, snappy and exaggerated
+	elseif tech == "Plant" and age < 0.14 then
+		-- the plant reads the same for a real cut and a juke
+		pose.drop, pose.pitch, pose.roll = 0.5, -0.05, -math.sign(dx) * 0.6
+		pose.RShoulder = CFrame.Angles(0.3, 0, 1.15)
+		pose.LShoulder = CFrame.Angles(0.3, 0, -1.15)
+		pose.rate = 36
+	elseif (tech == "Cut" or tech == "Juke") and age < 0.2 then
+		pose.drop, pose.pitch, pose.roll = 0.25, -0.6, -math.sign(dx) * 0.35
+		pose.RShoulder = CFrame.Angles(-0.7, 0, 0.3)
+		pose.LShoulder = CFrame.Angles(1.1, 0, -0.2)
+		pose.rate = 32
+	elseif tech == "PlantStop" and age < 0.3 then
+		pose.drop, pose.pitch = 0.75, 0.45
+		pose.RShoulder = CFrame.Angles(0.6, 0, 0.9)
+		pose.LShoulder = CFrame.Angles(0.6, 0, -0.9)
+		pose.rate = 30
+	elseif tech == "BurstKick" and age < 0.25 then
+		pose.drop, pose.pitch = 0.2, -0.7
+		pose.RShoulder = CFrame.Angles(-0.9, 0, 0.35)
+		pose.LShoulder = CFrame.Angles(-0.9, 0, -0.35)
+		pose.rate = 32
+	elseif tech == "AirDodge" and age < 0.22 then
+		if ctx.techInfo == "Up" then
+			-- neutral dodge: a corkscrew with the arms tucked
+			pose.yaw = age / 0.22 * math.pi * 2
+			pose.RShoulder = CFrame.Angles(0.2, 0, 0.3)
+			pose.LShoulder = CFrame.Angles(0.2, 0, -0.3)
+		else
+			-- the dash: nearly flat, arms swept back
+			pose.pitch, pose.roll = -0.95, -math.clamp(dx, -1, 1) * 0.4
+			pose.RShoulder = CFrame.Angles(-0.8, 0, 0.6)
+			pose.LShoulder = CFrame.Angles(-0.8, 0, -0.6)
+		end
+		pose.rate = 34
+	elseif tech == "Wavedash" and age < 0.25 then
+		pose.drop, pose.pitch, pose.roll = 1.0, 0.3, -math.clamp(dx, -1, 1) * 0.4
+		pose.RShoulder = CFrame.Angles(0.4, 0, 1.3)
+		pose.LShoulder = CFrame.Angles(0.4, 0, -1.3)
+		pose.rate = 34
+	elseif tech == "ReverseSnap" and age < 0.3 then
+		pose.yaw = (1 - age / 0.3) * math.pi * 2
+		pose.pitch = -0.4
+		pose.rate = 30
+	elseif tech == "BurstDive" and age < 0.3 then
+		pose.pitch = -1.25
+		pose.RShoulder = CFrame.Angles(2.95, 0, 0.1)
+		pose.LShoulder = CFrame.Angles(2.95, 0, -0.1)
+		pose.rate = 30
+	elseif tech == "SlideHop" and age < 0.25 then
+		pose.pitch = -0.35
+		pose.RShoulder = CFrame.Angles(2.2, 0, 0.5)
+		pose.LShoulder = CFrame.Angles(2.2, 0, -0.5)
+		pose.rate = 28
+	elseif tech == "TechRoll" and age < 0.25 then
+		pose.drop, pose.pitch = 1.1, -0.9
+		pose.yaw = age / 0.25 * math.pi * 2
+		pose.rate = 36
+	elseif tech == "DiscReset" and age < 0.25 then
+		pose.RShoulder = CFrame.Angles(2.4, 0, 1.0)
+		pose.LShoulder = CFrame.Angles(2.4, 0, -1.0)
+		pose.rate = 30
 	end
 
 	local mode = ctx.mode
@@ -28730,6 +29139,11 @@ local function compute(ctx: Ctx): Pose
 		pose.drop, pose.pitch = 0.25, -0.1
 		pose.legs = "stance"
 		pose.stance = "high"
+	elseif airUp and tech == "Sky" and age < 1.2 then
+		-- Sky: both hands straight up, reaching over the defender
+		pose.RShoulder = CFrame.Angles(3.05, 0, 0.12)
+		pose.LShoulder = CFrame.Angles(3.05, 0, -0.12)
+		pose.pitch = 0.1
 	elseif airUp then
 		pose.RShoulder = CFrame.Angles(0.7, 0, 0.35)
 		pose.LShoulder = CFrame.Angles(0.7, 0, -0.35)
@@ -29095,10 +29509,10 @@ end
 function PoseController.Start()
 	controllers.MovementController.Tech:Connect(function(e)
 		local name = if e.tech == "FakeCommit" then "Lean" else e.tech
-		localTech = { name = name, t = now(), dir = e.dir }
+		localTech = { name = name, t = now(), dir = e.dir, info = e.info or "" }
 	end)
 	player.CharacterAdded:Connect(function()
-		localTech = { name = "", t = -math.huge, dir = Vector3.zero }
+		localTech = { name = "", t = -math.huge, dir = Vector3.zero, info = "" }
 	end)
 	RunService:BindToRenderStep("UBPose", Enum.RenderPriority.Character.Value + 1, step)
 end
@@ -29107,7 +29521,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29270,7 +29684,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -29413,7 +29827,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30245,7 +30659,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30673,7 +31087,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="82">
+        <Item class="LocalScript" referent="83">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -30699,6 +31113,7 @@ local ORDER = {
 	"AudioController",
 	"EffectsController",
 	"TechFeedback",
+	"AnimeFX",
 	"UIController",
 }
 
@@ -30723,11 +31138,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="83">
+        <Item class="Folder" referent="84">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -31771,7 +32186,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -32728,6 +33143,7 @@ function render.Settings(content: Instance)
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
 		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
+		{ key = "AnimeEffects", label = "Anime effects (speed lines, afterimages, impact frames)" },
 		{ key = "TechEngine", label = "New movement core (tech spec; off = classic movement)" },
 		{ key = "TechDebug", label = "Tech debug HUD (speed, state, timing in ms)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
@@ -33011,7 +33427,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -33297,7 +33713,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -33676,7 +34092,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -33822,7 +34238,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -34098,7 +34514,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -34562,12 +34978,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="91">
+  <Item class="Teams" referent="92">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="92">
+  <Item class="Workspace" referent="93">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>
