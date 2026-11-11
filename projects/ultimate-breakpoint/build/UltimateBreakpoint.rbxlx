@@ -6375,6 +6375,7 @@ export type Timing = {
 	name: string,
 	offsetMs: number, -- < 0 early, > 0 late, 0 dead on
 	windowMs: number, -- half width of the success window
+	perfectMs: number?, -- half width of the Perfect part (around 0)
 	quality: string, -- "Perfect" | "Clean" | "Miss"
 	t: number,
 }
@@ -6787,7 +6788,8 @@ function TechCore.noteTiming(
 	local timing: Timing = {
 		name = name,
 		offsetMs = offsetMs,
-		windowMs = windowMs,
+		windowMs = ww,
+		perfectMs = pw,
 		quality = quality,
 		t = t or s.now,
 	}
@@ -6811,7 +6813,14 @@ local function noteRange(s: State, name: string, ms: number, lo: number, hi: num
 	end
 	local a, b = plo or lo, phi or hi
 	local offset = if ms < a then ms - a elseif ms > b then ms - b else 0
-	s.lastTiming = { name = name, offsetMs = offset, windowMs = (hi - lo) / 2, quality = quality, t = s.now }
+	s.lastTiming = {
+		name = name,
+		offsetMs = offset,
+		windowMs = (hi - lo) / 2,
+		perfectMs = if plo and phi then 0 else nil,
+		quality = quality,
+		t = s.now,
+	}
 	return quality
 end
 
@@ -36098,7 +36107,9 @@ return Panels
 	  CORE   120 Hz · 2 steps · 60 fps
 
 	Shown on the tech engine when the TechDebug setting is on, and always in
-	Studio. It reports what happened, never what to press next.
+	Studio and in Training. Under the text, the timing bar draws the last
+	timed press against its window (pale) and Perfect part (gold). It reports
+	what happened, never what to press next.
 ]]
 
 local RunService = game:GetService("RunService")
@@ -36114,15 +36125,26 @@ local TechDebug = {}
 local controllers: any
 local panel: Frame? = nil
 local text: TextLabel? = nil
+-- the timing bar: the window (pale), the Perfect part (gold), your press
+local barFrame: Frame? = nil
+local barWindow: Frame? = nil
+local barPerfect: Frame? = nil
+local barMark: Frame? = nil
+local barSeen: any = nil
 local fps = 60
 local BAR = 10
 local GRADE_COLOR = { Perfect = "#FFD750", Clean = "#D2F0FF", Miss = "#FF5A64" }
+local updateBar: () -> () -- defined below
 
 local function visible(): boolean
 	if controllers.MovementController.engine() ~= "Tech" then
 		return false
 	end
-	return RunService:IsStudio() or controllers.SettingsController.get("TechDebug") == true
+	-- always in Studio and in the Training hall (the timing bar is how a
+	-- tight window becomes learnable), otherwise a setting
+	local c = game:GetService("Players").LocalPlayer.Character
+	local training = c ~= nil and c:GetAttribute("UBRole") == "Training"
+	return RunService:IsStudio() or training or controllers.SettingsController.get("TechDebug") == true
 end
 
 local function bar(value: number): string
@@ -36183,6 +36205,33 @@ local function render(): string
 	return table.concat(lines, "\n")
 end
 
+-- Draws the last timed press on the bar: the scale is 1.5x the window
+-- either side, so a miss still shows how far off it was.
+updateBar = function()
+	local s: TechCore.State = controllers.MovementController.techState()
+	local timing = s.lastTiming
+	local bf, w, pf, m = barFrame, barWindow, barPerfect, barMark
+	if not bf or not w or not pf or not m then
+		return
+	end
+	bf.Visible = timing ~= nil
+	if not timing or timing == barSeen then
+		return
+	end
+	barSeen = timing
+	local span = math.max(timing.windowMs * 1.5, 1)
+	w.Size = UDim2.fromScale(timing.windowMs / span, 1)
+	local pms = timing.perfectMs
+	pf.Visible = pms ~= nil
+	pf.Size = UDim2.new(if pms and pms > 0 then pms / span else 0, 3, 1, 0)
+	local k = math.clamp(timing.offsetMs / span, -1, 1)
+	m.Position = UDim2.new(0.5 + k / 2, 0, 0, -3)
+	m.BackgroundColor3 = if timing.quality == "Perfect"
+		then Color3.fromRGB(255, 215, 80)
+		elseif timing.quality == "Miss" then Color3.fromRGB(255, 90, 100)
+		else Color3.new(1, 1, 1)
+end
+
 function TechDebug.build(parent: ScreenGui, c: any)
 	controllers = c
 	local p = Theme.panel({
@@ -36206,6 +36255,33 @@ function TechDebug.build(parent: ScreenGui, c: any)
 	})
 	panel = p
 	text = t
+	p.Size = UDim2.fromOffset(330, 136)
+	local bf = Instance.new("Frame")
+	bf.Name = "TimingBar"
+	bf.Position = UDim2.new(0, 10, 1, -18)
+	bf.Size = UDim2.new(1, -20, 0, 8)
+	bf.BackgroundColor3 = Color3.fromRGB(40, 44, 58)
+	bf.BorderSizePixel = 0
+	bf.Parent = p
+	local function band(name: string, color: Color3, z: number): Frame
+		local f = Instance.new("Frame")
+		f.Name = name
+		f.AnchorPoint = Vector2.new(0.5, 0)
+		f.Position = UDim2.fromScale(0.5, 0)
+		f.Size = UDim2.fromScale(0, 1)
+		f.BackgroundColor3 = color
+		f.BorderSizePixel = 0
+		f.ZIndex = z
+		f.Parent = bf
+		return f
+	end
+	barWindow = band("Window", Color3.fromRGB(150, 210, 255), 2)
+	barPerfect = band("Perfect", Color3.fromRGB(255, 215, 80), 3)
+	local mark = band("Press", Color3.new(1, 1, 1), 4)
+	mark.Size = UDim2.new(0, 3, 1, 6)
+	mark.Position = UDim2.new(0.5, 0, 0, -3)
+	barMark = mark
+	barFrame = bf
 	RunService.RenderStepped:Connect(function(dt)
 		if dt > 0 then
 			fps += (1 / dt - fps) * 0.1
@@ -36214,6 +36290,7 @@ function TechDebug.build(parent: ScreenGui, c: any)
 		p.Visible = show
 		if show then
 			t.Text = render()
+			updateBar()
 		end
 	end)
 end

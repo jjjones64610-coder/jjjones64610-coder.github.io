@@ -108,6 +108,7 @@ export type Timing = {
 	name: string,
 	offsetMs: number, -- < 0 early, > 0 late, 0 dead on
 	windowMs: number, -- half width of the success window
+	perfectMs: number?, -- half width of the Perfect part (around 0)
 	quality: string, -- "Perfect" | "Clean" | "Miss"
 	t: number,
 }
@@ -520,7 +521,8 @@ function TechCore.noteTiming(
 	local timing: Timing = {
 		name = name,
 		offsetMs = offsetMs,
-		windowMs = windowMs,
+		windowMs = ww,
+		perfectMs = pw,
 		quality = quality,
 		t = t or s.now,
 	}
@@ -544,7 +546,14 @@ local function noteRange(s: State, name: string, ms: number, lo: number, hi: num
 	end
 	local a, b = plo or lo, phi or hi
 	local offset = if ms < a then ms - a elseif ms > b then ms - b else 0
-	s.lastTiming = { name = name, offsetMs = offset, windowMs = (hi - lo) / 2, quality = quality, t = s.now }
+	s.lastTiming = {
+		name = name,
+		offsetMs = offset,
+		windowMs = (hi - lo) / 2,
+		perfectMs = if plo and phi then 0 else nil,
+		quality = quality,
+		t = s.now,
+	}
 	return quality
 end
 
