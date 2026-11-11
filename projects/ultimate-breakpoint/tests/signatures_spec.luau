@@ -206,6 +206,35 @@ test("world-class: double flip reset, flip reset grab, wall flip, zap chain, sta
 	expect(stall[#stall] == "StallGrab", "stall grab")
 end)
 
+test("saves: a low layout catch is a Diving Save, a low standing catch a Shoestring", function()
+	local dive = play({ { kind = "Catch", discId = "d1", airborne = false, discHeight = 1.0, layout = true } })
+	expect(dive[1] == "DivingSave", "diving save")
+	local shoe = play({ { kind = "Catch", discId = "d1", airborne = false, discHeight = 0.9 } })
+	expect(shoe[1] == "Shoestring", "shoestring")
+	local chest = play({ { kind = "Catch", discId = "d1", airborne = false, discHeight = 3 } })
+	expect(#chest == 0, "a chest catch is nothing special")
+end)
+
+test("alley-oop: catch in the air, throw before landing (even if the landing arrives first)", function()
+	local oop =
+		play({ tech("Jump"), { kind = "Catch", discId = "d1", airborne = true, height = 2 }, { kind = "Throw" } })
+	expect(oop[1] == "AlleyOop", "alley-oop")
+	local late = play({
+		tech("Jump"),
+		{ kind = "Catch", discId = "d1", airborne = true, height = 2, t = 1 },
+		{ kind = "Land", t = 1.2 },
+		{ kind = "Throw", t = 1.1 },
+	})
+	expect(late[1] == "AlleyOop", "a throw before the landing still counts")
+	local grounded = play({
+		tech("Jump"),
+		{ kind = "Catch", discId = "d1", airborne = true, height = 2, t = 1 },
+		{ kind = "Land", t = 1.2 },
+		{ kind = "Throw", t = 1.5 },
+	})
+	expect(#grounded == 0, "thrown after landing")
+end)
+
 test("the greatest is passed straight through", function()
 	local hits = play({ { kind = "Greatest" } })
 	expect(hits[1] == "Greatest", "Greatest")

@@ -1213,7 +1213,14 @@ function MovementService.noteTip(id: number, discId: string, defender: boolean, 
 	end
 end
 
-function MovementService.noteCatch(id: number, discId: string, interception: boolean, at: number)
+function MovementService.noteCatch(
+	id: number,
+	discId: string,
+	interception: boolean,
+	at: number,
+	discHeight: number?,
+	layout: boolean?
+)
 	local t = tracks[id]
 	if not t then
 		return
@@ -1236,7 +1243,17 @@ function MovementService.noteCatch(id: number, discId: string, interception: boo
 		airborne = airborne,
 		height = height,
 		interception = interception,
+		discHeight = discHeight,
+		layout = layout,
 	})
+end
+
+-- The disc left this actor's hands at `at` (Alley-Oop).
+function MovementService.noteThrow(id: number, at: number)
+	local t = tracks[id]
+	if t then
+		feedSignatures(id, t, { kind = "Throw", t = at })
+	end
 end
 
 function MovementService.noteGreatest(id: number)

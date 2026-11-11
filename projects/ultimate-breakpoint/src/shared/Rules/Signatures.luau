@@ -11,6 +11,8 @@
 	            disc id and whether they were the defending team (a block)
 	  Catch     the player caught a disc { discId, airborne, height,
 	            interception }
+	  Throw     the player released the disc (Alley-Oop: after an air catch,
+	            before landing)
 	  Greatest  the rules called a Greatest for this player
 
 	A catch is judged against the airtime it happened in by its timestamp: a
@@ -41,6 +43,8 @@ export type Event = {
 	height: number?, -- feet above the ground at the catch
 	defender: boolean?, -- Tip: by the defending team
 	interception: boolean?, -- Catch: by the defending team
+	discHeight: number?, -- Catch: the disc's height over the grass (saves)
+	layout: boolean?, -- Catch: made in a layout
 }
 
 export type Hit = {
@@ -63,6 +67,7 @@ type Air = {
 	resetFlipUsed: boolean, -- a stored flip was spent
 	wallFlipPaid: boolean,
 	stalled: boolean,
+	airCatch: boolean, -- caught the disc in this airtime (Alley-Oop)
 }
 
 export type Tracker = {
@@ -92,6 +97,7 @@ local function newAir(): Air
 		resetFlipUsed = false,
 		wallFlipPaid = false,
 		stalled = false,
+		airCatch = false,
 	}
 end
 
@@ -221,6 +227,14 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 			done.Skyball = true
 		end
 	end
+	local dh = e.discHeight
+	if dh ~= nil then
+		if e.layout and dh <= Config.SaveHeight then
+			done.DivingSave = true
+		elseif not e.layout and dh <= Config.ShoestringHeight then
+			done.Shoestring = true
+		end
+	end
 	if e.interception and disc ~= nil then
 		local at = tr.defenderTips[disc :: string]
 		if at ~= nil and e.t - at <= Config.SelfDWindow then
@@ -247,6 +261,17 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 		air.flipResets = 0
 		air.resetFlipUsed = false
 		air.stalled = false
+		air.airCatch = true
+	end
+end
+
+local function onThrow(tr: Tracker, e: Event, out: { Hit })
+	-- a throw from before the last landing belongs to that airtime
+	local prev = tr.prevAir
+	local air = if prev ~= nil and e.t <= tr.prevLandAt + 1e-3 then prev else tr.air
+	if air.airCatch then
+		air.airCatch = false
+		table.insert(out, hit("AlleyOop", e.t))
 	end
 end
 
@@ -279,6 +304,8 @@ function Signatures.feed(tr: Tracker, e: Event): { Hit }
 		end
 	elseif kind == "Catch" then
 		onCatch(tr, e, out)
+	elseif kind == "Throw" then
+		onThrow(tr, e, out)
 	elseif kind == "Greatest" then
 		table.insert(out, hit("Greatest", e.t))
 	end

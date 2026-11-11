@@ -80,6 +80,7 @@ local Disc = {
 		MinPitch = -12,
 		MaxPitch = 60,
 		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
+		PassChainWindow = 2.0, -- ... within this long keeps the team's pass chain going
 		HandBlockCheckTime = 0.3 * 1.5 / TEMPO, -- seconds of early flight checked against markers' hands (the same distance at any tempo)
 		NoCatchTime = 0.15 * 1.5 / TEMPO, -- nobody can catch in the first moments (hand blocks cover that)
 

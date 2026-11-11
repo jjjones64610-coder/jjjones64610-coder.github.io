@@ -26,6 +26,7 @@ Abilities.Gain = {
 	goals = 18,
 	callahans = 40,
 	greatests = 40,
+	passChain = 3, -- x the chain length, to the thrower and the catcher
 }
 
 export type Def = {

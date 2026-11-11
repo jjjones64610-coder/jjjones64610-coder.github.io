@@ -174,6 +174,18 @@ local function onFeedback(kind: string, payload: any)
 		if point then
 			TechCore.addBurst(controllers.MovementController.techState(), 20)
 		end
+	elseif kind == "PassChain" and type(payload) == "table" then
+		local n = tonumber(payload.count) or 0
+		local mine = player.Character ~= nil and player.Character:GetAttribute("UBTeam") == payload.team
+		local text = string.format("PASS CHAIN x%d", n)
+		if mine then
+			controllers.TechFeedback.play(text, if n >= 4 then "Perfect" else "Clean")
+			if n >= 4 then
+				controllers.AnimeFX.impactFrame(Theme.teamColor(payload.team))
+			end
+		else
+			Hud.feedback(text, Theme.teamColor(payload.team), 2)
+		end
 	elseif kind == "OpenLauncher" then
 		Hud.toast("Free launcher: press M > Training to set up and fire launches.", C.Accent, 6)
 	end

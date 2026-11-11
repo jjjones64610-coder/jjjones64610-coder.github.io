@@ -551,7 +551,14 @@ function CatchingService.resolve(d: any)
 		services.DiscService.giveTo(d, w.id)
 		Net.event("Effect"):FireAllClients("Catch", discPos, w.id, w.quality, w.zone)
 		-- signature moves first: their points join the chain this catch converts
-		services.MovementService.noteCatch(w.id, d.id, isDefender, w.t)
+		services.MovementService.noteCatch(
+			w.id,
+			d.id,
+			isDefender,
+			w.t,
+			discPos.Y - d.groundY,
+			services.MovementService.isDiving(w.id)
+		)
 		d.handler.onCaught(d, {
 			id = w.id,
 			team = w.team,

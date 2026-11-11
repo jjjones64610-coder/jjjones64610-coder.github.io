@@ -363,6 +363,9 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 			services.DefenseService.checkHandBlock(launch.state, actorId, actor.team, d.groundY, d.wind)
 	end
 
+	if not pull then
+		services.MovementService.noteThrow(actorId, t0)
+	end
 	services.DiscService.launch(d, launch.releasePos, launch.velocity, launch.normal, launch.state.spin, {
 		thrower = actorId,
 		throwerTeam = actor.team,

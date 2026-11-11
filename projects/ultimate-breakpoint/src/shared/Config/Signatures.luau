@@ -111,6 +111,28 @@ Signatures.List = {
 		how = "Catch with your feet more than 5 studs off the ground.",
 		tier = 1,
 	},
+	-- saves and combos with the disc
+	DivingSave = {
+		id = "DivingSave",
+		name = "DIVING SAVE",
+		points = 1200,
+		how = "Lay out and catch the disc an inch off the grass (under 1.6 studs).",
+		tier = 2,
+	},
+	Shoestring = {
+		id = "Shoestring",
+		name = "SHOESTRING",
+		points = 600,
+		how = "Catch the disc at your shoelaces (under 1.2 studs off the ground) without laying out.",
+		tier = 1,
+	},
+	AlleyOop = {
+		id = "AlleyOop",
+		name = "ALLEY-OOP",
+		points = 1400,
+		how = "Catch the disc in the air and throw it before you land.",
+		tier = 2,
+	},
 	TipReset = {
 		id = "TipReset",
 		name = "TIP RESET",
@@ -135,11 +157,16 @@ Signatures.Order = {
 	"StallGrab",
 	"ZapChain",
 	"Skyball",
+	"DivingSave",
+	"Shoestring",
+	"AlleyOop",
 	"TipReset",
 }
 
 -- Recognition windows.
 Signatures.SkyHeight = 5 -- feet above the ground for a Skyball
+Signatures.SaveHeight = 1.6 -- disc height (studs over the grass) for a Diving Save
+Signatures.ShoestringHeight = 1.2 -- ... and for a Shoestring
 Signatures.LoopStep = 0.7 -- Reset Loop: each step within this of the previous
 Signatures.LoopGap = 2.0 -- ... and the second loop within this of the first
 Signatures.SelfDWindow = 2.5 -- Self-D: the catch within this of the defender's tip

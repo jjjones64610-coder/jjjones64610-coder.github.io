@@ -473,6 +473,7 @@ Abilities.Gain = {
 	goals = 18,
 	callahans = 40,
 	greatests = 40,
+	passChain = 3, -- x the chain length, to the thrower and the catcher
 }
 
 export type Def = {
@@ -1119,6 +1120,7 @@ local Disc = {
 		MinPitch = -12,
 		MaxPitch = 60,
 		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
+		PassChainWindow = 2.0, -- ... within this long keeps the team's pass chain going
 		HandBlockCheckTime = 0.3 * 1.5 / TEMPO, -- seconds of early flight checked against markers' hands (the same distance at any tempo)
 		NoCatchTime = 0.15 * 1.5 / TEMPO, -- nobody can catch in the first moments (hand blocks cover that)
 
@@ -2912,6 +2914,28 @@ Signatures.List = {
 		how = "Catch with your feet more than 5 studs off the ground.",
 		tier = 1,
 	},
+	-- saves and combos with the disc
+	DivingSave = {
+		id = "DivingSave",
+		name = "DIVING SAVE",
+		points = 1200,
+		how = "Lay out and catch the disc an inch off the grass (under 1.6 studs).",
+		tier = 2,
+	},
+	Shoestring = {
+		id = "Shoestring",
+		name = "SHOESTRING",
+		points = 600,
+		how = "Catch the disc at your shoelaces (under 1.2 studs off the ground) without laying out.",
+		tier = 1,
+	},
+	AlleyOop = {
+		id = "AlleyOop",
+		name = "ALLEY-OOP",
+		points = 1400,
+		how = "Catch the disc in the air and throw it before you land.",
+		tier = 2,
+	},
 	TipReset = {
 		id = "TipReset",
 		name = "TIP RESET",
@@ -2936,11 +2960,16 @@ Signatures.Order = {
 	"StallGrab",
 	"ZapChain",
 	"Skyball",
+	"DivingSave",
+	"Shoestring",
+	"AlleyOop",
 	"TipReset",
 }
 
 -- Recognition windows.
 Signatures.SkyHeight = 5 -- feet above the ground for a Skyball
+Signatures.SaveHeight = 1.6 -- disc height (studs over the grass) for a Diving Save
+Signatures.ShoestringHeight = 1.2 -- ... and for a Shoestring
 Signatures.LoopStep = 0.7 -- Reset Loop: each step within this of the previous
 Signatures.LoopGap = 2.0 -- ... and the second loop within this of the first
 Signatures.SelfDWindow = 2.5 -- Self-D: the catch within this of the defender's tip
@@ -10729,6 +10758,8 @@ return RulesEngine
 	            disc id and whether they were the defending team (a block)
 	  Catch     the player caught a disc { discId, airborne, height,
 	            interception }
+	  Throw     the player released the disc (Alley-Oop: after an air catch,
+	            before landing)
 	  Greatest  the rules called a Greatest for this player
 
 	A catch is judged against the airtime it happened in by its timestamp: a
@@ -10759,6 +10790,8 @@ export type Event = {
 	height: number?, -- feet above the ground at the catch
 	defender: boolean?, -- Tip: by the defending team
 	interception: boolean?, -- Catch: by the defending team
+	discHeight: number?, -- Catch: the disc's height over the grass (saves)
+	layout: boolean?, -- Catch: made in a layout
 }
 
 export type Hit = {
@@ -10781,6 +10814,7 @@ type Air = {
 	resetFlipUsed: boolean, -- a stored flip was spent
 	wallFlipPaid: boolean,
 	stalled: boolean,
+	airCatch: boolean, -- caught the disc in this airtime (Alley-Oop)
 }
 
 export type Tracker = {
@@ -10810,6 +10844,7 @@ local function newAir(): Air
 		resetFlipUsed = false,
 		wallFlipPaid = false,
 		stalled = false,
+		airCatch = false,
 	}
 end
 
@@ -10939,6 +10974,14 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 			done.Skyball = true
 		end
 	end
+	local dh = e.discHeight
+	if dh ~= nil then
+		if e.layout and dh <= Config.SaveHeight then
+			done.DivingSave = true
+		elseif not e.layout and dh <= Config.ShoestringHeight then
+			done.Shoestring = true
+		end
+	end
 	if e.interception and disc ~= nil then
 		local at = tr.defenderTips[disc :: string]
 		if at ~= nil and e.t - at <= Config.SelfDWindow then
@@ -10965,6 +11008,17 @@ local function onCatch(tr: Tracker, e: Event, out: { Hit })
 		air.flipResets = 0
 		air.resetFlipUsed = false
 		air.stalled = false
+		air.airCatch = true
+	end
+end
+
+local function onThrow(tr: Tracker, e: Event, out: { Hit })
+	-- a throw from before the last landing belongs to that airtime
+	local prev = tr.prevAir
+	local air = if prev ~= nil and e.t <= tr.prevLandAt + 1e-3 then prev else tr.air
+	if air.airCatch then
+		air.airCatch = false
+		table.insert(out, hit("AlleyOop", e.t))
 	end
 end
 
@@ -10997,6 +11051,8 @@ function Signatures.feed(tr: Tracker, e: Event): { Hit }
 		end
 	elseif kind == "Catch" then
 		onCatch(tr, e, out)
+	elseif kind == "Throw" then
+		onThrow(tr, e, out)
 	elseif kind == "Greatest" then
 		table.insert(out, hit("Greatest", e.t))
 	end
@@ -16466,7 +16522,14 @@ function CatchingService.resolve(d: any)
 		services.DiscService.giveTo(d, w.id)
 		Net.event("Effect"):FireAllClients("Catch", discPos, w.id, w.quality, w.zone)
 		-- signature moves first: their points join the chain this catch converts
-		services.MovementService.noteCatch(w.id, d.id, isDefender, w.t)
+		services.MovementService.noteCatch(
+			w.id,
+			d.id,
+			isDefender,
+			w.t,
+			discPos.Y - d.groundY,
+			services.MovementService.isDiving(w.id)
+		)
 		d.handler.onCaught(d, {
 			id = w.id,
 			team = w.team,
@@ -18469,6 +18532,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
+local Abilities = require(Shared.Config.Abilities)
 local ModesConfig = require(Shared.Config.Modes)
 local ArenasConfig = require(Shared.Config.Arenas)
 local TeamsConfig = require(Shared.Config.Teams)
@@ -18924,7 +18988,8 @@ function matchHandler.onThrown(d: any, info: any)
 	d.meta.pullPending = false
 	local caughtAt = S.lastCatchAt[info.id]
 	local quick = caughtAt ~= nil and now() - caughtAt <= DiscConfig.Throw.QuickReleaseWindow
-	if quick then
+	local chained = caughtAt ~= nil and now() - caughtAt <= DiscConfig.Throw.PassChainWindow
+	if chained then
 		S.flow += 1
 	else
 		S.flow = 1
@@ -18938,6 +19003,7 @@ function matchHandler.onThrown(d: any, info: any)
 		releaseAt = now(),
 		pull = wasPull,
 		quick = quick,
+		chained = chained,
 		flow = S.flow,
 		blocked = info.blocked,
 	}
@@ -19109,6 +19175,17 @@ function applyOutcomes(outcomes: { any }, ctx: { [string]: any }?)
 				MatchService.stat(o.id, "catches")
 				if o.from then
 					MatchService.stat(o.from, "completions")
+				end
+				-- the pass chain: quick releases caught in a row light up the
+				-- team and feed both players' FLOW
+				local lp = S.lastPass
+				if lp and lp.chained and (lp.flow or 0) >= 2 then
+					local n = lp.flow :: number
+					services.AbilityService.gain(o.id, Abilities.Gain.passChain * n)
+					if o.from then
+						services.AbilityService.gain(o.from, Abilities.Gain.passChain * n)
+					end
+					Net.event("Feedback"):FireAllClients("PassChain", { count = n, team = o.team, id = o.id })
 				end
 			elseif kind == "Interception" then
 				MatchService.stat(o.id, "interceptions")
@@ -21409,7 +21486,14 @@ function MovementService.noteTip(id: number, discId: string, defender: boolean, 
 	end
 end
 
-function MovementService.noteCatch(id: number, discId: string, interception: boolean, at: number)
+function MovementService.noteCatch(
+	id: number,
+	discId: string,
+	interception: boolean,
+	at: number,
+	discHeight: number?,
+	layout: boolean?
+)
 	local t = tracks[id]
 	if not t then
 		return
@@ -21432,7 +21516,17 @@ function MovementService.noteCatch(id: number, discId: string, interception: boo
 		airborne = airborne,
 		height = height,
 		interception = interception,
+		discHeight = discHeight,
+		layout = layout,
 	})
+end
+
+-- The disc left this actor's hands at `at` (Alley-Oop).
+function MovementService.noteThrow(id: number, at: number)
+	local t = tracks[id]
+	if t then
+		feedSignatures(id, t, { kind = "Throw", t = at })
+	end
 end
 
 function MovementService.noteGreatest(id: number)
@@ -23419,6 +23513,9 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 			services.DefenseService.checkHandBlock(launch.state, actorId, actor.team, d.groundY, d.wind)
 	end
 
+	if not pull then
+		services.MovementService.noteThrow(actorId, t0)
+	end
 	services.DiscService.launch(d, launch.releasePos, launch.velocity, launch.normal, launch.state.spin, {
 		thrower = actorId,
 		throwerTeam = actor.team,
@@ -34580,6 +34677,18 @@ local function onFeedback(kind: string, payload: any)
 		)
 		if point then
 			TechCore.addBurst(controllers.MovementController.techState(), 20)
+		end
+	elseif kind == "PassChain" and type(payload) == "table" then
+		local n = tonumber(payload.count) or 0
+		local mine = player.Character ~= nil and player.Character:GetAttribute("UBTeam") == payload.team
+		local text = string.format("PASS CHAIN x%d", n)
+		if mine then
+			controllers.TechFeedback.play(text, if n >= 4 then "Perfect" else "Clean")
+			if n >= 4 then
+				controllers.AnimeFX.impactFrame(Theme.teamColor(payload.team))
+			end
+		else
+			Hud.feedback(text, Theme.teamColor(payload.team), 2)
 		end
 	elseif kind == "OpenLauncher" then
 		Hud.toast("Free launcher: press M > Training to set up and fire launches.", C.Accent, 6)
