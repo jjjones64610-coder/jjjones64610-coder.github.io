@@ -157,7 +157,8 @@ lune run tests/flight_table.luau                            # throw table
 
 ## Not done yet
 * Cross-server ranked **matchmaking** (MemoryStore queue + reserved servers).
-* Authored animations and audio. Poses are procedural and sounds are engine
+* Authored animations and audio (ForgeGUI sound generation needs a paid
+  plan; the art in `Config/Art.luau` is ForgeGUI-made). Poses are procedural and sounds are engine
   built-ins; the crowd-loop slots are empty for your own uploads.
 * Bots don't tip or chase signature moves.
 * Contact fouls aren't modelled (players don't collide).

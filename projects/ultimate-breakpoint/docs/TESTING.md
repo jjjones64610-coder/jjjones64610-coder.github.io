@@ -88,6 +88,11 @@ elsewhere).
 - [ ] Settings → **New movement core** off: the classic movement comes back at once; on again: the tech core.
 - [ ] No key hints under the crosshair and no air-move line.
 
+### 0b. Art (Config/Art, ForgeGUI images on Roblox)
+- [ ] The scoreboard bar and the menu buttons show the new art (not stretched badly, text readable on top).
+- [ ] A selected tab, a toggle that is on and the gold Play button still show their colour (the art steps aside for state colours).
+- [ ] Empty an id in `Config/Art.luau`: that element falls back to the drawn look.
+
 ### A. Running and feel (classic engine, solo, F5)
 - [ ] Hold W: you start running at once and **sprint by yourself** after ~0.3 s (Shift sprints instantly). Top speed feels fast; stopping takes a fraction of a second; turns at jog are tight.
 - [ ] Feet don't skate at any speed; walk/run blend smoothly; no limbs pop.

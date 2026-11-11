@@ -5,6 +5,9 @@
 -- combo tier colours live here too, plus `keyText` for "Q SNAP CUT" style
 -- key prompts.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Art = require(ReplicatedStorage:WaitForChild("Shared").Config.Art)
+
 local Theme = {}
 
 Theme.Colors = {
@@ -165,6 +168,42 @@ function Theme.label(text: string, size: number, props: Props?): TextLabel
 	return l
 end
 
+-- Puts an uploaded image (Config/Art) behind a frame or button in place of
+-- its drawn background and outline. Does nothing for an empty slot. With
+-- `plainColor`, the image shows only while the background is that colour:
+-- a button recoloured to show a state (selected tab, toggle on, the gold
+-- call to action) keeps its drawn look, so the state stays readable.
+function Theme.skin(target: GuiObject, artName: string, plainColor: Color3?): ImageLabel?
+	local image = Art.image(artName)
+	if not image then
+		return nil
+	end
+	local img = Instance.new("ImageLabel")
+	img.Name = "Skin"
+	img.BackgroundTransparency = 1
+	img.Image = image
+	img.ScaleType = Enum.ScaleType.Stretch
+	img.Size = UDim2.fromScale(1, 1)
+	img.ZIndex = math.max(target.ZIndex - 1, 0)
+	img.Parent = target
+	local drawnTransparency = target.BackgroundTransparency
+	local function update()
+		local skinned = plainColor == nil or target.BackgroundColor3 == plainColor
+		img.Visible = skinned
+		target.BackgroundTransparency = if skinned then 1 else drawnTransparency
+		for _, child in target:GetChildren() do
+			if child:IsA("UIStroke") then
+				child.Enabled = not skinned
+			end
+		end
+	end
+	update()
+	if plainColor then
+		target:GetPropertyChangedSignal("BackgroundColor3"):Connect(update)
+	end
+	return img
+end
+
 function Theme.button(text: string, props: Props?): TextButton
 	local b = Theme.make("TextButton", {
 		BackgroundColor3 = Theme.Colors.PanelLight,
@@ -187,6 +226,7 @@ function Theme.button(text: string, props: Props?): TextButton
 			end
 		end
 	end
+	Theme.skin(b, "Button", Theme.Colors.PanelLight)
 	return b
 end
 

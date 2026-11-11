@@ -158,6 +158,7 @@ function Hud.build(parent: ScreenGui, c: any)
 
 	-- scoreboard + mode chip ---------------------------------------------------
 	local board = pill(parent, "Scoreboard", UDim2.new(0.5, 0, 0, 10), UDim2.fromOffset(420, 80))
+	Theme.skin(board, "Scoreboard")
 	refs.teamA = Theme.label(TeamsConfig.A.Name, 18, {
 		Parent = board,
 		Position = UDim2.fromOffset(14, 8),

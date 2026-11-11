@@ -770,6 +770,46 @@ return Arenas
         </Item>
         <Item class="ModuleScript" referent="9">
           <Properties>
+            <string name="Name">Art</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Art — uploaded image assets for the interface (made with ForgeGUI in the
+	"Breakpoint Neon Sport" style and published to Roblox as Image assets).
+
+	An empty id falls back to the plain drawn look, so the game still works if
+	an asset is missing or waiting on moderation. Swap any id for your own.
+	The game icon and thumbnail are not used in code: set them on the
+	experience's page in the Creator Dashboard.
+]]
+
+local Art = {}
+
+Art.Images = {
+	Scoreboard = "115503255890906", -- the top scoreboard bar (team slots left and right)
+	Button = "72548992304180", -- every menu / panel button
+}
+
+-- Not used in code; listed so they are easy to find.
+Art.Store = {
+	Icon = "122240476504741",
+	Thumbnail = "77694382940410",
+}
+
+-- "rbxassetid://123" for an id, or nil when the slot is empty.
+function Art.image(name: string): string?
+	local id = (Art.Images :: any)[name]
+	if type(id) == "string" and id ~= "" then
+		return "rbxassetid://" .. id
+	end
+	return nil
+end
+
+return Art
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="10">
+          <Properties>
             <string name="Name">Audio</string>
             <string name="Source"><![CDATA[--!strict
 -- AUDIO CUES
@@ -826,7 +866,7 @@ return Audio
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="10">
+        <Item class="ModuleScript" referent="11">
           <Properties>
             <string name="Name">Disc</string>
             <string name="Source"><![CDATA[--!strict
@@ -1091,7 +1131,7 @@ return Disc
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="11">
+        <Item class="ModuleScript" referent="12">
           <Properties>
             <string name="Name">Hitbox</string>
             <string name="Source"><![CDATA[--!strict
@@ -1156,7 +1196,7 @@ return Hitbox
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">Input</string>
             <string name="Source"><![CDATA[--!strict
@@ -1382,7 +1422,7 @@ return Input
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="14">
           <Properties>
             <string name="Name">Modes</string>
             <string name="Source"><![CDATA[--!strict
@@ -1648,7 +1688,7 @@ return Modes
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">Movement</string>
             <string name="Source"><![CDATA[--!strict
@@ -2033,7 +2073,7 @@ return Movement
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="16">
           <Properties>
             <string name="Name">Progression</string>
             <string name="Source"><![CDATA[--!strict
@@ -2329,7 +2369,7 @@ return Progression
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -2442,7 +2482,7 @@ return Signatures
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Teams</string>
             <string name="Source"><![CDATA[--!strict
@@ -2473,7 +2513,7 @@ return Teams
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Tech</string>
             <string name="Source"><![CDATA[--!strict
@@ -2595,11 +2635,11 @@ return Tech
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="19">
+      <Item class="Folder" referent="20">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -2912,7 +2952,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -3135,7 +3175,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="22">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -3474,11 +3514,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="23">
+      <Item class="Folder" referent="24">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -5817,7 +5857,7 @@ return MovementSim
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">TechCore</string>
             <string name="Source"><![CDATA[--!strict
@@ -6273,7 +6313,7 @@ return TechCore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="26">
+      <Item class="ModuleScript" referent="27">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -6409,11 +6449,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="27">
+      <Item class="Folder" referent="28">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -6873,7 +6913,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -7249,7 +7289,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -7522,7 +7562,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -8065,7 +8105,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -8283,7 +8323,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -8767,7 +8807,7 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -9018,11 +9058,11 @@ return Signatures
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="35">
+      <Item class="Folder" referent="36">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -9069,7 +9109,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -9117,7 +9157,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -9231,19 +9271,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="39">
+  <Item class="ServerScriptService" referent="40">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="40">
+    <Item class="Folder" referent="41">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="41">
+      <Item class="Folder" referent="42">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -10270,7 +10310,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -10394,7 +10434,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -10892,7 +10932,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="45">
+      <Item class="Script" referent="46">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -10957,11 +10997,11 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="46">
+      <Item class="Folder" referent="47">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -11089,7 +11129,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13496,7 +13536,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14060,7 +14100,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="51">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14371,7 +14411,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14729,7 +14769,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15265,7 +15305,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15498,7 +15538,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15597,7 +15637,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17363,7 +17403,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18600,7 +18640,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19068,7 +19108,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19574,7 +19614,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19894,7 +19934,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -20351,7 +20391,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22241,13 +22281,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="62">
+  <Item class="SoundService" referent="63">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="63">
+  <Item class="StarterPlayer" referent="64">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -22260,11 +22300,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="64">
+    <Item class="StarterCharacterScripts" referent="65">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="65">
+      <Item class="LocalScript" referent="66">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -22347,19 +22387,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="66">
+    <Item class="StarterPlayerScripts" referent="67">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="67">
+      <Item class="Folder" referent="68">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="68">
+        <Item class="Folder" referent="69">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -22499,7 +22539,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -22780,7 +22820,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -23533,7 +23573,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -24399,7 +24439,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25333,7 +25373,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25747,7 +25787,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26856,7 +26896,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27950,7 +27990,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28112,7 +28152,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -28255,7 +28295,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29087,7 +29127,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29515,7 +29555,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="81">
+        <Item class="LocalScript" referent="82">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -29565,11 +29605,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="82">
+        <Item class="Folder" referent="83">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -29732,6 +29772,7 @@ function Hud.build(parent: ScreenGui, c: any)
 
 	-- scoreboard + mode chip ---------------------------------------------------
 	local board = pill(parent, "Scoreboard", UDim2.new(0.5, 0, 0, 10), UDim2.fromOffset(420, 80))
+	Theme.skin(board, "Scoreboard")
 	refs.teamA = Theme.label(TeamsConfig.A.Name, 18, {
 		Parent = board,
 		Position = UDim2.fromOffset(14, 8),
@@ -30607,7 +30648,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -31847,7 +31888,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -32133,7 +32174,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -32512,7 +32553,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -32658,7 +32699,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -32667,6 +32708,9 @@ return TechDebug
 -- Technique colours (one per technique, shared by HUD and world effects) and
 -- combo tier colours live here too, plus `keyText` for "Q SNAP CUT" style
 -- key prompts.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Art = require(ReplicatedStorage:WaitForChild("Shared").Config.Art)
 
 local Theme = {}
 
@@ -32828,6 +32872,42 @@ function Theme.label(text: string, size: number, props: Props?): TextLabel
 	return l
 end
 
+-- Puts an uploaded image (Config/Art) behind a frame or button in place of
+-- its drawn background and outline. Does nothing for an empty slot. With
+-- `plainColor`, the image shows only while the background is that colour:
+-- a button recoloured to show a state (selected tab, toggle on, the gold
+-- call to action) keeps its drawn look, so the state stays readable.
+function Theme.skin(target: GuiObject, artName: string, plainColor: Color3?): ImageLabel?
+	local image = Art.image(artName)
+	if not image then
+		return nil
+	end
+	local img = Instance.new("ImageLabel")
+	img.Name = "Skin"
+	img.BackgroundTransparency = 1
+	img.Image = image
+	img.ScaleType = Enum.ScaleType.Stretch
+	img.Size = UDim2.fromScale(1, 1)
+	img.ZIndex = math.max(target.ZIndex - 1, 0)
+	img.Parent = target
+	local drawnTransparency = target.BackgroundTransparency
+	local function update()
+		local skinned = plainColor == nil or target.BackgroundColor3 == plainColor
+		img.Visible = skinned
+		target.BackgroundTransparency = if skinned then 1 else drawnTransparency
+		for _, child in target:GetChildren() do
+			if child:IsA("UIStroke") then
+				child.Enabled = not skinned
+			end
+		end
+	end
+	update()
+	if plainColor then
+		target:GetPropertyChangedSignal("BackgroundColor3"):Connect(update)
+	end
+	return img
+end
+
 function Theme.button(text: string, props: Props?): TextButton
 	local b = Theme.make("TextButton", {
 		BackgroundColor3 = Theme.Colors.PanelLight,
@@ -32850,6 +32930,7 @@ function Theme.button(text: string, props: Props?): TextButton
 			end
 		end
 	end
+	Theme.skin(b, "Button", Theme.Colors.PanelLight)
 	return b
 end
 
@@ -32879,7 +32960,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -33343,12 +33424,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="90">
+  <Item class="Teams" referent="91">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="91">
+  <Item class="Workspace" referent="92">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>
