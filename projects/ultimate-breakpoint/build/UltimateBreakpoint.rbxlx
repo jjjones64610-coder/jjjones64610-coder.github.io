@@ -13146,6 +13146,7 @@ local JOG = MC.JogSpeed
 local SPRINT = MC.SprintSpeed
 
 local THINK_EVERY = 0.1
+local HUMAN_RECEIVER_BONUS = 9 -- chooseReceiver: an open human teammate
 local ARRIVE_DECEL = 45 -- studs/s^2: the approach to a spot ramps speed down like this
 local ARRIVE_RADIUS = 0.8 -- stop inside this ...
 local RESUME_RADIUS = 1.6 -- ... and only move again beyond this (no jitter on a spot)
@@ -13457,8 +13458,8 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		align = align,
 		loco = nil,
 		rng = rng,
-		skill = rng:range(0.6, 0.85),
-		reaction = rng:range(0.18, 0.32),
+		skill = rng:range(0.7, 0.92),
+		reaction = rng:range(0.14, 0.26),
 		sim = MovementSim.new(now()),
 		tech = TechCore.new(0),
 		techOn = false,
@@ -14026,8 +14027,15 @@ techMotor = function(b: Bot, input: MovementSim.Input, env: MovementSim.Env, ste
 	end
 	local wasGrounded = tech.grounded
 	local sprint = input.sprint and tech.burst > 55
+	-- the brain's stick is scaled for the classic speeds (JOG / SPRINT):
+	-- turn it back into the speed it wants, as a share of the core's top
+	local wantSpeed = input.move.Magnitude * (if input.sprint then SPRINT else JOG)
+	local top = if sprint then TechConfig.BURST_TOP_SPEED else TechConfig.RUN_TOP_SPEED
+	local move = if input.move.Magnitude > 0.01
+		then input.move.Unit * math.clamp(wantSpeed / top, 0, 1)
+		else Vector3.zero
 	TechCore.advance(tech, {
-		move = input.move,
+		move = move,
 		held = {
 			Burst = t < b.burstUntil or sprint,
 			Slide = t < b.slideUntil,
@@ -14875,6 +14883,43 @@ local function spreadCutter(b: Bot, w: World, plan: TeamPlan, ref: Vector3, f: V
 	end
 end
 
+-- A human teammate holds the disc: cut into the lanes in front of where
+-- they face (alternating sides by bot, near and deep), again and again, so
+-- there is always someone open to hit.
+local function cutForHuman(b: Bot, w: World, holder: number): boolean
+	local t = now()
+	if t < b.nextTechAt then
+		return false
+	end
+	local hroot = Actors.rootOf(holder)
+	if not hroot then
+		return false
+	end
+	local look = VecMath.flatUnit(hroot.CFrame.LookVector)
+	if look.Magnitude < 0.5 then
+		return false
+	end
+	local f = FieldGeometry.attackDirection(w.e.attack[b.team])
+	-- lean the lane downfield so cuts gain ground
+	local lane = VecMath.flatUnit(look * 0.6 + f * 0.4)
+	local right = rightOf(lane)
+	local idx = 0
+	for i, body in w.team[b.team] do
+		if body.id == b.id then
+			idx = i
+			break
+		end
+	end
+	local side = if idx % 2 == 0 then 1 else -1
+	local deep = (idx // 2) % 2 == 1
+	local dist = if deep then b.rng:range(30, 42) else b.rng:range(14, 24)
+	local spread = b.rng:range(6, 14) * side
+	local target = hroot.Position + lane * dist + right * spread
+	startCut(b, w, "ForHuman", target)
+	b.nextTechAt = t + b.rng:range(2.2, 3.4)
+	return true
+end
+
 local function thinkOffense(b: Bot, w: World, ref: Vector3, holder: number?)
 	clearMark(b)
 	b.face = nil
@@ -14889,6 +14934,9 @@ local function thinkOffense(b: Bot, w: World, ref: Vector3, holder: number?)
 		table.insert(plan.cutters, b.id)
 	end
 	if b.cut and runCut(b) then
+		return
+	end
+	if holder and not Actors.isBotId(holder) and holder ~= b.id and cutForHuman(b, w, holder) then
 		return
 	end
 	if role == "Handler" then
@@ -15130,6 +15178,10 @@ local function chooseReceiver(b: Bot, w: World, P: Vector3, urgent: boolean): (B
 				end
 				if urgent then
 					score += 30 - dist * 0.2 -- anyone close will do
+				end
+				-- a human teammate who is open gets the disc: bots play for you
+				if not body.isBot and openD > 4 and lane > 2 then
+					score += HUMAN_RECEIVER_BONUS
 				end
 				if score > bestScore then
 					best, bestScore = body, score
