@@ -100,6 +100,8 @@ local Solver = require(Shared.Disc.Solver)
 local FieldGeometry = require(Shared.Rules.FieldGeometry)
 local RulesEngine = require(Shared.Rules.RulesEngine)
 local MovementSim = require(Shared.Movement.MovementSim)
+local TechCore = require(Shared.Movement.TechCore)
+local TechConfig = require(Shared.Config.Tech)
 local Locomotion = require(Shared.Animation.Locomotion)
 
 local BotService = {}
@@ -129,6 +131,7 @@ local CATCH_HEIGHT = 9 -- disc centre height (above the ground) a jumping bot ca
 local HAND_CHECK_SKIP = 0.3 -- weaker bots skip the hand-block test this often
 local OVERHEAD = { Hammer = true, Scoober = true }
 local POSE_MODES = { Slide = true, Dive = true, DiveSlide = true, Recover = true, Pivot = true, Mark = true }
+local techMotor: (any, any, any, number) -> () -- defined with the motor
 
 export type Press = { action: string, dir: Vector3?, side: number, at: number }
 
@@ -183,6 +186,13 @@ export type Bot = {
 	skill: number,
 	reaction: number,
 	sim: MovementSim.State,
+	-- the tech engine (TechCore) moves the bot whenever it is not holding the
+	-- disc (the pivot still runs on MovementSim until the throwing step)
+	tech: TechCore.State,
+	techOn: boolean, -- TechCore drove the last frame
+	burstUntil: number, -- hold Burst until (server time)
+	slideUntil: number,
+	jumpUntil: number,
 	-- intent (brain output)
 	target: Vector3?,
 	targetVel: Vector3?, -- the target moves (a guard's man): match it, no stop radius
@@ -422,6 +432,11 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		skill = rng:range(0.6, 0.85),
 		reaction = rng:range(0.18, 0.32),
 		sim = MovementSim.new(now()),
+		tech = TechCore.new(0),
+		techOn = false,
+		burstUntil = 0,
+		slideUntil = 0,
+		jumpUntil = 0,
 		target = nil,
 		targetVel = nil,
 		speed = JOG,
@@ -494,7 +509,35 @@ local function canSpend(b: Bot, cost: number): boolean
 end
 
 local function ready(b: Bot, tech: string): boolean
+	if b.techOn then
+		return true -- TechCore buffers the press and refuses what can't happen
+	end
 	return MovementSim.readiness(b.sim, tech) >= 1
+end
+
+-- Whether TechCore moves this bot right now.
+local function usesTech(b: Bot): boolean
+	return TechConfig.BOTS_USE_TECH and not b.sim.holding
+end
+
+-- A press on the tech engine. The classic vocabulary maps onto it: Burst is
+-- a short hold (a run), a Cut in the air is an air dodge, Slide and Jump are
+-- held a moment (a slow bot's long Jump hold is a Sky).
+local function techPress(b: Bot, action: string)
+	local tech = b.tech
+	local t = now()
+	if action == "Burst" then
+		b.burstUntil = t + 0.7
+		return
+	elseif action == "Cut" and not tech.grounded then
+		action = "Jump" -- air redirect -> air dodge
+	elseif action == "Slide" then
+		b.slideUntil = t + 0.6
+	elseif action == "Jump" then
+		local slow = TechCore.flatSpeed(tech) <= TechConfig.SKY_MAX_SPEED
+		b.jumpUntil = t + (if slow and b.rng:next() < b.skill then TechConfig.SKY_PERFECT[1] + 0.02 else 0.15)
+	end
+	TechCore.press(tech, action)
 end
 
 local function setStance(b: Bot, on: boolean, stance: string)
@@ -754,7 +797,13 @@ local function runPresses(b: Bot, input: MovementSim.Input, env: MovementSim.Env
 			if dir and dir.Magnitude > 0.1 and not sim.holding then
 				inp = { move = VecMath.flatUnit(dir), sprint = true }
 			end
-			local ok = MovementSim.press(sim, p.action :: any, inp, env)
+			local ok
+			if usesTech(b) then
+				techPress(b, p.action)
+				ok = true
+			else
+				ok = MovementSim.press(sim, p.action :: any, inp, env)
+			end
 			if ok then
 				if dir then
 					out = inp
@@ -792,7 +841,11 @@ local function jumpBlock(b: Bot, env: MovementSim.Env)
 	if mk.hopKey ~= key then
 		mk.hopKey = key
 		if b.rng:next() < 0.35 * b.skill then
-			MovementSim.press(b.sim, "Jump", NO_INPUT, env)
+			if usesTech(b) then
+				techPress(b, "Jump")
+			else
+				MovementSim.press(b.sim, "Jump", NO_INPUT, env)
+			end
 		end
 	end
 end
@@ -800,6 +853,24 @@ end
 local function reflexes(b: Bot, env: MovementSim.Env)
 	local sim = b.sim
 	jumpBlock(b, env)
+	if usesTech(b) then
+		local tech = b.tech
+		-- a landing slide just before touchdown, a tech roll out of a layout
+		if b.precisionArmed then
+			local ttl = env.timeToLand
+			if tech.grounded and now() - b.armedAt > 0.1 then
+				b.precisionArmed = false
+			elseif not tech.grounded and ttl ~= nil and ttl <= 0.05 then
+				b.precisionArmed = false
+				techPress(b, "Slide")
+			end
+		end
+		if b.popPending and tech.state == "Downed" then
+			b.popPending = false
+			techPress(b, "Jump")
+		end
+		return
+	end
 	if b.precisionArmed then
 		local ttl = env.timeToLand
 		if sim.landedAt > b.armedAt + 0.05 then
@@ -865,6 +936,7 @@ local function onTeleport(b: Bot)
 	r.AssemblyAngularVelocity = Vector3.zero
 	MovementSim.reset(b.sim) -- keeps frozen, holding, exertion, cooldowns and the pivot
 	b.sim.pos = r.Position
+	TechCore.reset(b.tech)
 	table.clear(b.presses)
 	b.arrived = false
 	b.cut = nil
@@ -874,6 +946,126 @@ local function onTeleport(b: Bot)
 	local look = if type(yaw) == "number" then VecMath.fromYaw(yaw) else VecMath.flatUnit(r.CFrame.LookVector)
 	if look.Magnitude > 0.5 then
 		b.facing = look
+	end
+end
+
+-- The pose mode a tech state replicates as (MovementService VALID_MODES).
+local function techMode(tech: TechCore.State): string
+	local st = tech.state
+	if tech.frozen then
+		return "Frozen"
+	elseif st == "Marking" then
+		return "Mark"
+	elseif st == "Airborne" or st == "AirDodging" then
+		return "Air"
+	elseif st == "Diving" then
+		return "Dive"
+	elseif st == "Sliding" then
+		return "Slide"
+	elseif st == "Downed" then
+		return "DiveSlide"
+	elseif st == "Recovering" then
+		return "Recover"
+	end
+	return "Ground"
+end
+
+-- One frame of a bot on the tech engine: the same TechCore a player runs.
+-- The body is the bot's Humanoid (WalkSpeed / Move for the flat part); in
+-- the air the core's vertical speed is written every frame, and a takeoff
+-- puts the Humanoid into Jumping.
+techMotor = function(b: Bot, input: MovementSim.Input, env: MovementSim.Env, step: number)
+	local c, h, r = b.model, b.humanoid, b.root
+	local tech = b.tech
+	local t = now()
+	if not b.techOn then
+		-- take over from MovementSim (spawn, after a throw)
+		b.techOn = true
+		tech.vel = Vector3.new(b.sim.vel.X, r.AssemblyLinearVelocity.Y, b.sim.vel.Z)
+		TechCore.setHolding(tech, false)
+	end
+	if tech.frozen ~= b.sim.frozen then
+		TechCore.setFrozen(tech, b.sim.frozen)
+	end
+	if tech.marking ~= b.marking then
+		TechCore.setMarking(tech, b.marking)
+	end
+	local wasGrounded = tech.grounded
+	local sprint = input.sprint and tech.burst > 55
+	TechCore.advance(tech, {
+		move = input.move,
+		held = {
+			Burst = t < b.burstUntil or sprint,
+			Slide = t < b.slideUntil,
+			Jump = t < b.jumpUntil,
+		},
+		aim = b.face or b.facing,
+	}, { grounded = env.grounded, timeToLand = env.timeToLand }, step)
+
+	local v = applyLine(c, r.Position, flat(tech.vel))
+	if v ~= flat(tech.vel) then
+		tech.vel = Vector3.new(v.X, tech.vel.Y, v.Z)
+	end
+	local sp = v.Magnitude
+	h.WalkSpeed = sp
+	h:Move(if sp > 0.05 then v / sp else Vector3.zero, false)
+	if not tech.grounded then
+		if wasGrounded and tech.vel.Y > 0 then
+			h.JumpPower = tech.vel.Y
+			h:ChangeState(Enum.HumanoidStateType.Jumping)
+			b.jumpArmed = true
+		end
+		r.AssemblyLinearVelocity = Vector3.new(v.X, tech.vel.Y, v.Z)
+	end
+
+	-- the brain reads the classic sim: mirror what it needs
+	local sim = b.sim
+	sim.vel = v
+	sim.lastOutVel = v
+	local mode = techMode(tech)
+	sim.mode = mode :: any
+	sim.diveDir = tech.heading
+
+	local face, aiming = facingFor(b, v)
+	if tech.state == "Diving" or tech.state == "Downed" then
+		face, aiming = tech.heading, false
+	end
+	if face and face.Magnitude > 0.5 then
+		b.facing = VecMath.flatUnit(face)
+	end
+	local align = b.align
+	if aiming ~= b.aiming then
+		b.aiming = aiming
+		align.Responsiveness = if aiming then 45 else 30
+		align.MaxAngularVelocity = if aiming then 40 else 20
+	end
+	if b.facing:Dot(b.alignFacing) < 0.99995 then
+		b.alignFacing = b.facing
+		align.CFrame = CFrame.lookAt(Vector3.zero, b.facing)
+	end
+
+	if mode ~= b.poseMode then
+		b.poseMode = mode
+		services.MovementService.setBotMode(b.id, mode)
+	end
+	for _, e in TechCore.drainEvents(tech) do
+		if e.quality ~= "Miss" then
+			services.MovementService.botTech(b.id, e.tech, e.dir, mode, e.quality, e.info, t)
+		end
+	end
+
+	local loco = b.loco
+	if loco then
+		local vel = r.AssemblyLinearVelocity
+		local raw = Vector3.new(vel.X, 0, vel.Z).Magnitude
+		b.speedSmooth += (raw - b.speedSmooth) * (1 - math.exp(-SPEED_SMOOTH * step))
+		local lm: Locomotion.Mode = "Ground"
+		if POSE_MODES[mode] then
+			lm = "Pose"
+		elseif not tech.grounded then
+			lm = if vel.Y > 2 then "Rising" else "Falling"
+		end
+		Locomotion.update(loco, step, b.speedSmooth, lm)
 	end
 end
 
@@ -922,6 +1114,16 @@ local function motor(b: Bot, dt: number)
 
 	local input = runPresses(b, inputFor(b), env)
 	reflexes(b, env)
+	if usesTech(b) then
+		techMotor(b, input, env, step)
+		return
+	end
+	if b.techOn then
+		-- the tech engine hands over (a catch): keep the run-out speed
+		b.techOn = false
+		sim.vel = flat(b.tech.vel)
+		sim.lastOutVel = sim.vel
+	end
 	local out = MovementSim.step(sim, input, env, step)
 	if b.marking and not MovementSim.isMarking(sim) then
 		b.marking = false -- a Cut / Dive / Burst ended the mark inside the sim

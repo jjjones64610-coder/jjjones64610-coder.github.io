@@ -16,6 +16,9 @@ Tech.PHYSICS_RATE = 120 -- Hz, fixed timestep
 Tech.MAX_FRAME = 0.25 -- s of frame time the accumulator will catch up on at most
 Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 
+-- bots run on this engine too (off the disc; BotService)
+Tech.BOTS_USE_TECH = true
+
 -- running
 Tech.RUN_TOP_SPEED = 22
 Tech.RUN_ACCEL = 60
