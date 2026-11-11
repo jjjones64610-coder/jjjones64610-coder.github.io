@@ -116,6 +116,13 @@ the last timed press in ms ("Cut: 34 ms early").
 - [ ] Bots: with the disc in your hands they cut into the lanes in front of you; open, you get passes.
 - [ ] Shop: buy an emote / aura / trail / ability with coins; equip it; B plays the emote in warm-up; Perfects flare your aura. Robux buttons read "after publishing".
 
+### 0a+. Round 6
+- [ ] Every menu button shows its label (the art no longer covers the text).
+- [ ] Title screen: PLAY 3v3 or PLAY 7v7; alone, the match starts against bots at once on that field.
+- [ ] Walk up to an opposing thrower: you mark automatically (no RMB needed), shuffle fast with instant turns, and the stall count runs.
+- [ ] Throwing past bots: stepping out beats the mark more often; bot defenders don't pick off every throw. The preview arc shows most of the flight.
+- [ ] Catching: near-misses on your screen still count.
+
 ### 0b. Art (Config/Art, ForgeGUI images on Roblox)
 - [ ] The scoreboard bar and the menu buttons show the new art (not stretched badly, text readable on top).
 - [ ] A selected tab, a toggle that is on and the gold Play button still show their colour (the art steps aside for state colours).

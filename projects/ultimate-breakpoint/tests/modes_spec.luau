@@ -114,7 +114,7 @@ test("a full line-up fits on its own mode's goal line", function()
 	end
 end)
 
-test("eligible(): the head count decides; only 7-9 humans get a choice", function()
+test("eligible(): up to 9 humans choose (bots fill 7v7 too), 10+ play Normal", function()
 	for n = 0, 16 do
 		local options, default = Modes.eligible(n)
 		expect(table.find(options, default) ~= nil, n .. ": default is an option")
@@ -125,11 +125,9 @@ test("eligible(): the head count decides; only 7-9 humans get a choice", functio
 			expect(i > last, n .. ": ordered")
 			last = i
 		end
-		if n <= 6 then
-			expect(#options == 1 and default == "Mini", n .. " humans: Mini only")
-		elseif n <= 9 then
+		if n <= 9 then
 			expect(#options == 2, n .. " humans: vote between both")
-			expect(default == (if n == 7 then "Mini" else "Normal"), n .. " humans default " .. default)
+			expect(default == (if n <= 7 then "Mini" else "Normal"), n .. " humans default " .. default)
 		else
 			expect(#options == 1 and default == "Normal", n .. " humans: Normal only")
 		end

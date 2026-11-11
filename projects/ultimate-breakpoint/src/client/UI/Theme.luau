@@ -206,12 +206,50 @@ function Theme.skin(target: GuiObject, artName: string, plainColor: Color3?): Im
 	img.Image = image
 	img.ScaleType = Enum.ScaleType.Stretch
 	img.Size = UDim2.fromScale(1, 1)
-	img.ZIndex = math.max(target.ZIndex - 1, 0)
+	img.ZIndex = target.ZIndex
 	img.Parent = target
+	-- A child always draws over its parent, so on a button the image would
+	-- cover the button's own label: draw the label again on top of the image
+	-- (kept in sync) and hide the original while the skin shows.
+	local label: TextLabel? = nil
+	if target:IsA("TextButton") then
+		local btn = target :: TextButton
+		local l = Instance.new("TextLabel")
+		l.Name = "SkinText"
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.fromScale(1, 1)
+		l.ZIndex = btn.ZIndex + 1
+		l.Parent = btn
+		local function sync()
+			l.Text = btn.Text
+			l.Font = btn.Font
+			l.TextSize = btn.TextSize
+			l.TextColor3 = btn.TextColor3
+			l.TextWrapped = btn.TextWrapped
+			l.RichText = btn.RichText
+			l.TextXAlignment = btn.TextXAlignment
+			l.TextYAlignment = btn.TextYAlignment
+			l.TextScaled = btn.TextScaled
+		end
+		sync()
+		for _, prop in { "Text", "Font", "TextSize", "TextColor3", "TextWrapped", "RichText", "TextScaled" } do
+			btn:GetPropertyChangedSignal(prop):Connect(sync)
+		end
+		btn:GetPropertyChangedSignal("ZIndex"):Connect(function()
+			img.ZIndex = btn.ZIndex
+			l.ZIndex = btn.ZIndex + 1
+		end)
+		label = l
+	end
 	local drawnTransparency = target.BackgroundTransparency
 	local function update()
 		local skinned = plainColor == nil or target.BackgroundColor3 == plainColor
 		img.Visible = skinned
+		local l = label
+		if l then
+			l.Visible = skinned;
+			(target :: TextButton).TextTransparency = if skinned then 1 else 0
+		end
 		target.BackgroundTransparency = if skinned then 1 else drawnTransparency
 		for _, child in target:GetChildren() do
 			if child:IsA("UIStroke") then

@@ -167,6 +167,9 @@ Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
 -- strict: a touch with no timed press bobbles (the spec). Off: it is still a
 -- catch, and a timed press earns the Perfect Catch / Hot Hands bonus.
 Tech.TIMED_CATCH_STRICT = false
+-- against a human thrower a bot defender gets its hands on a throw only this
+-- often (rolled once per throw): bots read flights perfectly
+Tech.BOT_INTERCEPT_CHANCE = 0.55
 Tech.CATCH_LAG_ALLOWANCE = 100 -- ms the server adds (plus ping)
 Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
 Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
@@ -189,7 +192,7 @@ Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
 Tech.LAUNCH_ANGLE = { -5, 35 } -- degrees, the mouse sets it while charging
-Tech.RUN_THROUGH_CONE = 5 -- studs/s of speed per degree of aim cone (spec 29)
+Tech.RUN_THROUGH_CONE = 10 -- studs/s of speed per degree of aim cone (spec 29: 5)
 Tech.FAKE_RECOVERY = 0.2 -- s after a pump fake before the next throw
 Tech.FAKE_SWITCH_WINDOW = 0.15 -- s: the other throw this soon skips the recovery
 
@@ -205,6 +208,8 @@ Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
+Tech.MARK_SPEED = 15 -- studs/s: the mark shuffle (spec 30: 14)
+Tech.MARK_ACCEL = 140 -- studs/s²: it starts and stops on a dime
 Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
 Tech.MIRROR_BONUS = 2
 Tech.JUKED_LOSS = 0.30

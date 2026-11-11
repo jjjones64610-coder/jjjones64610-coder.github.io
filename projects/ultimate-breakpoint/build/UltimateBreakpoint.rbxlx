@@ -1221,7 +1221,7 @@ local Disc = {
 		ClaimRateLimit = 0.02, -- server: min seconds between claims per actor (replies Denied)
 		-- Claim slack (CatchGeometry.slack): Base + ping * PingSlackPerSecond
 		-- + body speed * SpeedSlack, capped at MaxSlack.
-		BaseSlack = 1.0, -- positional tolerance for claims (studs)
+		BaseSlack = 1.3, -- positional tolerance for claims (studs; humans only, bots are judged exactly)
 		PingSlackPerSecond = 26, -- extra tolerance per second of ping (≈ sprint speed)
 		SpeedSlack = 0.06, -- extra tolerance per stud/s of body speed
 		MaxSlack = 5,
@@ -1597,9 +1597,9 @@ return Input
 	  Mini    3v3 on the Mini field (240 x 90 including end zones)
 	  Normal  7v7 on the Normal field (360 x 136 including end zones)
 
-	Which mode is played follows the head count (Modes.eligible): up to 6
-	humans play Mini, 10 or more play Normal, and 7-9 humans may vote between
-	them. Empty spots are filled with bots (FillWithBots) so the field is always
+	Which mode is played follows the head count (Modes.eligible): up to 9
+	humans may vote between them (Mini by default up to 7, Normal for 8-9),
+	10 or more play Normal. Empty spots are filled with bots (FillWithBots) so the field is always
 	exactly 3v3 or 7v7; Rules/MatchPlan decides who is on the line each point.
 
 	Ranked is not a mode. A match is ranked automatically when its mode is
@@ -1673,7 +1673,7 @@ Modes.List = {
 		PointSetupTime = 3,
 		CelebrationTime = 3,
 		FillWithBots = true,
-		PreviewFraction = 0.5,
+		PreviewFraction = 0.75,
 		LandingShadow = true,
 		RankedEligible = true,
 		Ranked = false,
@@ -1696,7 +1696,7 @@ Modes.List = {
 		PointSetupTime = 4,
 		CelebrationTime = 4,
 		FillWithBots = true,
-		PreviewFraction = 0.35,
+		PreviewFraction = 0.6,
 		LandingShadow = true,
 		RankedEligible = true,
 		Ranked = false,
@@ -1711,7 +1711,7 @@ Modes.Default = "Mini"
 
 -- Applied on top of the preset when a match is ranked.
 Modes.RankedOverrides = {
-	PreviewFraction = 0.2,
+	PreviewFraction = 0.35,
 	SpecialArenas = false,
 } :: { [string]: any }
 
@@ -1763,13 +1763,12 @@ end
 
 -- Which modes a lobby of `humans` players may play, and the one picked when
 -- nobody votes. Players only vote when more than one mode is returned.
---   <= 6 humans: Mini        7: Mini or Normal (default Mini)
+-- Bots fill every empty spot, so even one player can pick 7v7.
+--   <= 7 humans: Mini or Normal (default Mini)
 --   8-9: Mini or Normal (default Normal)   >= 10: Normal
 function Modes.eligible(humans: number): ({ string }, string)
-	if humans <= 6 then
-		return { "Mini" }, "Mini"
-	elseif humans <= 9 then
-		return { "Mini", "Normal" }, if humans == 7 then "Mini" else "Normal"
+	if humans <= 9 then
+		return { "Mini", "Normal" }, if humans <= 7 then "Mini" else "Normal"
 	end
 	return { "Normal" }, "Normal"
 end
@@ -3121,6 +3120,9 @@ Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
 -- strict: a touch with no timed press bobbles (the spec). Off: it is still a
 -- catch, and a timed press earns the Perfect Catch / Hot Hands bonus.
 Tech.TIMED_CATCH_STRICT = false
+-- against a human thrower a bot defender gets its hands on a throw only this
+-- often (rolled once per throw): bots read flights perfectly
+Tech.BOT_INTERCEPT_CHANCE = 0.55
 Tech.CATCH_LAG_ALLOWANCE = 100 -- ms the server adds (plus ping)
 Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
 Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
@@ -3143,7 +3145,7 @@ Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
 Tech.LAUNCH_ANGLE = { -5, 35 } -- degrees, the mouse sets it while charging
-Tech.RUN_THROUGH_CONE = 5 -- studs/s of speed per degree of aim cone (spec 29)
+Tech.RUN_THROUGH_CONE = 10 -- studs/s of speed per degree of aim cone (spec 29: 5)
 Tech.FAKE_RECOVERY = 0.2 -- s after a pump fake before the next throw
 Tech.FAKE_SWITCH_WINDOW = 0.15 -- s: the other throw this soon skips the recovery
 
@@ -3159,6 +3161,8 @@ Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
+Tech.MARK_SPEED = 15 -- studs/s: the mark shuffle (spec 30: 14)
+Tech.MARK_ACCEL = 140 -- studs/s²: it starts and stops on a dime
 Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
 Tech.MIRROR_BONUS = 2
 Tech.JUKED_LOSS = 0.30
@@ -7766,6 +7770,15 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	if want == nil then
 		-- no stick: friction (overspeed bleeds the same way)
 		return s.heading * math.max(0, speed - Config.GROUND_FRICTION * dt)
+	end
+	if s.state == "Marking" then
+		-- the mark shuffle: quick, instant turns, capped at MARK_SPEED
+		top = math.min(top, Config.MARK_SPEED)
+		s.heading = want
+		s.crossAt = nil
+		local target = top * mag
+		speed = moveToward(math.min(speed, top), target, Config.MARK_ACCEL * dt)
+		return want * speed
 	end
 
 	-- the stick crossing 45° from the line (the Perfect Cut reference)
@@ -13218,8 +13231,8 @@ return ArenaService
 
 	MARKER (diag 3 §5). Stands MarkDistance upfield of the pivot P, shaded
 	toward the break side, and mirrors the thrower's step from a reaction-
-	lagged position (MovementService.positionAt, lag 0.30 - 0.15 x skill)
-	with gain 0.55 + 0.35 x skill, clamped to MirrorMax; it shuffles with the
+	lagged position (MovementService.positionAt, lag 0.38 - 0.12 x skill)
+	with gain 0.4 + 0.25 x skill, clamped to MirrorMax; it shuffles with the
 	sim's mark overlay, facing P. Low stance by default, High only while an
 	overhead windup is really live (after the reaction delay). Bites on
 	fakes (FakeT / FakeSide; 0.6 - 0.4 x skill, never twice in 1.2 s) and
@@ -15136,10 +15149,10 @@ local function runMark(b: Bot, holderId: number, up: Vector3, force: string)
 	local shade = if force == "BH" then r * mirrorSign else -r * mirrorSign
 
 	-- mirror the step the thrower had a reaction time ago
-	local lag = 0.30 - 0.15 * skill
+	local lag = 0.38 - 0.12 * skill -- (fair play vs humans: a beatable mark)
 	local lagged = services.MovementService.positionAt(holderId, t - lag)
 	local stepLat = flat(lagged - P):Dot(r) / HD.BodyShare
-	local mirror = math.clamp(stepLat * (0.55 + 0.35 * skill), -DM.MirrorMax, DM.MirrorMax)
+	local mirror = math.clamp(stepLat * (0.4 + 0.25 * skill), -DM.MirrorMax, DM.MirrorMax)
 
 	-- bite on a fake
 	local ft = hc:GetAttribute("FakeT")
@@ -15910,6 +15923,7 @@ local MAX_BODY_SPEED = math.max(MovementConfig.HardCap, TechConfig.HARD_SPEED_CA
 local FUTURE_SLACK = 0.05
 
 local CatchingService = {}
+local botDefends: (any, any) -> boolean
 
 local services: any
 
@@ -16174,6 +16188,39 @@ function CatchingService.claim(
 	return true
 end
 
+-- Bots read every flight perfectly, so against a human thrower a bot
+-- defender only gets its hands on the disc with BOT_INTERCEPT_CHANCE (+ a
+-- little for skill), rolled once per bot per flight segment. Bots never get
+-- a handicap against other bots, on their own team's throws, or on pulls.
+local botRolls: { [any]: { [number]: boolean } } = {}
+
+botDefends = function(d: any, actor: any): boolean
+	local defending = d.throwerTeam ~= nil and d.throwerTeam ~= "" and actor.team ~= d.throwerTeam and not d.pull
+	if not defending or d.thrower == nil or Actors.isBotId(d.thrower) then
+		return true
+	end
+	local key = tostring(d.id) .. ":" .. tostring(d.flightId)
+	local rolls = botRolls[key]
+	if not rolls then
+		rolls = {}
+		botRolls[key] = rolls
+		-- forget old segments
+		for k in botRolls do
+			if k ~= key and string.sub(k, 1, #tostring(d.id) + 1) == tostring(d.id) .. ":" then
+				botRolls[k] = nil
+			end
+		end
+	end
+	local r = rolls[actor.id]
+	if r == nil then
+		local brain = services.BotService.brain(actor.id)
+		local skill = if brain then brain.skill else 0.8
+		r = math.random() < TechConfig.BOT_INTERCEPT_CHANCE + 0.2 * (skill - 0.8)
+		rolls[actor.id] = r
+	end
+	return r
+end
+
 -- Server-side check for bots along one simulation step of a flight.
 function CatchingService.sweepBots(d: any, _from: Vector3, to: Vector3, t: number)
 	if t < d.noCatchUntil then
@@ -16187,6 +16234,7 @@ function CatchingService.sweepBots(d: any, _from: Vector3, to: Vector3, t: numbe
 					not (d.thrower == actor.id and not d.touched)
 					and not services.DiscService.claimLocked(d, actor.id)
 					and d.handler.canClaim(d, actor.id, actor.team)
+					and botDefends(d, actor)
 				then
 					local zones = CatchGeometry.zones(bodyFor(actor.id, root.Position, facingOf(root), nil, t, 0))
 					if CatchGeometry.evaluate(zones, to, 0) then
@@ -19702,7 +19750,8 @@ function MatchService.action(player: Player, kind: string, payload: any)
 		end
 		publishVotes()
 		publishRanked()
-	elseif kind == "StartNow" and isHost(actor.id) and S.phase == "Intermission" then
+	elseif kind == "StartNow" and S.phase == "Intermission" and (isHost(actor.id) or humansNotTraining() <= 1) then
+		-- the host, or a player alone (vs bots), can start at once
 		S.phaseEnd = now()
 	elseif kind == "PrivateConfig" and isHost(actor.id) and type(payload) == "table" then
 		if type(payload.key) == "string" then
@@ -26803,11 +26852,18 @@ local function updateMarking()
 		setMarking(false)
 		return
 	end
-	if not markHeld or controllers.ThrowController.isHolding() then
+	if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
 		setMarking(false)
 		return
 	end
 	local d = holderDistance()
+	-- on the tech engine you mark automatically near an opposing thrower
+	-- (holding Secondary still works); the classic engine needs the hold
+	local auto = controllers.MovementController.engine() == "Tech" and controllers.MovementController.isGrounded()
+	if not markHeld and not auto then
+		setMarking(false)
+		return
+	end
 	if marking then
 		if d == nil or d > MK.Range + MARK_DROP then
 			setMarking(false)
@@ -35488,8 +35544,9 @@ return Hud
               <string name="Source"><![CDATA[--!strict
 --[[
 	MainMenu — the title screen shown when you join: the store art behind,
-	the ULTIMATE: BREAKPOINT logo, your level and coins, and PLAY / TRAINING
-	/ SHOP / LOCKER / SETTINGS. While it is up your character doesn't move
+	the ULTIMATE: BREAKPOINT logo, your level and coins, and PLAY 3v3 / PLAY
+	7v7 / TRAINING / SHOP / LOCKER / SETTINGS (a mode button is your vote, and
+	alone it starts the match against bots at once). While it is up your character doesn't move
 	(the input "menu open" flag) and the white-circle cursor follows the
 	mouse. PLAY drops you into the match flow; the other buttons open the
 	tab menu on that page. Art and sounds are ForgeGUI-made (Config/Art,
@@ -35651,25 +35708,35 @@ function MainMenu.build(parent: ScreenGui, c: any)
 		RichText = true,
 		TextColor3 = C.Text,
 	})
-	bigButton(col, 3, "PLAY", true, function()
-		hide(nil)
+	-- pick a mode: it is your vote for the next match, and alone it starts now
+	local function play(mode: string)
+		hide(function()
+			Net.event("Action"):FireServer("Vote", { mode = mode })
+			Net.event("Action"):FireServer("StartNow", nil)
+		end)
+	end
+	bigButton(col, 3, "PLAY 3v3 (MINI)", true, function()
+		play("Mini")
 	end)
-	bigButton(col, 4, "TRAINING", false, function()
+	bigButton(col, 4, "PLAY 7v7 (FULL FIELD)", true, function()
+		play("Normal")
+	end)
+	bigButton(col, 5, "TRAINING", false, function()
 		hide(function()
 			Net.event("Action"):FireServer("EnterTraining", nil)
 		end)
 	end)
-	bigButton(col, 5, "SHOP", false, function()
+	bigButton(col, 6, "SHOP", false, function()
 		hide(function()
 			Menu.openTab("Shop")
 		end)
 	end)
-	bigButton(col, 6, "LOCKER", false, function()
+	bigButton(col, 7, "LOCKER", false, function()
 		hide(function()
 			Menu.openTab("Locker")
 		end)
 	end)
-	bigButton(col, 7, "SETTINGS", false, function()
+	bigButton(col, 8, "SETTINGS", false, function()
 		hide(function()
 			Menu.openTab("Settings")
 		end)
@@ -38281,12 +38348,50 @@ function Theme.skin(target: GuiObject, artName: string, plainColor: Color3?): Im
 	img.Image = image
 	img.ScaleType = Enum.ScaleType.Stretch
 	img.Size = UDim2.fromScale(1, 1)
-	img.ZIndex = math.max(target.ZIndex - 1, 0)
+	img.ZIndex = target.ZIndex
 	img.Parent = target
+	-- A child always draws over its parent, so on a button the image would
+	-- cover the button's own label: draw the label again on top of the image
+	-- (kept in sync) and hide the original while the skin shows.
+	local label: TextLabel? = nil
+	if target:IsA("TextButton") then
+		local btn = target :: TextButton
+		local l = Instance.new("TextLabel")
+		l.Name = "SkinText"
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.fromScale(1, 1)
+		l.ZIndex = btn.ZIndex + 1
+		l.Parent = btn
+		local function sync()
+			l.Text = btn.Text
+			l.Font = btn.Font
+			l.TextSize = btn.TextSize
+			l.TextColor3 = btn.TextColor3
+			l.TextWrapped = btn.TextWrapped
+			l.RichText = btn.RichText
+			l.TextXAlignment = btn.TextXAlignment
+			l.TextYAlignment = btn.TextYAlignment
+			l.TextScaled = btn.TextScaled
+		end
+		sync()
+		for _, prop in { "Text", "Font", "TextSize", "TextColor3", "TextWrapped", "RichText", "TextScaled" } do
+			btn:GetPropertyChangedSignal(prop):Connect(sync)
+		end
+		btn:GetPropertyChangedSignal("ZIndex"):Connect(function()
+			img.ZIndex = btn.ZIndex
+			l.ZIndex = btn.ZIndex + 1
+		end)
+		label = l
+	end
 	local drawnTransparency = target.BackgroundTransparency
 	local function update()
 		local skinned = plainColor == nil or target.BackgroundColor3 == plainColor
 		img.Visible = skinned
+		local l = label
+		if l then
+			l.Visible = skinned;
+			(target :: TextButton).TextTransparency = if skinned then 1 else 0
+		end
 		target.BackgroundTransparency = if skinned then 1 else drawnTransparency
 		for _, child in target:GetChildren() do
 			if child:IsA("UIStroke") then

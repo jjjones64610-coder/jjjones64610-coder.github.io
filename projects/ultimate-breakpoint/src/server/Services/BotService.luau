@@ -57,8 +57,8 @@
 
 	MARKER (diag 3 §5). Stands MarkDistance upfield of the pivot P, shaded
 	toward the break side, and mirrors the thrower's step from a reaction-
-	lagged position (MovementService.positionAt, lag 0.30 - 0.15 x skill)
-	with gain 0.55 + 0.35 x skill, clamped to MirrorMax; it shuffles with the
+	lagged position (MovementService.positionAt, lag 0.38 - 0.12 x skill)
+	with gain 0.4 + 0.25 x skill, clamped to MirrorMax; it shuffles with the
 	sim's mark overlay, facing P. Low stance by default, High only while an
 	overhead windup is really live (after the reaction delay). Bites on
 	fakes (FakeT / FakeSide; 0.6 - 0.4 x skill, never twice in 1.2 s) and
@@ -1975,10 +1975,10 @@ local function runMark(b: Bot, holderId: number, up: Vector3, force: string)
 	local shade = if force == "BH" then r * mirrorSign else -r * mirrorSign
 
 	-- mirror the step the thrower had a reaction time ago
-	local lag = 0.30 - 0.15 * skill
+	local lag = 0.38 - 0.12 * skill -- (fair play vs humans: a beatable mark)
 	local lagged = services.MovementService.positionAt(holderId, t - lag)
 	local stepLat = flat(lagged - P):Dot(r) / HD.BodyShare
-	local mirror = math.clamp(stepLat * (0.55 + 0.35 * skill), -DM.MirrorMax, DM.MirrorMax)
+	local mirror = math.clamp(stepLat * (0.4 + 0.25 * skill), -DM.MirrorMax, DM.MirrorMax)
 
 	-- bite on a fake
 	local ft = hc:GetAttribute("FakeT")

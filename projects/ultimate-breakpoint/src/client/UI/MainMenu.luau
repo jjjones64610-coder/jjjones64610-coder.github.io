@@ -1,8 +1,9 @@
 --!strict
 --[[
 	MainMenu — the title screen shown when you join: the store art behind,
-	the ULTIMATE: BREAKPOINT logo, your level and coins, and PLAY / TRAINING
-	/ SHOP / LOCKER / SETTINGS. While it is up your character doesn't move
+	the ULTIMATE: BREAKPOINT logo, your level and coins, and PLAY 3v3 / PLAY
+	7v7 / TRAINING / SHOP / LOCKER / SETTINGS (a mode button is your vote, and
+	alone it starts the match against bots at once). While it is up your character doesn't move
 	(the input "menu open" flag) and the white-circle cursor follows the
 	mouse. PLAY drops you into the match flow; the other buttons open the
 	tab menu on that page. Art and sounds are ForgeGUI-made (Config/Art,
@@ -164,25 +165,35 @@ function MainMenu.build(parent: ScreenGui, c: any)
 		RichText = true,
 		TextColor3 = C.Text,
 	})
-	bigButton(col, 3, "PLAY", true, function()
-		hide(nil)
+	-- pick a mode: it is your vote for the next match, and alone it starts now
+	local function play(mode: string)
+		hide(function()
+			Net.event("Action"):FireServer("Vote", { mode = mode })
+			Net.event("Action"):FireServer("StartNow", nil)
+		end)
+	end
+	bigButton(col, 3, "PLAY 3v3 (MINI)", true, function()
+		play("Mini")
 	end)
-	bigButton(col, 4, "TRAINING", false, function()
+	bigButton(col, 4, "PLAY 7v7 (FULL FIELD)", true, function()
+		play("Normal")
+	end)
+	bigButton(col, 5, "TRAINING", false, function()
 		hide(function()
 			Net.event("Action"):FireServer("EnterTraining", nil)
 		end)
 	end)
-	bigButton(col, 5, "SHOP", false, function()
+	bigButton(col, 6, "SHOP", false, function()
 		hide(function()
 			Menu.openTab("Shop")
 		end)
 	end)
-	bigButton(col, 6, "LOCKER", false, function()
+	bigButton(col, 7, "LOCKER", false, function()
 		hide(function()
 			Menu.openTab("Locker")
 		end)
 	end)
-	bigButton(col, 7, "SETTINGS", false, function()
+	bigButton(col, 8, "SETTINGS", false, function()
 		hide(function()
 			Menu.openTab("Settings")
 		end)

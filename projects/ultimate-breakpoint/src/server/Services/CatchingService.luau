@@ -75,6 +75,7 @@ local MAX_BODY_SPEED = math.max(MovementConfig.HardCap, TechConfig.HARD_SPEED_CA
 local FUTURE_SLACK = 0.05
 
 local CatchingService = {}
+local botDefends: (any, any) -> boolean
 
 local services: any
 
@@ -339,6 +340,39 @@ function CatchingService.claim(
 	return true
 end
 
+-- Bots read every flight perfectly, so against a human thrower a bot
+-- defender only gets its hands on the disc with BOT_INTERCEPT_CHANCE (+ a
+-- little for skill), rolled once per bot per flight segment. Bots never get
+-- a handicap against other bots, on their own team's throws, or on pulls.
+local botRolls: { [any]: { [number]: boolean } } = {}
+
+botDefends = function(d: any, actor: any): boolean
+	local defending = d.throwerTeam ~= nil and d.throwerTeam ~= "" and actor.team ~= d.throwerTeam and not d.pull
+	if not defending or d.thrower == nil or Actors.isBotId(d.thrower) then
+		return true
+	end
+	local key = tostring(d.id) .. ":" .. tostring(d.flightId)
+	local rolls = botRolls[key]
+	if not rolls then
+		rolls = {}
+		botRolls[key] = rolls
+		-- forget old segments
+		for k in botRolls do
+			if k ~= key and string.sub(k, 1, #tostring(d.id) + 1) == tostring(d.id) .. ":" then
+				botRolls[k] = nil
+			end
+		end
+	end
+	local r = rolls[actor.id]
+	if r == nil then
+		local brain = services.BotService.brain(actor.id)
+		local skill = if brain then brain.skill else 0.8
+		r = math.random() < TechConfig.BOT_INTERCEPT_CHANCE + 0.2 * (skill - 0.8)
+		rolls[actor.id] = r
+	end
+	return r
+end
+
 -- Server-side check for bots along one simulation step of a flight.
 function CatchingService.sweepBots(d: any, _from: Vector3, to: Vector3, t: number)
 	if t < d.noCatchUntil then
@@ -352,6 +386,7 @@ function CatchingService.sweepBots(d: any, _from: Vector3, to: Vector3, t: numbe
 					not (d.thrower == actor.id and not d.touched)
 					and not services.DiscService.claimLocked(d, actor.id)
 					and d.handler.canClaim(d, actor.id, actor.team)
+					and botDefends(d, actor)
 				then
 					local zones = CatchGeometry.zones(bodyFor(actor.id, root.Position, facingOf(root), nil, t, 0))
 					if CatchGeometry.evaluate(zones, to, 0) then

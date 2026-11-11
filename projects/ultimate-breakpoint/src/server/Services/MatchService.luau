@@ -1618,7 +1618,8 @@ function MatchService.action(player: Player, kind: string, payload: any)
 		end
 		publishVotes()
 		publishRanked()
-	elseif kind == "StartNow" and isHost(actor.id) and S.phase == "Intermission" then
+	elseif kind == "StartNow" and S.phase == "Intermission" and (isHost(actor.id) or humansNotTraining() <= 1) then
+		-- the host, or a player alone (vs bots), can start at once
 		S.phaseEnd = now()
 	elseif kind == "PrivateConfig" and isHost(actor.id) and type(payload) == "table" then
 		if type(payload.key) == "string" then

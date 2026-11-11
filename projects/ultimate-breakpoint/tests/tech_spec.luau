@@ -969,6 +969,18 @@ test("pinch: a throw within 40 ms of touchdown", function()
 	expect(TechCore.pinch(w.s, nil) == "Clean", "~30 ms after")
 end)
 
+test("mark shuffle: instant turns, capped at MARK_SPEED", function()
+	local w = newWorld(0)
+	TechCore.setMarking(w.s, true)
+	expect(w.s.state == "Marking", "marking")
+	w.move = RIGHT
+	worldRun(w, 0.3)
+	expect(near(TechCore.flatSpeed(w.s), Config.MARK_SPEED, 0.01), "shuffle speed")
+	w.move = -RIGHT
+	worldStep(w)
+	expect(w.s.vel.Unit:Dot(-RIGHT) > 0.99 and not w.s.drifting, "turns on the spot")
+end)
+
 test("tech fuzz: random presses and holds never break the cap or the states", function()
 	local Rng = H.require("Util/Rng")
 	local rng = Rng.new(11)

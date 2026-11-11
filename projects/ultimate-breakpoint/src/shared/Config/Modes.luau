@@ -5,9 +5,9 @@
 	  Mini    3v3 on the Mini field (240 x 90 including end zones)
 	  Normal  7v7 on the Normal field (360 x 136 including end zones)
 
-	Which mode is played follows the head count (Modes.eligible): up to 6
-	humans play Mini, 10 or more play Normal, and 7-9 humans may vote between
-	them. Empty spots are filled with bots (FillWithBots) so the field is always
+	Which mode is played follows the head count (Modes.eligible): up to 9
+	humans may vote between them (Mini by default up to 7, Normal for 8-9),
+	10 or more play Normal. Empty spots are filled with bots (FillWithBots) so the field is always
 	exactly 3v3 or 7v7; Rules/MatchPlan decides who is on the line each point.
 
 	Ranked is not a mode. A match is ranked automatically when its mode is
@@ -81,7 +81,7 @@ Modes.List = {
 		PointSetupTime = 3,
 		CelebrationTime = 3,
 		FillWithBots = true,
-		PreviewFraction = 0.5,
+		PreviewFraction = 0.75,
 		LandingShadow = true,
 		RankedEligible = true,
 		Ranked = false,
@@ -104,7 +104,7 @@ Modes.List = {
 		PointSetupTime = 4,
 		CelebrationTime = 4,
 		FillWithBots = true,
-		PreviewFraction = 0.35,
+		PreviewFraction = 0.6,
 		LandingShadow = true,
 		RankedEligible = true,
 		Ranked = false,
@@ -119,7 +119,7 @@ Modes.Default = "Mini"
 
 -- Applied on top of the preset when a match is ranked.
 Modes.RankedOverrides = {
-	PreviewFraction = 0.2,
+	PreviewFraction = 0.35,
 	SpecialArenas = false,
 } :: { [string]: any }
 
@@ -171,13 +171,12 @@ end
 
 -- Which modes a lobby of `humans` players may play, and the one picked when
 -- nobody votes. Players only vote when more than one mode is returned.
---   <= 6 humans: Mini        7: Mini or Normal (default Mini)
+-- Bots fill every empty spot, so even one player can pick 7v7.
+--   <= 7 humans: Mini or Normal (default Mini)
 --   8-9: Mini or Normal (default Normal)   >= 10: Normal
 function Modes.eligible(humans: number): ({ string }, string)
-	if humans <= 6 then
-		return { "Mini" }, "Mini"
-	elseif humans <= 9 then
-		return { "Mini", "Normal" }, if humans == 7 then "Mini" else "Normal"
+	if humans <= 9 then
+		return { "Mini", "Normal" }, if humans <= 7 then "Mini" else "Normal"
 	end
 	return { "Normal" }, "Normal"
 end

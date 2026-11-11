@@ -214,7 +214,7 @@ local Disc = {
 		ClaimRateLimit = 0.02, -- server: min seconds between claims per actor (replies Denied)
 		-- Claim slack (CatchGeometry.slack): Base + ping * PingSlackPerSecond
 		-- + body speed * SpeedSlack, capped at MaxSlack.
-		BaseSlack = 1.0, -- positional tolerance for claims (studs)
+		BaseSlack = 1.3, -- positional tolerance for claims (studs; humans only, bots are judged exactly)
 		PingSlackPerSecond = 26, -- extra tolerance per second of ping (≈ sprint speed)
 		SpeedSlack = 0.06, -- extra tolerance per stud/s of body speed
 		MaxSlack = 5,

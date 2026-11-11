@@ -331,11 +331,18 @@ local function updateMarking()
 		setMarking(false)
 		return
 	end
-	if not markHeld or controllers.ThrowController.isHolding() then
+	if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
 		setMarking(false)
 		return
 	end
 	local d = holderDistance()
+	-- on the tech engine you mark automatically near an opposing thrower
+	-- (holding Secondary still works); the classic engine needs the hold
+	local auto = controllers.MovementController.engine() == "Tech" and controllers.MovementController.isGrounded()
+	if not markHeld and not auto then
+		setMarking(false)
+		return
+	end
 	if marking then
 		if d == nil or d > MK.Range + MARK_DROP then
 			setMarking(false)

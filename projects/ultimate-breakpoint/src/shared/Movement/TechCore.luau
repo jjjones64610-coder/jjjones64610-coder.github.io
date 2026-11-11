@@ -1296,6 +1296,15 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		-- no stick: friction (overspeed bleeds the same way)
 		return s.heading * math.max(0, speed - Config.GROUND_FRICTION * dt)
 	end
+	if s.state == "Marking" then
+		-- the mark shuffle: quick, instant turns, capped at MARK_SPEED
+		top = math.min(top, Config.MARK_SPEED)
+		s.heading = want
+		s.crossAt = nil
+		local target = top * mag
+		speed = moveToward(math.min(speed, top), target, Config.MARK_ACCEL * dt)
+		return want * speed
+	end
 
 	-- the stick crossing 45° from the line (the Perfect Cut reference)
 	if speed >= Config.CUT_MIN_SPEED then
