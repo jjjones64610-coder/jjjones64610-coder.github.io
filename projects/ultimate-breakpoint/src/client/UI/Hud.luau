@@ -1032,7 +1032,7 @@ function Hud.update(_dt: number)
 	end
 
 	-- crosshair (no key hints: what chains off what is for players to find)
-	refs.crosshair.Visible = controllers.CameraController.isLocked()
+	refs.crosshair.Visible = false -- the white circle cursor is the crosshair (CursorController)
 end
 
 return Hud

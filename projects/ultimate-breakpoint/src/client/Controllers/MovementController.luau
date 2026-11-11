@@ -132,6 +132,8 @@ local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
 local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
 local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
+local PIVOT_ADOPT = 3 -- studs: a server pivot this far from ours means it moved us
+local localPivot: Vector3? = nil
 local lastTTL: number? = nil -- time to land last frame (airborne)
 -- the tech-engine pivot
 local pivotStickMag = 0
@@ -751,7 +753,9 @@ local function techFace(v: Vector3): (Vector3?, boolean)
 	local aiming = tech.holding or tech.marking or controllers.ThrowController.isCharging() or catch.isMarking()
 	if aiming then
 		local cam = controllers.CameraController.forward()
-		if travel and tech.holding then
+		-- only the catch run-out turns with travel; planted, you face the
+		-- camera (stepping around the pivot never spins the body)
+		if travel and tech.holding and localPivot == nil then
 			local k = math.clamp(1 - v.Magnitude / 10, 0, 1)
 			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
 			return if blend.Magnitude > 0.5 then blend else travel, true
@@ -939,8 +943,26 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 
 	-- the pivot (docs/tech-spec.md 23): planted, the free foot steps up to
 	-- PIVOT_REACH around P; a double-tap lunges PIVOT_LUNGE, then recovers
-	local planted = MovementSim.getPivot(sim)
-	if tech.holding and tech.grounded and planted and TechCore.flatSpeed(tech) < 6 then
+	-- the pivot is where YOUR run-out stopped (what you see); it is proposed
+	-- to the server, and the server's P is only taken over when it really
+	-- moved you (a pickup, a travel call), so lag never yanks you back
+	if not tech.holding then
+		localPivot = nil
+	elseif localPivot == nil and tech.grounded and TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then
+		localPivot = pos
+	end
+	local serverP = MovementSim.getPivot(sim)
+	if
+		serverP
+		and (
+			(localPivot and VecMath.flat(serverP - localPivot).Magnitude > PIVOT_ADOPT)
+			or (localPivot == nil and tech.grounded)
+		)
+	then
+		localPivot = serverP
+	end
+	local planted = localPivot
+	if tech.holding and tech.grounded and planted then
 		local stick = if menu then Vector3.zero else VecMath.flat(inputs.moveVector())
 		local clock = os.clock()
 		local tapped = stick.Magnitude > 0.5 and pivotStickMag <= 0.5
@@ -962,9 +984,12 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		end
 		local want = Vector3.new(planted.X, pos.Y, planted.Z) + VecMath.clampMagnitude(stick, 1) * reach
 		local toward = VecMath.flat(want - pos)
-		local v = VecMath.clampMagnitude(toward * 14, 18)
+		local v = if toward.Magnitude < 0.04 then Vector3.zero else VecMath.clampMagnitude(toward * 12, 16)
 		tech.vel = Vector3.new(v.X, tech.vel.Y, v.Z)
-		lastStep = VecMath.flat(pos - planted)
+		-- the step the throw model and the server use is the free FOOT: the
+		-- body sits at P + BodyShare x step
+		local body = VecMath.flat(pos - planted)
+		lastStep = VecMath.clampMagnitude(body / MovementConfig.Holding.BodyShare, MovementConfig.Holding.StepRadius)
 	elseif not tech.holding then
 		lastStep = Vector3.zero
 	end
@@ -987,11 +1012,15 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 	end
 
 	-- the pivot: propose where we stopped once the catch has settled
-	if confirmedHold and not techPivotSent and tech.grounded and TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then
+	if confirmedHold and not techPivotSent and localPivot then
 		local remote = pivotRemote
-		if remote and c:GetAttribute("UBPivot") == nil then
+		local sp = c:GetAttribute("UBPivot")
+		-- propose ours; also once over a server guess that landed elsewhere
+		-- (the server lets a client replace its own auto plant for 1.5 s)
+		local differs = typeof(sp) == "Vector3" and VecMath.flat(sp - localPivot).Magnitude > 0.4
+		if remote and (sp == nil or differs) then
 			techPivotSent = true
-			remote:FireServer(pos)
+			remote:FireServer(localPivot)
 		end
 	end
 

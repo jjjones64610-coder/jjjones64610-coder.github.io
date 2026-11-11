@@ -148,6 +148,12 @@ local function isStandard(desc: HumanoidDescription): boolean
 		and near(desc.HeadScale, S.HeadScale)
 		and near(desc.BodyTypeScale, S.BodyTypeScale)
 		and near(desc.ProportionScale, S.ProportionScale)
+		and desc.Head == 0
+		and desc.Torso == 0
+		and desc.LeftArm == 0
+		and desc.RightArm == 0
+		and desc.LeftLeg == 0
+		and desc.RightLeg == 0
 end
 
 -- Gives a description the standard body scales (Config/Hitbox.Scales).
@@ -159,6 +165,15 @@ function PlayerService.standardize(desc: HumanoidDescription)
 	desc.HeadScale = S.HeadScale
 	desc.BodyTypeScale = S.BodyTypeScale
 	desc.ProportionScale = S.ProportionScale
+	-- the standard R15 body parts too (bundle / Rthro meshes differ in size
+	-- and shape even at the same scales); clothes, accessories, colours and
+	-- the face are kept
+	desc.Head = 0
+	desc.Torso = 0
+	desc.LeftArm = 0
+	desc.RightArm = 0
+	desc.LeftLeg = 0
+	desc.RightLeg = 0
 end
 
 -- Rescales a freshly spawned player character to the standard body. Runs in
@@ -183,12 +198,21 @@ local function normalizeAvatar(model: Model, humanoid: Humanoid)
 		return
 	end
 	PlayerService.standardize(desc)
-	local applied, err = pcall(function()
-		humanoid:ApplyDescriptionAsync(desc)
-	end)
-	if not applied then
-		warn("[PlayerService] could not apply the standard body: " .. tostring(err))
+	local err: any = nil
+	for attempt = 1, 3 do
+		local applied, e = pcall(function()
+			humanoid:ApplyDescriptionAsync(desc)
+		end)
+		if applied then
+			return
+		end
+		err = e
+		task.wait(0.5 * attempt)
+		if humanoid.Parent ~= model then
+			return
+		end
 	end
+	warn("[PlayerService] could not apply the standard body: " .. tostring(err))
 end
 
 function PlayerService.setupCharacter(actor: Actor, model: Model)

@@ -19824,7 +19824,7 @@ local SPEED_FLAGS_TO_SNAP = 2
 local HOVER_TIME = 6
 local TELEPORT_ARRIVE = 4 -- studs: the server has seen the root reach the teleport target
 local TELEPORT_WAIT = 1.5 -- ... or this long has passed
-local TRAVEL_CONFIRM = 0.1 -- a travel violation must persist this long (two samples)
+local TRAVEL_CONFIRM = 0.3 -- a travel violation must persist this long
 local TRAVEL_SNAP_EVERY = 1.5
 local SETTLE_EVERY = 0.25
 local SETTLE_LAG = 0.4 -- settle a little in the past so late events / claims still count
@@ -20190,7 +20190,9 @@ local function updateHolding(actor: any, t: Track, root: BasePart, grounded: boo
 		t.travelSince = nil
 		return
 	end
-	local tolerance = HD.PivotRadius + 1.5 + 10 * math.min(MovementService.ping(t.id), 0.3)
+	-- the tech-engine lunge reaches PIVOT_LUNGE; the body can overshoot a little
+	local reach = math.max(HD.PivotRadius, TechConfig.PIVOT_LUNGE)
+	local tolerance = reach + 2.5 + 10 * math.min(MovementService.ping(t.id), 0.3)
 	local d = flat(t.pos - pivot).Magnitude
 	if d <= tolerance then
 		t.travelSince = nil
@@ -21135,6 +21137,12 @@ local function isStandard(desc: HumanoidDescription): boolean
 		and near(desc.HeadScale, S.HeadScale)
 		and near(desc.BodyTypeScale, S.BodyTypeScale)
 		and near(desc.ProportionScale, S.ProportionScale)
+		and desc.Head == 0
+		and desc.Torso == 0
+		and desc.LeftArm == 0
+		and desc.RightArm == 0
+		and desc.LeftLeg == 0
+		and desc.RightLeg == 0
 end
 
 -- Gives a description the standard body scales (Config/Hitbox.Scales).
@@ -21146,6 +21154,15 @@ function PlayerService.standardize(desc: HumanoidDescription)
 	desc.HeadScale = S.HeadScale
 	desc.BodyTypeScale = S.BodyTypeScale
 	desc.ProportionScale = S.ProportionScale
+	-- the standard R15 body parts too (bundle / Rthro meshes differ in size
+	-- and shape even at the same scales); clothes, accessories, colours and
+	-- the face are kept
+	desc.Head = 0
+	desc.Torso = 0
+	desc.LeftArm = 0
+	desc.RightArm = 0
+	desc.LeftLeg = 0
+	desc.RightLeg = 0
 end
 
 -- Rescales a freshly spawned player character to the standard body. Runs in
@@ -21170,12 +21187,21 @@ local function normalizeAvatar(model: Model, humanoid: Humanoid)
 		return
 	end
 	PlayerService.standardize(desc)
-	local applied, err = pcall(function()
-		humanoid:ApplyDescriptionAsync(desc)
-	end)
-	if not applied then
-		warn("[PlayerService] could not apply the standard body: " .. tostring(err))
+	local err: any = nil
+	for attempt = 1, 3 do
+		local applied, e = pcall(function()
+			humanoid:ApplyDescriptionAsync(desc)
+		end)
+		if applied then
+			return
+		end
+		err = e
+		task.wait(0.5 * attempt)
+		if humanoid.Parent ~= model then
+			return
+		end
 	end
+	warn("[PlayerService] could not apply the standard body: " .. tostring(err))
 end
 
 function PlayerService.setupCharacter(actor: Actor, model: Model)
@@ -25794,7 +25820,7 @@ local function update(dt: number)
 	local active = CameraController.isLocked()
 
 	UserInputService.MouseBehavior = if active then Enum.MouseBehavior.LockCenter else Enum.MouseBehavior.Default
-	UserInputService.MouseIconEnabled = not active
+	UserInputService.MouseIconEnabled = false -- CursorController draws the only cursor
 
 	local invert = if settings.get("InvertY") then -1 else 1
 	if active then
@@ -26872,6 +26898,127 @@ return CatchController
           </Item>
           <Item class="ModuleScript" referent="78">
             <Properties>
+              <string name="Name">CursorController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	CursorController — the only cursor is a white circle. The system mouse
+	arrow is never shown: in play (mouse locked) the circle sits at the centre
+	as the crosshair; in menus it follows the mouse (clicks still work, the
+	arrow is just hidden). On touch it is hidden; on a gamepad it stays at the
+	centre.
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local CursorController = {}
+
+local controllers: any
+local player = Players.LocalPlayer
+local ring: Frame? = nil
+local dot: Frame? = nil
+
+local SIZE = 22
+local THICKNESS = 2
+
+local function build()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UBCursor"
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 100 -- above every other screen
+	gui.Parent = player:WaitForChild("PlayerGui")
+	local r = Instance.new("Frame")
+	r.Name = "Ring"
+	r.AnchorPoint = Vector2.new(0.5, 0.5)
+	r.Size = UDim2.fromOffset(SIZE, SIZE)
+	r.BackgroundTransparency = 1
+	r.Parent = gui
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = r
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Thickness = THICKNESS
+	stroke.Transparency = 0.05
+	stroke.Parent = r
+	-- a thin dark outline under it so it reads on bright turf and sky
+	local shadow = Instance.new("UIStroke")
+	shadow.Name = "Shadow"
+	shadow.Color = Color3.new(0, 0, 0)
+	shadow.Thickness = THICKNESS + 2
+	shadow.Transparency = 0.75
+	shadow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	local inner = Instance.new("Frame")
+	inner.Name = "Outline"
+	inner.AnchorPoint = Vector2.new(0.5, 0.5)
+	inner.Position = UDim2.fromScale(0.5, 0.5)
+	inner.Size = UDim2.new(1, 0, 1, 0)
+	inner.BackgroundTransparency = 1
+	inner.ZIndex = 0
+	inner.Parent = r
+	local ic = Instance.new("UICorner")
+	ic.CornerRadius = UDim.new(1, 0)
+	ic.Parent = inner
+	shadow.Parent = inner
+	local d = Instance.new("Frame")
+	d.Name = "Dot"
+	d.AnchorPoint = Vector2.new(0.5, 0.5)
+	d.Position = UDim2.fromScale(0.5, 0.5)
+	d.Size = UDim2.fromOffset(3, 3)
+	d.BackgroundColor3 = Color3.new(1, 1, 1)
+	d.BorderSizePixel = 0
+	d.Parent = r
+	local dc = Instance.new("UICorner")
+	dc.CornerRadius = UDim.new(1, 0)
+	dc.Parent = d
+	ring = r
+	dot = d
+end
+
+local function update()
+	local r = ring
+	if not r then
+		return
+	end
+	UserInputService.MouseIconEnabled = false
+	local scheme = controllers.InputController.scheme()
+	if scheme == "Touch" then
+		r.Visible = false
+		return
+	end
+	r.Visible = true
+	local locked = controllers.CameraController.isLocked() and not controllers.InputController.menuOpen()
+	local cam = workspace.CurrentCamera
+	if locked or scheme == "Gamepad" or not cam then
+		local vp = if cam then cam.ViewportSize else Vector2.new(1280, 720)
+		r.Position = UDim2.fromOffset(vp.X / 2, vp.Y / 2)
+	else
+		local m = UserInputService:GetMouseLocation()
+		r.Position = UDim2.fromOffset(m.X, m.Y)
+	end
+	local d = dot
+	if d then
+		d.Visible = locked
+	end
+end
+
+function CursorController.Init(c: any)
+	controllers = c
+end
+
+function CursorController.Start()
+	build()
+	RunService:BindToRenderStep("UBCursor", Enum.RenderPriority.Last.Value, update)
+end
+
+return CursorController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="79">
+            <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
 --[[
@@ -27736,7 +27883,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28697,7 +28844,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29111,7 +29258,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29248,6 +29395,8 @@ local GROUND_RAY_AIR = 0.3 -- ... while in Air / Dive
 local FILTER_REFRESH = 0.25
 local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
 local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
+local PIVOT_ADOPT = 3 -- studs: a server pivot this far from ours means it moved us
+local localPivot: Vector3? = nil
 local lastTTL: number? = nil -- time to land last frame (airborne)
 -- the tech-engine pivot
 local pivotStickMag = 0
@@ -29867,7 +30016,9 @@ local function techFace(v: Vector3): (Vector3?, boolean)
 	local aiming = tech.holding or tech.marking or controllers.ThrowController.isCharging() or catch.isMarking()
 	if aiming then
 		local cam = controllers.CameraController.forward()
-		if travel and tech.holding then
+		-- only the catch run-out turns with travel; planted, you face the
+		-- camera (stepping around the pivot never spins the body)
+		if travel and tech.holding and localPivot == nil then
 			local k = math.clamp(1 - v.Magnitude / 10, 0, 1)
 			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
 			return if blend.Magnitude > 0.5 then blend else travel, true
@@ -30055,8 +30206,26 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 
 	-- the pivot (docs/tech-spec.md 23): planted, the free foot steps up to
 	-- PIVOT_REACH around P; a double-tap lunges PIVOT_LUNGE, then recovers
-	local planted = MovementSim.getPivot(sim)
-	if tech.holding and tech.grounded and planted and TechCore.flatSpeed(tech) < 6 then
+	-- the pivot is where YOUR run-out stopped (what you see); it is proposed
+	-- to the server, and the server's P is only taken over when it really
+	-- moved you (a pickup, a travel call), so lag never yanks you back
+	if not tech.holding then
+		localPivot = nil
+	elseif localPivot == nil and tech.grounded and TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then
+		localPivot = pos
+	end
+	local serverP = MovementSim.getPivot(sim)
+	if
+		serverP
+		and (
+			(localPivot and VecMath.flat(serverP - localPivot).Magnitude > PIVOT_ADOPT)
+			or (localPivot == nil and tech.grounded)
+		)
+	then
+		localPivot = serverP
+	end
+	local planted = localPivot
+	if tech.holding and tech.grounded and planted then
 		local stick = if menu then Vector3.zero else VecMath.flat(inputs.moveVector())
 		local clock = os.clock()
 		local tapped = stick.Magnitude > 0.5 and pivotStickMag <= 0.5
@@ -30078,9 +30247,12 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		end
 		local want = Vector3.new(planted.X, pos.Y, planted.Z) + VecMath.clampMagnitude(stick, 1) * reach
 		local toward = VecMath.flat(want - pos)
-		local v = VecMath.clampMagnitude(toward * 14, 18)
+		local v = if toward.Magnitude < 0.04 then Vector3.zero else VecMath.clampMagnitude(toward * 12, 16)
 		tech.vel = Vector3.new(v.X, tech.vel.Y, v.Z)
-		lastStep = VecMath.flat(pos - planted)
+		-- the step the throw model and the server use is the free FOOT: the
+		-- body sits at P + BodyShare x step
+		local body = VecMath.flat(pos - planted)
+		lastStep = VecMath.clampMagnitude(body / MovementConfig.Holding.BodyShare, MovementConfig.Holding.StepRadius)
 	elseif not tech.holding then
 		lastStep = Vector3.zero
 	end
@@ -30103,11 +30275,15 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 	end
 
 	-- the pivot: propose where we stopped once the catch has settled
-	if confirmedHold and not techPivotSent and tech.grounded and TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then
+	if confirmedHold and not techPivotSent and localPivot then
 		local remote = pivotRemote
-		if remote and c:GetAttribute("UBPivot") == nil then
+		local sp = c:GetAttribute("UBPivot")
+		-- propose ours; also once over a server guess that landed elsewhere
+		-- (the server lets a client replace its own auto plant for 1.5 s)
+		local differs = typeof(sp) == "Vector3" and VecMath.flat(sp - localPivot).Magnitude > 0.4
+		if remote and (sp == nil or differs) then
 			techPivotSent = true
-			remote:FireServer(pos)
+			remote:FireServer(localPivot)
 		end
 	end
 
@@ -30467,7 +30643,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30603,7 +30779,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31795,7 +31971,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31958,7 +32134,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -32130,7 +32306,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -32278,7 +32454,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33223,7 +33399,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33662,7 +33838,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="89">
+        <Item class="LocalScript" referent="90">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -33692,6 +33868,7 @@ local ORDER = {
 	"AbilityController",
 	"MusicController",
 	"TechDrills",
+	"CursorController",
 	"UIController",
 }
 
@@ -33716,11 +33893,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="90">
+        <Item class="Folder" referent="91">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -34757,14 +34934,14 @@ function Hud.update(_dt: number)
 	end
 
 	-- crosshair (no key hints: what chains off what is for players to find)
-	refs.crosshair.Visible = controllers.CameraController.isLocked()
+	refs.crosshair.Visible = false -- the white circle cursor is the crosshair (CursorController)
 end
 
 return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="92">
+          <Item class="ModuleScript" referent="93">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -36059,7 +36236,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="93">
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -36345,7 +36522,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="94">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -36724,7 +36901,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -36938,7 +37115,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -37221,7 +37398,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -37702,12 +37879,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="98">
+  <Item class="Teams" referent="99">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="99">
+  <Item class="Workspace" referent="100">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

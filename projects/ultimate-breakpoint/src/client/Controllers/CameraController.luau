@@ -147,7 +147,7 @@ local function update(dt: number)
 	local active = CameraController.isLocked()
 
 	UserInputService.MouseBehavior = if active then Enum.MouseBehavior.LockCenter else Enum.MouseBehavior.Default
-	UserInputService.MouseIconEnabled = not active
+	UserInputService.MouseIconEnabled = false -- CursorController draws the only cursor
 
 	local invert = if settings.get("InvertY") then -1 else 1
 	if active then

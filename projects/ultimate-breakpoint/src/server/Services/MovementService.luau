@@ -177,7 +177,7 @@ local SPEED_FLAGS_TO_SNAP = 2
 local HOVER_TIME = 6
 local TELEPORT_ARRIVE = 4 -- studs: the server has seen the root reach the teleport target
 local TELEPORT_WAIT = 1.5 -- ... or this long has passed
-local TRAVEL_CONFIRM = 0.1 -- a travel violation must persist this long (two samples)
+local TRAVEL_CONFIRM = 0.3 -- a travel violation must persist this long
 local TRAVEL_SNAP_EVERY = 1.5
 local SETTLE_EVERY = 0.25
 local SETTLE_LAG = 0.4 -- settle a little in the past so late events / claims still count
@@ -543,7 +543,9 @@ local function updateHolding(actor: any, t: Track, root: BasePart, grounded: boo
 		t.travelSince = nil
 		return
 	end
-	local tolerance = HD.PivotRadius + 1.5 + 10 * math.min(MovementService.ping(t.id), 0.3)
+	-- the tech-engine lunge reaches PIVOT_LUNGE; the body can overshoot a little
+	local reach = math.max(HD.PivotRadius, TechConfig.PIVOT_LUNGE)
+	local tolerance = reach + 2.5 + 10 * math.min(MovementService.ping(t.id), 0.3)
 	local d = flat(t.pos - pivot).Magnitude
 	if d <= tolerance then
 		t.travelSince = nil
