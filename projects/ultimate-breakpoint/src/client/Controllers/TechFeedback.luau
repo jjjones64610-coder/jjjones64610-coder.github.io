@@ -18,7 +18,11 @@ local TweenService = game:GetService("TweenService")
 
 local Theme = require(script.Parent.Parent.UI.Theme)
 
+local Signal = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared").Util.Signal)
+
 local TechFeedback = {}
+
+TechFeedback.Played = Signal.new() -- (name, quality)
 
 local controllers: any
 local player = Players.LocalPlayer
@@ -100,6 +104,7 @@ end
 -- Plays the feedback for a tech. `quality` is "Perfect", "Clean" or "Miss";
 -- `pos` defaults to your feet.
 function TechFeedback.play(name: string, quality: string, pos: Vector3?)
+	TechFeedback.Played:Fire(name, quality)
 	local root = controllers.MovementController.root()
 	local at = pos
 	if not at and root then

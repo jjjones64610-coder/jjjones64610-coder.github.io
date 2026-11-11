@@ -582,6 +582,38 @@ function render.Training(content: Instance)
 	cancel.Activated:Connect(function()
 		action("CancelDrill", nil)
 	end)
+	-- one drill per tech (tech engine): Goal Perfect reps, the timing bar
+	-- shows every attempt
+	section(content, "TECH DRILLS (in the Training hall)", nextOrder())
+	do
+		local drills = controllers.TechDrills
+		local current = drills.current()
+		local per = 4
+		local r2: Frame? = nil
+		for i, d in drills.List do
+			if (i - 1) % per == 0 then
+				r2 = row(content, nextOrder(), 40)
+			end
+			local name = (MovementConfig.TechNames :: any)[d.tech] or d.tech
+			local on = current == d.tech
+			local b = Theme.button(string.upper(name), {
+				Parent = r2,
+				LayoutOrder = i,
+				Size = UDim2.fromOffset(150, 34),
+				TextSize = 13,
+				BackgroundColor3 = if on then C.Accent else C.PanelLight,
+				TextColor3 = if on then Color3.new(0, 0, 0) else C.Text,
+			})
+			b.Activated:Connect(function()
+				if on then
+					drills.stop()
+				else
+					drills.start(d.tech)
+				end
+				Menu.refresh(true)
+			end)
+		end
+	end
 	for _, d in DRILLS do
 		local dr = row(content, nextOrder(), 46)
 		local pbs = if profile then profile.personalBests else nil
