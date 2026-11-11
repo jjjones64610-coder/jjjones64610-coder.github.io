@@ -189,6 +189,14 @@ export type State = {
 	recoverUntil: number,
 	skyChargeAt: number?,
 	skyPerfectUntil: number, -- hands-up reach bonus lasts while this is ahead
+
+	-- abilities (Config/Abilities)
+	windowScale: number, -- Perfect windows x this (The Zone)
+	zoneUntil: number,
+	extraDodges: number, -- Sky Walk: extra dodges per airtime
+	extraDodgesLeft: number,
+	skyWalkUntil: number,
+	overdriveUntil: number,
 }
 
 local STEP = 1 / Config.PHYSICS_RATE
@@ -288,6 +296,13 @@ function TechCore.new(now: number?): State
 		recoverUntil = -math.huge,
 		skyChargeAt = nil,
 		skyPerfectUntil = -math.huge,
+
+		windowScale = 1,
+		zoneUntil = -math.huge,
+		extraDodges = 0,
+		extraDodgesLeft = 0,
+		skyWalkUntil = -math.huge,
+		overdriveUntil = -math.huge,
 	}
 end
 
@@ -456,7 +471,10 @@ function TechCore.noteTiming(
 	t: number?
 ): Timing
 	local a = math.abs(offsetMs)
-	local quality = if perfectMs and a <= perfectMs then "Perfect" elseif a <= windowMs then "Clean" else "Miss"
+	local scale = if s.now < s.zoneUntil then s.windowScale else 1
+	local pw = if perfectMs then perfectMs * scale else nil
+	local ww = math.max(windowMs, pw or 0)
+	local quality = if pw and a <= pw then "Perfect" elseif a <= ww then "Clean" else "Miss"
 	local timing: Timing = {
 		name = name,
 		offsetMs = offsetMs,
@@ -473,6 +491,11 @@ end
 -- edge of the Perfect window (or the window), so "12 ms late" means 12 ms
 -- past the Perfect part.
 local function noteRange(s: State, name: string, ms: number, lo: number, hi: number, plo: number?, phi: number?): string
+	-- The Zone widens the Perfect part around its middle (inside the window)
+	if plo and phi and s.now < s.zoneUntil and s.windowScale ~= 1 then
+		local mid, half = (plo + phi) / 2, (phi - plo) / 2 * s.windowScale
+		plo, phi = math.max(lo, mid - half), math.min(hi, mid + half)
+	end
 	local quality = "Miss"
 	if ms >= lo and ms <= hi then
 		quality = if plo and phi and ms >= plo and ms <= phi then "Perfect" else "Clean"
@@ -720,11 +743,17 @@ end
 -- The directional / neutral Air Dodge, or a Wavedash when the ground is
 -- 0-80 ms away. Returns whether the press was used.
 local function tryAirDodge(s: State, input: Input, env: Env): boolean
-	if not AIR[s.state] or s.state == "Diving" or not s.dodgeAvailable then
+	if not AIR[s.state] or s.state == "Diving" then
 		return false
 	end
-	if s.now - s.airborneSince > Config.AIR_DODGE_WINDOW then
-		return false
+	local skyWalk = s.now < s.skyWalkUntil and s.extraDodgesLeft > 0
+	if not s.dodgeAvailable or s.now - s.airborneSince > Config.AIR_DODGE_WINDOW then
+		if not skyWalk then
+			return false
+		end
+		-- Sky Walk: an extra dodge
+		s.extraDodgesLeft -= 1
+		s.dodgeAvailable = true
 	end
 	local dir = stickDir(input)
 	local ttl = env.timeToLand
@@ -1022,6 +1051,7 @@ local function onLand(s: State, input: Input)
 	s.vel = Vector3.new(s.vel.X, 0, s.vel.Z)
 	s.dodgeAvailable = true
 	s.discResetUsed = false
+	s.extraDodgesLeft = s.extraDodges
 	s.skyPerfectUntil = -math.huge
 	s.dodge = nil
 
@@ -1211,7 +1241,11 @@ local function updateBurst(s: State, input: Input, dt: number)
 		and s.burst > 0
 		and (RUNNING[s.state] or s.state == "Sliding")
 		and stickDir(input) ~= nil
-	if active then
+	if s.now < s.overdriveUntil then
+		s.burst = 100
+		s.burstLocked = false
+		active = held and (RUNNING[s.state] or s.state == "Sliding") and stickDir(input) ~= nil
+	elseif active then
 		local d = math.min(s.burst, Config.BURST_DRAIN * dt)
 		s.burst -= d
 		s.burstDrained += d
@@ -1385,6 +1419,48 @@ function TechCore.advance(s: State, input: Input, env: Env, frameDt: number): Fr
 		end
 	end
 	return s.frame
+end
+
+-- Starts an ability's movement effect (Config/Abilities): "Zone",
+-- "SkyWalk" or "Overdrive" for `duration` seconds of sim time. Flash Step
+-- moves the body, so the caller does it (see flashStep).
+function TechCore.startAbility(s: State, id: string, duration: number, scale: number?, dodges: number?)
+	local untilT = s.now + duration
+	if id == "Zone" then
+		s.zoneUntil = untilT
+		s.windowScale = scale or 2
+	elseif id == "SkyWalk" then
+		s.skyWalkUntil = untilT
+		s.extraDodges = dodges or 2
+		s.extraDodgesLeft = s.extraDodges
+	elseif id == "Overdrive" then
+		s.overdriveUntil = untilT
+		s.burst = 100
+		s.burstLocked = false
+	end
+	emit(s, "Ability", "Clean", s.heading, id)
+end
+
+-- The ends of the timed abilities are checked here so Sky Walk stops
+-- granting dodges the moment it runs out.
+function TechCore.abilityActive(s: State): string?
+	if s.now < s.zoneUntil then
+		return "Zone"
+	elseif s.now < s.skyWalkUntil then
+		return "SkyWalk"
+	elseif s.now < s.overdriveUntil then
+		return "Overdrive"
+	end
+	return nil
+end
+
+-- Flash Step: the flat direction to blink (the stick, else your line).
+function TechCore.flashDirection(s: State, move: Vector3): Vector3
+	local m = flatOf(move)
+	if m.Magnitude > 0.05 then
+		return m.Unit
+	end
+	return s.heading
 end
 
 function TechCore.flatSpeed(s: State): number

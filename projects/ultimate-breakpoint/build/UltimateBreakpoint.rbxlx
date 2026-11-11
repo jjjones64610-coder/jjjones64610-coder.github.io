@@ -444,6 +444,95 @@ return Locomotion
         </Properties>
         <Item class="ModuleScript" referent="8">
           <Properties>
+            <string name="Name">Abilities</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Abilities — one per player, picked from the same pool (Menu → Settings →
+	Ability), so everyone has the same tools (docs/tech-spec.md pillar 6: no
+	stat upgrades). The FLOW meter only fills through skill: Perfect techs,
+	catches, blocks and goals. Full meter + Ability key = one use.
+
+	The server owns the meter (AbilityService, from validated events) and
+	says when an ability fires; the client applies the effect to its own
+	movement (TechCore) and everyone sees the aura.
+]]
+
+local Abilities = {}
+
+Abilities.MeterMax = 100
+
+-- FLOW gained (server, from accepted events)
+Abilities.Gain = {
+	PerfectTech = 8,
+	CleanTech = 1,
+	catches = 4,
+	completions = 3,
+	assists = 8,
+	blocks = 15,
+	interceptions = 15,
+	goals = 18,
+	callahans = 40,
+	greatests = 40,
+}
+
+export type Def = {
+	id: string,
+	name: string,
+	desc: string,
+	duration: number, -- s the effect lasts (0 = instant)
+	color: Color3,
+}
+
+Abilities.Order = { "FlashStep", "Zone", "SkyWalk", "Overdrive" }
+
+Abilities.List = {
+	FlashStep = {
+		id = "FlashStep",
+		name = "FLASH STEP",
+		desc = "Blink 10 studs the way you're moving and keep your speed.",
+		duration = 0,
+		color = Color3.fromRGB(90, 230, 255),
+	},
+	Zone = {
+		id = "Zone",
+		name = "THE ZONE",
+		desc = "For 5 s every Perfect timing window is twice as wide.",
+		duration = 5,
+		color = Color3.fromRGB(255, 215, 80),
+	},
+	SkyWalk = {
+		id = "SkyWalk",
+		name = "SKY WALK",
+		desc = "For 5 s you get two extra Air Dodges every airtime.",
+		duration = 5,
+		color = Color3.fromRGB(180, 255, 255),
+	},
+	Overdrive = {
+		id = "Overdrive",
+		name = "OVERDRIVE",
+		desc = "For 4 s Burst is full and never drains.",
+		duration = 4,
+		color = Color3.fromRGB(255, 110, 60),
+	},
+} :: { [string]: Def }
+
+Abilities.FlashDistance = 10 -- studs
+Abilities.ZoneScale = 2 -- Perfect windows x this
+Abilities.SkyWalkDodges = 2
+
+function Abilities.get(id: any): Def?
+	if type(id) ~= "string" then
+		return nil
+	end
+	return Abilities.List[id]
+end
+
+return Abilities
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="9">
+          <Properties>
             <string name="Name">Arenas</string>
             <string name="Source"><![CDATA[--!strict
 -- ARENAS
@@ -768,7 +857,7 @@ return Arenas
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="9">
+        <Item class="ModuleScript" referent="10">
           <Properties>
             <string name="Name">Art</string>
             <string name="Source"><![CDATA[--!strict
@@ -808,7 +897,7 @@ return Art
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="10">
+        <Item class="ModuleScript" referent="11">
           <Properties>
             <string name="Name">Audio</string>
             <string name="Source"><![CDATA[--!strict
@@ -866,7 +955,7 @@ return Audio
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="11">
+        <Item class="ModuleScript" referent="12">
           <Properties>
             <string name="Name">Disc</string>
             <string name="Source"><![CDATA[--!strict
@@ -1131,7 +1220,7 @@ return Disc
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">Hitbox</string>
             <string name="Source"><![CDATA[--!strict
@@ -1196,7 +1285,7 @@ return Hitbox
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="14">
           <Properties>
             <string name="Name">Input</string>
             <string name="Source"><![CDATA[--!strict
@@ -1230,6 +1319,7 @@ Input.Actions = {
 	"Dive",
 	"Burst",
 	"Overhead",
+	"Ability",
 	"Primary",
 	"Secondary",
 	"BankLeft",
@@ -1255,6 +1345,7 @@ Input.Display = {
 	Dive = "Layout Dive · Swing Right (with disc)",
 	Burst = "Burst (hold) / Burst Kick (tap)",
 	Overhead = "Overhead modifier (hold while throwing)",
+	Ability = "Ability (when FLOW is full)",
 	Primary = "Throw (hold) / Reach",
 	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
 	BankLeft = "Bank Left (with disc)",
@@ -1282,6 +1373,7 @@ Input.Keyboard = {
 	Dive = { "E" },
 	Burst = { "LeftShift" },
 	Overhead = { "F" },
+	Ability = { "G" },
 	Primary = { "MouseButton1" },
 	Secondary = { "MouseButton2" },
 	BankLeft = { "Z" },
@@ -1300,13 +1392,14 @@ Input.Keyboard = {
 } :: { [string]: { string } }
 
 Input.Gamepad = {
-	Sprint = { "ButtonL3" },
+	Sprint = {},
 	Jump = { "ButtonA" },
 	Cut = { "ButtonR1" },
 	Slide = { "ButtonB" },
 	Dive = { "ButtonX" },
 	Burst = { "ButtonL1" },
 	Overhead = { "ButtonY" },
+	Ability = { "ButtonL3" },
 	Primary = { "ButtonR2" },
 	Secondary = { "ButtonL2" },
 	BankLeft = { "DPadLeft" },
@@ -1415,6 +1508,7 @@ Input.DefaultSettings = {
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
+	Ability = "FlashStep", -- Config/Abilities id
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	AutoSprint = true,
@@ -1432,7 +1526,7 @@ return Input
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">Modes</string>
             <string name="Source"><![CDATA[--!strict
@@ -1698,7 +1792,7 @@ return Modes
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="16">
           <Properties>
             <string name="Name">Movement</string>
             <string name="Source"><![CDATA[--!strict
@@ -2147,7 +2241,7 @@ return Movement
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">Progression</string>
             <string name="Source"><![CDATA[--!strict
@@ -2443,7 +2537,7 @@ return Progression
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -2556,7 +2650,7 @@ return Signatures
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Teams</string>
             <string name="Source"><![CDATA[--!strict
@@ -2587,7 +2681,7 @@ return Teams
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">Tech</string>
             <string name="Source"><![CDATA[--!strict
@@ -2759,11 +2853,11 @@ return Tech
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="20">
+      <Item class="Folder" referent="21">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -3076,7 +3170,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="22">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -3299,7 +3393,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="23">
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -3638,11 +3732,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="24">
+      <Item class="Folder" referent="25">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -5981,7 +6075,7 @@ return MovementSim
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">TechCore</string>
             <string name="Source"><![CDATA[--!strict
@@ -6175,6 +6269,14 @@ export type State = {
 	recoverUntil: number,
 	skyChargeAt: number?,
 	skyPerfectUntil: number, -- hands-up reach bonus lasts while this is ahead
+
+	-- abilities (Config/Abilities)
+	windowScale: number, -- Perfect windows x this (The Zone)
+	zoneUntil: number,
+	extraDodges: number, -- Sky Walk: extra dodges per airtime
+	extraDodgesLeft: number,
+	skyWalkUntil: number,
+	overdriveUntil: number,
 }
 
 local STEP = 1 / Config.PHYSICS_RATE
@@ -6274,6 +6376,13 @@ function TechCore.new(now: number?): State
 		recoverUntil = -math.huge,
 		skyChargeAt = nil,
 		skyPerfectUntil = -math.huge,
+
+		windowScale = 1,
+		zoneUntil = -math.huge,
+		extraDodges = 0,
+		extraDodgesLeft = 0,
+		skyWalkUntil = -math.huge,
+		overdriveUntil = -math.huge,
 	}
 end
 
@@ -6442,7 +6551,10 @@ function TechCore.noteTiming(
 	t: number?
 ): Timing
 	local a = math.abs(offsetMs)
-	local quality = if perfectMs and a <= perfectMs then "Perfect" elseif a <= windowMs then "Clean" else "Miss"
+	local scale = if s.now < s.zoneUntil then s.windowScale else 1
+	local pw = if perfectMs then perfectMs * scale else nil
+	local ww = math.max(windowMs, pw or 0)
+	local quality = if pw and a <= pw then "Perfect" elseif a <= ww then "Clean" else "Miss"
 	local timing: Timing = {
 		name = name,
 		offsetMs = offsetMs,
@@ -6459,6 +6571,11 @@ end
 -- edge of the Perfect window (or the window), so "12 ms late" means 12 ms
 -- past the Perfect part.
 local function noteRange(s: State, name: string, ms: number, lo: number, hi: number, plo: number?, phi: number?): string
+	-- The Zone widens the Perfect part around its middle (inside the window)
+	if plo and phi and s.now < s.zoneUntil and s.windowScale ~= 1 then
+		local mid, half = (plo + phi) / 2, (phi - plo) / 2 * s.windowScale
+		plo, phi = math.max(lo, mid - half), math.min(hi, mid + half)
+	end
 	local quality = "Miss"
 	if ms >= lo and ms <= hi then
 		quality = if plo and phi and ms >= plo and ms <= phi then "Perfect" else "Clean"
@@ -6706,11 +6823,17 @@ end
 -- The directional / neutral Air Dodge, or a Wavedash when the ground is
 -- 0-80 ms away. Returns whether the press was used.
 local function tryAirDodge(s: State, input: Input, env: Env): boolean
-	if not AIR[s.state] or s.state == "Diving" or not s.dodgeAvailable then
+	if not AIR[s.state] or s.state == "Diving" then
 		return false
 	end
-	if s.now - s.airborneSince > Config.AIR_DODGE_WINDOW then
-		return false
+	local skyWalk = s.now < s.skyWalkUntil and s.extraDodgesLeft > 0
+	if not s.dodgeAvailable or s.now - s.airborneSince > Config.AIR_DODGE_WINDOW then
+		if not skyWalk then
+			return false
+		end
+		-- Sky Walk: an extra dodge
+		s.extraDodgesLeft -= 1
+		s.dodgeAvailable = true
 	end
 	local dir = stickDir(input)
 	local ttl = env.timeToLand
@@ -7008,6 +7131,7 @@ local function onLand(s: State, input: Input)
 	s.vel = Vector3.new(s.vel.X, 0, s.vel.Z)
 	s.dodgeAvailable = true
 	s.discResetUsed = false
+	s.extraDodgesLeft = s.extraDodges
 	s.skyPerfectUntil = -math.huge
 	s.dodge = nil
 
@@ -7197,7 +7321,11 @@ local function updateBurst(s: State, input: Input, dt: number)
 		and s.burst > 0
 		and (RUNNING[s.state] or s.state == "Sliding")
 		and stickDir(input) ~= nil
-	if active then
+	if s.now < s.overdriveUntil then
+		s.burst = 100
+		s.burstLocked = false
+		active = held and (RUNNING[s.state] or s.state == "Sliding") and stickDir(input) ~= nil
+	elseif active then
 		local d = math.min(s.burst, Config.BURST_DRAIN * dt)
 		s.burst -= d
 		s.burstDrained += d
@@ -7373,6 +7501,48 @@ function TechCore.advance(s: State, input: Input, env: Env, frameDt: number): Fr
 	return s.frame
 end
 
+-- Starts an ability's movement effect (Config/Abilities): "Zone",
+-- "SkyWalk" or "Overdrive" for `duration` seconds of sim time. Flash Step
+-- moves the body, so the caller does it (see flashStep).
+function TechCore.startAbility(s: State, id: string, duration: number, scale: number?, dodges: number?)
+	local untilT = s.now + duration
+	if id == "Zone" then
+		s.zoneUntil = untilT
+		s.windowScale = scale or 2
+	elseif id == "SkyWalk" then
+		s.skyWalkUntil = untilT
+		s.extraDodges = dodges or 2
+		s.extraDodgesLeft = s.extraDodges
+	elseif id == "Overdrive" then
+		s.overdriveUntil = untilT
+		s.burst = 100
+		s.burstLocked = false
+	end
+	emit(s, "Ability", "Clean", s.heading, id)
+end
+
+-- The ends of the timed abilities are checked here so Sky Walk stops
+-- granting dodges the moment it runs out.
+function TechCore.abilityActive(s: State): string?
+	if s.now < s.zoneUntil then
+		return "Zone"
+	elseif s.now < s.skyWalkUntil then
+		return "SkyWalk"
+	elseif s.now < s.overdriveUntil then
+		return "Overdrive"
+	end
+	return nil
+end
+
+-- Flash Step: the flat direction to blink (the stick, else your line).
+function TechCore.flashDirection(s: State, move: Vector3): Vector3
+	local m = flatOf(move)
+	if m.Magnitude > 0.05 then
+		return m.Unit
+	end
+	return s.heading
+end
+
 function TechCore.flatSpeed(s: State): number
 	return flatOf(s.vel).Magnitude
 end
@@ -7382,7 +7552,7 @@ return TechCore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="27">
+      <Item class="ModuleScript" referent="28">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -7407,6 +7577,7 @@ return TechCore
 	  Reach       (dir)                                          opens the reach window server-side
 	  MarkStance  (on, stance)
 	  Action      (kind, payload)                                votes, pickup, training, settings, cosmetics
+	  Ability     (abilityId)                                    fire your ability (AbilityService checks the meter)
 	Server -> client
 	  Notify, Highlight, CatchResult (also Denied), Profile, Summary, Feedback, Effect, Combo
 	Replicated state (attributes, late-join safe)
@@ -7442,6 +7613,7 @@ Net.Events = {
 	"Feedback",
 	"Effect",
 	"Combo",
+	"Ability",
 }
 
 -- Unreliable streams (none at the moment; Net.unreliable() stays for future ones).
@@ -7518,11 +7690,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="28">
+      <Item class="Folder" referent="29">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -7982,7 +8154,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -8358,7 +8530,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -8631,7 +8803,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -9174,7 +9346,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -9392,7 +9564,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -9876,7 +10048,7 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -10127,11 +10299,11 @@ return Signatures
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="36">
+      <Item class="Folder" referent="37">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -10178,7 +10350,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -10226,7 +10398,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -10340,19 +10512,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="40">
+  <Item class="ServerScriptService" referent="41">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="41">
+    <Item class="Folder" referent="42">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="42">
+      <Item class="Folder" referent="43">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -11379,7 +11551,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -11503,7 +11675,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12001,7 +12173,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="46">
+      <Item class="Script" referent="47">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -12030,6 +12202,7 @@ local ORDER = {
 	"DataService",
 	"ArenaService",
 	"MovementService",
+	"AbilityService",
 	"DiscService",
 	"CatchingService",
 	"DefenseService",
@@ -12066,11 +12239,156 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="47">
+      <Item class="Folder" referent="48">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="49">
+          <Properties>
+            <string name="Name">AbilityService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	AbilityService (server) — the FLOW meter and ability activations
+	(Config/Abilities).
+
+	  * The meter fills only from validated play: techniques the
+	    MovementService accepted (Perfect ones most) and match stats
+	    (catches, completions, assists, blocks, interceptions, goals,
+	    Callahans, Greatests). It is written to the character as UBFlow
+	    (0..100) for the HUD, and re-stamped after a respawn.
+	  * The Ability remote (abilityId) fires an ability when the meter is
+	    full and the player isn't frozen: the meter empties and the character
+	    gets UBAbility (id), UBAbilityT (Net.now()) and UBAbilityUntil. The
+	    owner's client applies the movement effect; every client draws the
+	    aura. In Training the meter refills at once so abilities can be
+	    practised.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Abilities = require(Shared.Config.Abilities)
+local MovementConfig = require(Shared.Config.Movement)
+local Net = require(Shared.Net)
+
+local AbilityService = {}
+
+local services: any
+local meters: { [number]: number } = {}
+
+local MIN_CLEAN_POINTS = 100 -- Clean techs below this combo value (jumps, plants) earn nothing
+
+local function characterOf(id: number): Model?
+	local actor = services.PlayerService.get(id)
+	return actor and actor.character
+end
+
+local function write(id: number)
+	local c = characterOf(id)
+	if c then
+		c:SetAttribute("UBFlow", math.floor((meters[id] or 0) + 0.5))
+	end
+end
+
+function AbilityService.meter(id: number): number
+	return meters[id] or 0
+end
+
+function AbilityService.gain(id: number, amount: number)
+	if amount <= 0 then
+		return
+	end
+	local before = meters[id] or 0
+	local after = math.min(Abilities.MeterMax, before + amount)
+	if after ~= before then
+		meters[id] = after
+		write(id)
+	end
+end
+
+-- Match stats (MatchService.stat) feed the meter.
+function AbilityService.onStat(id: number, key: string, n: number?)
+	local g = (Abilities.Gain :: any)[key]
+	if type(g) == "number" then
+		AbilityService.gain(id, g * (n or 1))
+	end
+end
+
+local function onTech(id: number, tech: string, quality: string)
+	if quality == "Perfect" then
+		AbilityService.gain(id, Abilities.Gain.PerfectTech)
+	elseif quality == "Clean" then
+		local pts = (MovementConfig.ComboPoints :: any)[tech]
+		if type(pts) == "number" and pts >= MIN_CLEAN_POINTS then
+			AbilityService.gain(id, Abilities.Gain.CleanTech)
+		end
+	end
+end
+
+-- Fires `abilityId` for actor `id` if allowed. Returns whether it fired.
+function AbilityService.activate(id: number, abilityId: any): boolean
+	local def = Abilities.get(abilityId)
+	local actor = services.PlayerService.get(id)
+	local c = actor and actor.character
+	if not def or not actor or not c then
+		return false
+	end
+	if c:GetAttribute("UBFrozen") == true then
+		return false
+	end
+	local track = services.MovementService.track(id)
+	if def.id == "FlashStep" and track and track.holding then
+		return false -- a blink while holding the disc would be a travel
+	end
+	local training = actor.role == "Training"
+	if not training and (meters[id] or 0) < Abilities.MeterMax then
+		return false
+	end
+	local t = Net.now()
+	meters[id] = if training then Abilities.MeterMax else 0
+	write(id)
+	c:SetAttribute("UBAbility", def.id)
+	c:SetAttribute("UBAbilityUntil", t + def.duration)
+	c:SetAttribute("UBAbilityT", t)
+	return true
+end
+
+function AbilityService.Init(s: any)
+	services = s
+end
+
+function AbilityService.Start()
+	local remote = Net.event("Ability")
+	remote.OnServerEvent:Connect(function(player: Player, abilityId: any)
+		local actor = services.PlayerService.fromPlayer(player)
+		if actor then
+			AbilityService.activate(actor.id, abilityId)
+		end
+	end)
+	services.MovementService.TechAccepted:Connect(function(id: number, tech: string, quality: string)
+		onTech(id, tech, quality)
+	end)
+	-- re-stamp the meter on new characters (respawns)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			for id in meters do
+				local c = characterOf(id)
+				if c and c:GetAttribute("UBFlow") == nil then
+					write(id)
+				elseif not services.PlayerService.get(id) then
+					meters[id] = nil
+				end
+			end
+		end
+	end)
+end
+
+return AbilityService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -12198,7 +12516,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="51">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -14605,7 +14923,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15169,7 +15487,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15480,7 +15798,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15838,7 +16156,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16374,7 +16692,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16607,7 +16925,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16706,7 +17024,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16929,6 +17247,7 @@ function MatchService.stat(actorId: number, key: string, n: number?)
 	end
 	local amount = n or 1
 	st[key] = (st[key] or 0) + amount
+	services.AbilityService.onStat(actorId, key, amount)
 	local actor = services.PlayerService.get(actorId)
 	if actor and not actor.isBot and S.phase ~= "Intermission" then
 		services.ProgressionService.stat(actor, key, amount)
@@ -18472,7 +18791,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19709,7 +20028,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -20177,7 +20496,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -20683,7 +21002,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21003,7 +21322,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21460,7 +21779,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23350,13 +23669,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="63">
+  <Item class="SoundService" referent="65">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="64">
+  <Item class="StarterPlayer" referent="66">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -23369,11 +23688,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="65">
+    <Item class="StarterCharacterScripts" referent="67">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="66">
+      <Item class="LocalScript" referent="68">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -23456,19 +23775,260 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="67">
+    <Item class="StarterPlayerScripts" referent="69">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="68">
+      <Item class="Folder" referent="70">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="69">
+        <Item class="Folder" referent="71">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="72">
+            <Properties>
+              <string name="Name">AbilityController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	AbilityController — your ability (Config/Abilities) on the client.
+
+	  * The Ability key asks the server to fire the ability chosen in
+	    Settings (AbilityService checks the FLOW meter).
+	  * When the server stamps UBAbilityT on your character, the effect
+	    starts: Flash Step blinks the body up to 10 studs (stopping short of
+	    walls) and keeps your speed; The Zone, Sky Walk and Overdrive start in
+	    the tech core. Each plays an impact frame and a pop.
+	  * Everyone with an active ability glows in its colour (a Highlight);
+	    a Flash Step leaves afterimages for everyone.
+	  * A small FLOW bar over the Burst bar, with the ability's name lit when
+	    the meter is full. It names your ability, never what to combo.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Abilities = require(Shared.Config.Abilities)
+local TechCore = require(Shared.Movement.TechCore)
+local VecMath = require(Shared.Util.VecMath)
+local Net = require(Shared.Net)
+local Theme = require(script.Parent.Parent.UI.Theme)
+
+local AbilityController = {}
+
+local controllers: any
+local player = Players.LocalPlayer
+local remote: RemoteEvent? = nil
+local lastStamp: { [Model]: number } = {}
+local bar: Frame? = nil
+local fill: Frame? = nil
+local label: TextLabel? = nil
+
+local AURA_REFRESH = 0.2
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.RespectCanCollide = true
+
+function AbilityController.selected(): Abilities.Def
+	local id = controllers.SettingsController.get("Ability")
+	return Abilities.get(id) or Abilities.List[Abilities.Order[1]]
+end
+
+local function flow(): number
+	local c = player.Character
+	local v = c and c:GetAttribute("UBFlow")
+	return if type(v) == "number" then v else 0
+end
+
+local function flashStep(c: Model, def: Abilities.Def)
+	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+	local tech = controllers.MovementController.techState()
+	local dir = TechCore.flashDirection(tech, controllers.InputController.moveVector())
+	if controllers.MovementController.engine() ~= "Tech" then
+		local v = VecMath.flat(root.AssemblyLinearVelocity)
+		dir = if v.Magnitude > 1 then v.Unit else VecMath.flatUnit(root.CFrame.LookVector)
+	end
+	rayParams.FilterDescendantsInstances = { c, workspace:FindFirstChild("UBVisuals") :: Instance }
+	local dist = Abilities.FlashDistance
+	for _, h in { 0, -1.5 } do
+		local hit = workspace:Raycast(root.Position + Vector3.new(0, h, 0), dir * (dist + 1.5), rayParams)
+		if hit then
+			dist = math.min(dist, math.max(0, hit.Distance - 1.5))
+		end
+	end
+	controllers.AnimeFX.afterimage(c, def.color, 3)
+	root.CFrame += dir * dist
+end
+
+local function onStamp(c: Model)
+	local id = c:GetAttribute("UBAbility")
+	local def = Abilities.get(id)
+	if not def then
+		return
+	end
+	if c ~= player.Character then
+		if def.id == "FlashStep" then
+			controllers.AnimeFX.afterimage(c, def.color, 3)
+		end
+		return
+	end
+	if def.id == "FlashStep" then
+		flashStep(c, def)
+	elseif controllers.MovementController.engine() == "Tech" then
+		local tech = controllers.MovementController.techState()
+		TechCore.startAbility(tech, def.id, def.duration, Abilities.ZoneScale, Abilities.SkyWalkDodges)
+	end
+	controllers.TechFeedback.play(def.name, "Perfect")
+	controllers.AnimeFX.impactFrame(def.color)
+end
+
+-- Every character with an active ability glows in its colour.
+local function refreshAuras()
+	local t = Net.now()
+	local models: { Model } = {}
+	for _, p in Players:GetPlayers() do
+		if p.Character then
+			table.insert(models, p.Character)
+		end
+	end
+	local bots = workspace:FindFirstChild("UBBots")
+	if bots then
+		for _, m in bots:GetChildren() do
+			if m:IsA("Model") then
+				table.insert(models, m)
+			end
+		end
+	end
+	for _, m in models do
+		local stamp = m:GetAttribute("UBAbilityT")
+		if type(stamp) == "number" and stamp ~= lastStamp[m] then
+			local first = lastStamp[m] == nil and t - stamp > 1
+			lastStamp[m] = stamp
+			if not first then
+				onStamp(m)
+			end
+		end
+		local untilT = m:GetAttribute("UBAbilityUntil")
+		local def = Abilities.get(m:GetAttribute("UBAbility"))
+		local active = def ~= nil and type(untilT) == "number" and t < untilT
+		local aura = m:FindFirstChild("UBAura") :: Highlight?
+		if active and def then
+			if not aura then
+				local h = Instance.new("Highlight")
+				h.Name = "UBAura"
+				h.FillTransparency = 0.75
+				h.OutlineTransparency = 0
+				h.DepthMode = Enum.HighlightDepthMode.Occluded
+				h.Parent = m
+				aura = h
+			end
+			local a = aura :: Highlight
+			a.FillColor = def.color
+			a.OutlineColor = def.color
+		elseif aura then
+			aura:Destroy()
+		end
+	end
+	for m in lastStamp do
+		if not m.Parent then
+			lastStamp[m] = nil
+		end
+	end
+end
+
+local function buildBar()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UBAbility"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.Parent = player:WaitForChild("PlayerGui")
+	local b = Theme.panel({
+		Name = "Flow",
+		Parent = gui,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -86),
+		Size = UDim2.fromOffset(220, 8),
+		BackgroundTransparency = 0.4,
+	})
+	local f = Instance.new("Frame")
+	f.Name = "Fill"
+	f.BorderSizePixel = 0
+	f.Size = UDim2.fromScale(0, 1)
+	f.BackgroundColor3 = Theme.Colors.Accent
+	f.Parent = b
+	local l = Theme.label("", 13, {
+		Name = "Name",
+		Parent = gui,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -96),
+		Size = UDim2.fromOffset(300, 18),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Font = Theme.Fonts.Heavy,
+		RichText = true,
+	})
+	bar = b
+	fill = f
+	label = l
+end
+
+local function updateBar()
+	local b, f, l = bar, fill, label
+	if not b or not f or not l then
+		return
+	end
+	local def = AbilityController.selected()
+	local k = math.clamp(flow() / Abilities.MeterMax, 0, 1)
+	f.Size = UDim2.fromScale(k, 1)
+	f.BackgroundColor3 = def.color
+	local ready = k >= 1
+	local key = controllers.InputController.keyLabel("Ability")
+	l.Text = if ready
+		then string.format("%s  %s", Theme.keyText(key, def.name), "READY")
+		else string.format('<font color="#96A0B4">FLOW · %s</font>', def.name)
+	l.TextTransparency = if ready then 0.5 - 0.5 * math.sin(os.clock() * 8) else 0.2
+end
+
+function AbilityController.Init(c: any)
+	controllers = c
+end
+
+function AbilityController.Start()
+	task.spawn(function()
+		remote = Net.event("Ability")
+	end)
+	controllers.InputController.ActionBegan:Connect(function(action)
+		if action ~= "Ability" or controllers.InputController.menuOpen() then
+			return
+		end
+		local r = remote
+		if r then
+			r:FireServer(AbilityController.selected().id)
+		end
+	end)
+	buildBar()
+	local acc = 0
+	RunService.RenderStepped:Connect(function(dt)
+		updateBar()
+		acc += dt
+		if acc >= AURA_REFRESH then
+			acc = 0
+			refreshAuras()
+		end
+	end)
+end
+
+return AbilityController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">AnimeFX</string>
               <string name="Source"><![CDATA[--!strict
@@ -23777,7 +24337,7 @@ return AnimeFX
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -23917,7 +24477,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -24198,7 +24758,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -24951,7 +25511,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -25817,7 +26377,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26772,7 +27332,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27186,7 +27746,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28355,7 +28915,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29521,7 +30081,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29684,7 +30244,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -29827,7 +30387,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30659,7 +31219,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31087,7 +31647,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="83">
+        <Item class="LocalScript" referent="86">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -31114,6 +31674,7 @@ local ORDER = {
 	"EffectsController",
 	"TechFeedback",
 	"AnimeFX",
+	"AbilityController",
 	"UIController",
 }
 
@@ -31138,11 +31699,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="84">
+        <Item class="Folder" referent="87">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -32186,7 +32747,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -32224,6 +32785,7 @@ local MovementConfig = require(Shared.Config.Movement)
 local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
 local SignaturesConfig = require(Shared.Config.Signatures)
+local Abilities = require(Shared.Config.Abilities)
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -33137,6 +33699,26 @@ function render.Settings(content: Instance)
 			Menu.refresh(true)
 		end)
 	end
+	-- your ability (everyone picks from the same pool)
+	do
+		local order = Abilities.Order
+		local cur = table.find(order, s.get("Ability")) or 1
+		local def = Abilities.List[order[cur]]
+		stepper(content, nextOrder(), "Ability", def.name, function()
+			s.set("Ability", order[(cur - 2) % #order + 1])
+			Menu.refresh(true)
+		end, function()
+			s.set("Ability", order[cur % #order + 1])
+			Menu.refresh(true)
+		end)
+		Theme.label(def.desc .. "  Fill FLOW with Perfect techs, catches, blocks and goals.", 13, {
+			Parent = content,
+			LayoutOrder = nextOrder(),
+			TextColor3 = C.Muted,
+			TextWrapped = true,
+			Size = UDim2.new(1, 0, 0, 34),
+		})
+	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },
 		{ key = "CameraShake", label = "Camera shake (subtle)" },
@@ -33427,7 +34009,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -33713,7 +34295,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -34092,7 +34674,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -34238,7 +34820,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="93">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -34514,7 +35096,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -34978,12 +35560,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="92">
+  <Item class="Teams" referent="95">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="93">
+  <Item class="Workspace" referent="96">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

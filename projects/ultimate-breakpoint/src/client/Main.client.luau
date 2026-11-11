@@ -22,6 +22,7 @@ local ORDER = {
 	"EffectsController",
 	"TechFeedback",
 	"AnimeFX",
+	"AbilityController",
 	"UIController",
 }
 

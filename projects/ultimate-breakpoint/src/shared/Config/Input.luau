@@ -29,6 +29,7 @@ Input.Actions = {
 	"Dive",
 	"Burst",
 	"Overhead",
+	"Ability",
 	"Primary",
 	"Secondary",
 	"BankLeft",
@@ -54,6 +55,7 @@ Input.Display = {
 	Dive = "Layout Dive · Swing Right (with disc)",
 	Burst = "Burst (hold) / Burst Kick (tap)",
 	Overhead = "Overhead modifier (hold while throwing)",
+	Ability = "Ability (when FLOW is full)",
 	Primary = "Throw (hold) / Reach",
 	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
 	BankLeft = "Bank Left (with disc)",
@@ -81,6 +83,7 @@ Input.Keyboard = {
 	Dive = { "E" },
 	Burst = { "LeftShift" },
 	Overhead = { "F" },
+	Ability = { "G" },
 	Primary = { "MouseButton1" },
 	Secondary = { "MouseButton2" },
 	BankLeft = { "Z" },
@@ -99,13 +102,14 @@ Input.Keyboard = {
 } :: { [string]: { string } }
 
 Input.Gamepad = {
-	Sprint = { "ButtonL3" },
+	Sprint = {},
 	Jump = { "ButtonA" },
 	Cut = { "ButtonR1" },
 	Slide = { "ButtonB" },
 	Dive = { "ButtonX" },
 	Burst = { "ButtonL1" },
 	Overhead = { "ButtonY" },
+	Ability = { "ButtonL3" },
 	Primary = { "ButtonR2" },
 	Secondary = { "ButtonL2" },
 	BankLeft = { "DPadLeft" },
@@ -214,6 +218,7 @@ Input.DefaultSettings = {
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
+	Ability = "FlashStep", -- Config/Abilities id
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	AutoSprint = true,

@@ -33,6 +33,7 @@ local MovementConfig = require(Shared.Config.Movement)
 local DiscConfig = require(Shared.Config.Disc)
 local ProgressionConfig = require(Shared.Config.Progression)
 local SignaturesConfig = require(Shared.Config.Signatures)
+local Abilities = require(Shared.Config.Abilities)
 local Theme = require(script.Parent.Theme)
 
 local make = Theme.make
@@ -945,6 +946,26 @@ function render.Settings(content: Instance)
 			s.set(n.key, math.clamp(math.floor((v + n.step) * 10 + 0.5) / 10, n.min, n.max))
 			Menu.refresh(true)
 		end)
+	end
+	-- your ability (everyone picks from the same pool)
+	do
+		local order = Abilities.Order
+		local cur = table.find(order, s.get("Ability")) or 1
+		local def = Abilities.List[order[cur]]
+		stepper(content, nextOrder(), "Ability", def.name, function()
+			s.set("Ability", order[(cur - 2) % #order + 1])
+			Menu.refresh(true)
+		end, function()
+			s.set("Ability", order[cur % #order + 1])
+			Menu.refresh(true)
+		end)
+		Theme.label(def.desc .. "  Fill FLOW with Perfect techs, catches, blocks and goals.", 13, {
+			Parent = content,
+			LayoutOrder = nextOrder(),
+			TextColor3 = C.Muted,
+			TextWrapped = true,
+			Size = UDim2.new(1, 0, 0, 34),
+		})
 	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },

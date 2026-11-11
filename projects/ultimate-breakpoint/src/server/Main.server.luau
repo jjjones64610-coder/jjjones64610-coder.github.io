@@ -23,6 +23,7 @@ local ORDER = {
 	"DataService",
 	"ArenaService",
 	"MovementService",
+	"AbilityService",
 	"DiscService",
 	"CatchingService",
 	"DefenseService",

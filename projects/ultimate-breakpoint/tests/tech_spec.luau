@@ -791,6 +791,43 @@ test("sky: hold Jump when slow for a higher leap; Perfect at 0.35-0.40 s", funct
 	expect(sky > full * 1.3, string.format("sky %.2f vs jump %.2f", sky, full))
 end)
 
+test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdrive never drains", function()
+	-- a cut 120 ms after the crossing is Clean, but Perfect in The Zone
+	local function cutAfter(zone: boolean): string
+		local w = newWorld(Config.RUN_TOP_SPEED)
+		if zone then
+			TechCore.startAbility(w.s, "Zone", 5, 2)
+		end
+		w.move = RIGHT
+		worldRun(w, 0.12)
+		tap(w, "Cut")
+		worldRun(w, Config.CUT_PLANT_TIME + 0.02)
+		local c = events(w.s, "Cut")
+		return if c[1] then c[1].quality else "none"
+	end
+	expect(cutAfter(false) == "Clean", "late without the zone")
+	expect(cutAfter(true) == "Perfect", "Perfect in the zone")
+
+	local sky = newWorld(Config.RUN_TOP_SPEED)
+	TechCore.startAbility(sky.s, "SkyWalk", 5, nil, 2)
+	tap(sky, "Jump")
+	worldRun(sky, 0.1)
+	sky.move = RIGHT
+	for _ = 1, 4 do
+		tap(sky, "Jump")
+		worldRun(sky, 0.2)
+	end
+	expect(#events(sky.s, "AirDodge") == 3, "one dodge + two extra, got " .. #events(sky.s, "AirDodge"))
+
+	local od = newWorld(Config.RUN_TOP_SPEED)
+	TechCore.startAbility(od.s, "Overdrive", 4)
+	od.held.Burst = true
+	worldRun(od, 2)
+	expect(od.s.burst == 100 and TechCore.flatSpeed(od.s) > Config.RUN_TOP_SPEED + 5, "full burst, faster")
+	worldRun(od, 2.5)
+	expect(od.s.burst < 100, "drains again after it ends")
+end)
+
 test("tech fuzz: random presses and holds never break the cap or the states", function()
 	local Rng = H.require("Util/Rng")
 	local rng = Rng.new(11)

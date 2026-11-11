@@ -218,6 +218,7 @@ function MatchService.stat(actorId: number, key: string, n: number?)
 	end
 	local amount = n or 1
 	st[key] = (st[key] or 0) + amount
+	services.AbilityService.onStat(actorId, key, amount)
 	local actor = services.PlayerService.get(actorId)
 	if actor and not actor.isBot and S.phase ~= "Intermission" then
 		services.ProgressionService.stat(actor, key, amount)

@@ -20,6 +20,7 @@
 	  Reach       (dir)                                          opens the reach window server-side
 	  MarkStance  (on, stance)
 	  Action      (kind, payload)                                votes, pickup, training, settings, cosmetics
+	  Ability     (abilityId)                                    fire your ability (AbilityService checks the meter)
 	Server -> client
 	  Notify, Highlight, CatchResult (also Denied), Profile, Summary, Feedback, Effect, Combo
 	Replicated state (attributes, late-join safe)
@@ -55,6 +56,7 @@ Net.Events = {
 	"Feedback",
 	"Effect",
 	"Combo",
+	"Ability",
 }
 
 -- Unreliable streams (none at the moment; Net.unreliable() stays for future ones).
