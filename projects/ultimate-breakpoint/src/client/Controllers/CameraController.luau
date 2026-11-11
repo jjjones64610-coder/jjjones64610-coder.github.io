@@ -103,6 +103,25 @@ function CameraController.shake(amplitude: number, duration: number)
 	shakeUntil = math.max(shakeUntil, os.clock() + duration)
 end
 
+-- While captured (a tech-engine throw charging, docs/tech-spec.md 26), the
+-- mouse and right stick stop turning the camera and their movement collects
+-- here for the throw's edge and launch angle (takeLook()).
+local captured = false
+local capturedLook = Vector2.zero
+
+function CameraController.captureLook(on: boolean)
+	captured = on
+	capturedLook = Vector2.zero
+end
+
+-- The look movement collected since the last call (mouse pixels; the stick
+-- is scaled to match).
+function CameraController.takeLook(): Vector2
+	local d = capturedLook
+	capturedLook = Vector2.zero
+	return d
+end
+
 function CameraController.setLocked(l: boolean)
 	locked = l
 end
@@ -133,11 +152,20 @@ local function update(dt: number)
 	local invert = if settings.get("InvertY") then -1 else 1
 	if active then
 		local md = UserInputService:GetMouseDelta()
-		local sens = 0.0042 * settings.get("MouseSensitivity")
-		yaw -= md.X * sens
-		pitch -= md.Y * sens * invert
+		if captured then
+			capturedLook += md * settings.get("MouseSensitivity")
+		else
+			local sens = 0.0042 * settings.get("MouseSensitivity")
+			yaw -= md.X * sens
+			pitch -= md.Y * sens * invert
+		end
 	end
-	if not controllers.InputController.menuOpen() then
+	if captured then
+		local gs = gamepadLook
+		if gs.Magnitude > 0.12 then
+			capturedLook += Vector2.new(gs.X, -gs.Y) * 600 * dt * settings.get("GamepadSensitivity")
+		end
+	elseif not controllers.InputController.menuOpen() then
 		local gs = gamepadLook
 		if gs.Magnitude > 0.12 then
 			local sens = 3.4 * settings.get("GamepadSensitivity") * dt

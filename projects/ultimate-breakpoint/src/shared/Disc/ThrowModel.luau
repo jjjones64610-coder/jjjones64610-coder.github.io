@@ -53,6 +53,7 @@ export type Params = {
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
+	perfectCatch: boolean?, -- right after a Perfect Catch (halves the run-through cone)
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -227,6 +228,7 @@ function ThrowModel.sanitize(raw: any): Params?
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
+		perfectCatch = raw.perfectCatch == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -334,7 +336,21 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 		speed *= TechConfig.PINCH_SPEED
 	end
 
-	local forward, right = ThrowModel.basis(p.yaw)
+	-- Run-Through Release (docs/tech-spec.md 29): released on the move (no
+	-- pivot yet), the aim cone widens 1 degree per RUN_THROUGH_CONE studs/s
+	-- of speed (half after a Perfect Catch). The deviation is a fixed hash of
+	-- the release time, so the client and the server agree.
+	local yaw = p.yaw
+	if not pivoting and not p.groundThrow then
+		local flat = Vector3.new(throwerVel.X, 0, throwerVel.Z).Magnitude
+		if flat == flat and flat > 1 then
+			local cone = flat / TechConfig.RUN_THROUGH_CONE * (if p.perfectCatch then 0.5 else 1)
+			local seed = (p.releaseT or 0) * 12.9898
+			local noise = (math.sin(seed) * 43758.5453) % 1 * 2 - 1
+			yaw += math.rad(cone * noise)
+		end
+	end
+	local forward, right = ThrowModel.basis(yaw)
 	local dir = forward * math.cos(pitch) + UP * math.sin(pitch)
 
 	-- Orientation: start flat relative to the flight path, bank about the

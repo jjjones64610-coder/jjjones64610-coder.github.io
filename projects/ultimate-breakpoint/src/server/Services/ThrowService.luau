@@ -313,6 +313,14 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	end
 	chargeStart[actorId] = nil
 
+	-- the halved run-through cone needs a catch this player just made
+	if p.perfectCatch and not bot then
+		local track = services.MovementService.track(actorId)
+		if not track or os.clock() - track.lastCatchClock > TechConfig.HOT_HANDS_TIME + 0.6 then
+			p.perfectCatch = false
+		end
+	end
+
 	-- a Pinch needs the feet to really be touching down: a touchdown the
 	-- server saw just now, or a body about to land
 	if p.pinch and not bot then

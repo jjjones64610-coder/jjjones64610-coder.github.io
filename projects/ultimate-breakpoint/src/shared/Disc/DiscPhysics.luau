@@ -27,6 +27,7 @@ local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 
 local P = DiscConfig.Physics
+local SPIN_REF = DiscConfig.Throw.SpinBase
 
 local DiscPhysics = {}
 
@@ -195,6 +196,25 @@ function DiscPhysics.step(s: State, dt: number, wind: Wind?)
 			nz += cz * rate * dt
 			local nm = sqrt(nx * nx + ny * ny + nz * nz)
 			s.nx, s.ny, s.nz = nx / nm, ny / nm, nz / nm
+		end
+
+		-- fade drift: below full spin the tilt rolls about the flight line
+		-- toward the fade side (left for a right-handed backhand)
+		local share = abs(s.spin) / SPIN_REF
+		if share < 1 then
+			local theta = (if s.spin >= 0 then 1 else -1) * (1 - share) * P.FadeDrift * dt
+			local c, sn = math.cos(theta), math.sin(theta)
+			local mx, my, mz = s.nx, s.ny, s.nz
+			-- Rodrigues: rotate n about u
+			local kx = uy * mz - uz * my
+			local ky = uz * mx - ux * mz
+			local kz = ux * my - uy * mx
+			local d = ux * mx + uy * my + uz * mz
+			local rx = mx * c + kx * sn + ux * d * (1 - c)
+			local ry = my * c + ky * sn + uy * d * (1 - c)
+			local rz = mz * c + kz * sn + uz * d * (1 - c)
+			local rm = sqrt(rx * rx + ry * ry + rz * rz)
+			s.nx, s.ny, s.nz = rx / rm, ry / rm, rz / rm
 		end
 	end
 

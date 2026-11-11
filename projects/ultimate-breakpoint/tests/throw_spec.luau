@@ -113,6 +113,30 @@ test("sanitize clamps hostile steps into the pivot's reach", function()
 	expect((legal - Vector3.new(-1.2, 0, 0.5)).Magnitude < 1e-6, "a legal step is untouched")
 end)
 
+test("run-through release: the aim cone widens with speed, halves after a Perfect Catch", function()
+	local function yawOff(vel: number, perfect: boolean?, releaseT: number): number
+		local p = params({ releaseT = releaseT, perfectCatch = perfect })
+		local l = ThrowModel.launch(p, Vector3.zero, Vector3.new(0, 0, -vel))
+		local v = Vector3.new(l.velocity.X, 0, l.velocity.Z).Unit
+		return math.deg(math.atan2(v.X, -v.Z))
+	end
+	expect(math.abs(yawOff(0, false, 3.7)) < 1e-3, "standing: no cone")
+	local maxDev, maxHalf = 0, 0
+	for i = 1, 40 do
+		local t = i * 0.731
+		maxDev = math.max(maxDev, math.abs(yawOff(20, false, t)))
+		maxHalf = math.max(maxHalf, math.abs(yawOff(20, true, t)))
+		expect(yawOff(20, false, t) == yawOff(20, false, t), "deterministic")
+	end
+	local TechConfig = H.require("Config/Tech")
+	local cone = 20 / TechConfig.RUN_THROUGH_CONE
+	expect(maxDev <= cone + 0.5 and maxDev > cone * 0.5, string.format("cone %.2f, max %.2f", cone, maxDev))
+	expect(maxHalf <= cone / 2 + 0.5, "halved after a Perfect Catch")
+	local pv = ThrowModel.launch(params({ releaseT = 1.3, pivot = Vector3.zero }), Vector3.zero, Vector3.new(0, 0, -20))
+	local d = Vector3.new(pv.velocity.X, 0, pv.velocity.Z).Unit
+	expect(math.abs(d.X) < 1e-3, "from a planted pivot: no cone")
+end)
+
 test("off-balance throws are capped", function()
 	local base = params({ holdTime = T.SnapPoint * T.ChargeTime })
 	local normal = ThrowModel.launch(base, Vector3.zero, Vector3.zero)

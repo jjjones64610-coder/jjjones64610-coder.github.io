@@ -184,6 +184,8 @@ Tech.SPIN_DECAY = 0.15
 Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
+Tech.LAUNCH_ANGLE = { -5, 35 } -- degrees, the mouse sets it while charging
+Tech.RUN_THROUGH_CONE = 5 -- studs/s of speed per degree of aim cone (spec 29)
 Tech.FAKE_RECOVERY = 0.2 -- s after a pump fake before the next throw
 Tech.FAKE_SWITCH_WINDOW = 0.15 -- s: the other throw this soon skips the recovery
 

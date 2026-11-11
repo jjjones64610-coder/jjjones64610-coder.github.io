@@ -138,6 +138,19 @@ test("an overcharged (low-spin) release rolls more than a perfect one", function
 	expect(rollO > rollP * 1.5, string.format("roll perfect %.3f over %.3f", rollP, rollO))
 end)
 
+test("fade drift: low spin fades early to the fade side, a Snap holds its edge", function()
+	local snap = fly("Backhand", FULL, 0)
+	local over = fly("Backhand", 1.1 * DiscConfig.Throw.ChargeTime, 0)
+	expect(over.launch.quality == "Over", "overcharged")
+	expect(
+		over.lateral < snap.lateral - 2,
+		string.format("over %.1f vs snap %.1f (left is negative)", over.lateral, snap.lateral)
+	)
+	local fhOver = fly("Forehand", 1.1 * DiscConfig.Throw.ChargeTime / 1.2, 0)
+	local fhSnap = fly("Forehand", FULL / 1.2, 0)
+	expect(fhOver.lateral > fhSnap.lateral, "a forehand fades the other way")
+end)
+
 test("crosswind pushes the disc downwind, consistently", function()
 	local calm = fly("Backhand", 0.4, 4)
 	local windy = fly("Backhand", 0.4, 4, 0, { x = 8, y = 0, z = 0 })

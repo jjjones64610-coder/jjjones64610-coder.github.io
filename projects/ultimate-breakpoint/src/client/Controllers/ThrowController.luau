@@ -99,6 +99,10 @@ local state = {
 	lastFake = -math.huge,
 	fakedType = "", -- the throw a fake sold (Fake Switch: the other one)
 	chargeButton = "Primary", -- the button holding the charge (tech engine)
+	-- edge and launch angle on the mouse while charging (tech engine)
+	shaping = false,
+	edge = 0, -- -1..1 of BankRange
+	launchDeg = 8,
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
@@ -209,9 +213,51 @@ local function yawToward(from: Vector3, to: Vector3, fallback: number): number
 	return math.atan2(-d.X, -d.Z)
 end
 
+-- Edge past this many degrees turns a backhand / forehand into a Blade.
+local BLADE_EDGE = 35
+local EDGE_PER_PIXEL = 0.004
+local ANGLE_PER_PIXEL = 0.08
+
+-- The charge ended: give the mouse back to the camera.
+local function stopShaping()
+	if state.shaping then
+		state.shaping = false
+		controllers.CameraController.captureLook(false)
+	end
+end
+
+-- While charging on the tech engine: mouse / stick X tilts the edge, Y the
+-- launch angle (docs/tech-spec.md 26). The bank pip shows the edge.
+local function shapeThrow()
+	if not state.shaping then
+		return
+	end
+	local d = controllers.CameraController.takeLook()
+	if d.Magnitude > 0 then
+		state.edge = math.clamp(state.edge + d.X * EDGE_PER_PIXEL, -1, 1)
+		state.launchDeg =
+			math.clamp(state.launchDeg - d.Y * ANGLE_PER_PIXEL, TechConfig.LAUNCH_ANGLE[1], TechConfig.LAUNCH_ANGLE[2])
+		state.bankStep = math.clamp(math.floor(state.edge * BANK_STEPS + 0.5), -BANK_STEPS, BANK_STEPS)
+		ThrowController.Changed:Fire()
+	end
+end
+
+-- The throw type that actually leaves: a hard edge is a Blade.
+local function releaseType(): string
+	if state.shaping and (state.throwType == "Backhand" or state.throwType == "Forehand") then
+		if math.abs(state.edge) * T.BankRange > BLADE_EDGE then
+			return "Blade"
+		end
+	end
+	return state.throwType
+end
+
 local function currentParams(holdTime: number): ThrowModel.Params
 	local yaw = controllers.CameraController.getYaw()
 	local pitch = controllers.CameraController.getPitch() + AIM_OFFSET
+	if state.shaping then
+		pitch = math.rad(state.launchDeg)
+	end
 	local sol = state.leadSolution
 	local locked = state.leadLock and sol ~= nil
 	if locked and sol then
@@ -246,11 +292,11 @@ local function currentParams(holdTime: number): ThrowModel.Params
 		end
 	end
 	return {
-		throwType = state.throwType,
+		throwType = releaseType(),
 		yaw = yaw,
 		pitch = pitch,
 		holdTime = holdTime,
-		bank = state.bankStep / BANK_STEPS,
+		bank = if state.shaping then state.edge else state.bankStep / BANK_STEPS,
 		height = height,
 		offBalance = airborne() and height ~= "High",
 		groundThrow = sim.mode == "DiveSlide" or sim.mode == "Recover",
@@ -421,6 +467,7 @@ end
 local function cancelCharge()
 	if state.charging then
 		state.charging = false
+		stopShaping()
 		Net.event("ThrowCharge"):FireServer(false)
 		ThrowController.Changed:Fire()
 		ThrowController.ChargeLost:Fire()
@@ -480,18 +527,23 @@ local function release()
 	local folder = ThrowController.heldFolder()
 	local root = controllers.MovementController.root()
 	if not folder or not root then
+		stopShaping()
 		return
 	end
 	local refusal = throwRefusal(folder)
 	if refusal then
 		-- the server would refuse it silently: say so and drop the windup
+		stopShaping()
 		Net.event("ThrowCharge"):FireServer(false)
 		refuseThrow(refusal)
 		ThrowController.Changed:Fire()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
+	shapeThrow() -- the last of the mouse movement counts
 	local params = currentParams(hold)
+	stopShaping()
+	params.perfectCatch = controllers.CatchController.hotHands() or nil
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then
 		controllers.TechFeedback.play(if params.pinch == "Perfect" then "Perfect Pinch" else "Pinch", params.pinch)
@@ -510,6 +562,7 @@ local function release()
 		pivot = params.pivot,
 		swinging = params.swinging,
 		pinch = params.pinch,
+		perfectCatch = params.perfectCatch,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})
@@ -560,6 +613,7 @@ local function fake()
 	end
 	state.lastFake = os.clock()
 	state.charging = false
+	stopShaping()
 	local side = fakeSide()
 	controllers.MovementController.fakeStep(side)
 	Net.event("Fake"):FireServer(state.throwType, side)
@@ -708,6 +762,17 @@ local function beginCharge()
 	state.charging = true
 	state.chargeStart = os.clock()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
+	if controllers.MovementController.engine() == "Tech" then
+		-- the camera locks; the mouse shapes the throw
+		state.shaping = true
+		state.edge = state.bankStep / BANK_STEPS
+		state.launchDeg = math.clamp(
+			math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
+			TechConfig.LAUNCH_ANGLE[1],
+			TechConfig.LAUNCH_ANGLE[2]
+		)
+		controllers.CameraController.captureLook(true)
+	end
 	if controllers.CatchController.hotHands() then
 		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once
 		state.chargeStart = os.clock() - T.ChargeTime * TechConfig.HOT_HANDS_POWER
@@ -733,6 +798,7 @@ local function step()
 			state.pendingCharge = false
 		else
 			state.charging = false
+			stopShaping()
 			state.leadSolution = nil
 			state.low = false
 		end
@@ -742,6 +808,7 @@ local function step()
 		hideDots()
 		return
 	end
+	shapeThrow()
 	updateLead()
 	drawPreview(folder)
 	local c = player.Character

@@ -34,7 +34,11 @@ local Disc = {
 		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
 		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
 		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
-		SpinDecay = 0.04 * TEMPO, -- per second
+		SpinDecay = 0.15, -- per second (docs/tech-spec.md disc model: SPIN_DECAY)
+		-- fade drift (spec): the tilt rolls toward the fade side at
+		-- (1 - spin share) x FadeDrift, where spin share is |spin| / Throw.SpinBase,
+		-- so a low-spin (overcharged) disc fades early and a Snap holds its edge
+		FadeDrift = math.rad(40), -- radians per second at zero spin
 		MinSpin = 8 * TEMPO,
 		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
 		GroundContact = 0.14, -- disc centre height that counts as touching the ground
@@ -69,7 +73,7 @@ local Disc = {
 		MinSpeed = 28 * TEMPO,
 		MaxSpeed = 88 * TEMPO, -- sized for the Normal field (see the header)
 		PowerCurve = 0.85,
-		BankRange = 35, -- degrees of player-controlled bank either side
+		BankRange = 40, -- degrees of player-controlled bank (edge) either side (spec: ±40)
 		BankSteps = 7, -- discrete bank positions for keyboard/gamepad (-3..3)
 		FakeCooldown = 0.45,
 		FakeDuration = 0.22,
