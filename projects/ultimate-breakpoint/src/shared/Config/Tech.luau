@@ -196,6 +196,8 @@ Tech.PIVOT_LUNGE_RECOVER = 0.25
 -- defense and rules
 Tech.STALL_COUNT = 10
 Tech.HAND_BLOCK_ACTIVE = 0.2
+Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
+Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
 Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
 Tech.MIRROR_BONUS = 2

@@ -30,6 +30,12 @@
 	                newer than the rewind time uses the previous stance): a
 	                pivot that visibly beats the mark beats it. Contact = a
 	                point block. Pure geometry, no hidden roll.
+	  Hand Block    (docs/tech-spec.md 31) a marker's swing (Action
+	                "HandBlock" with the aim) adds an arm sphere toward the
+	                aim for HAND_BLOCK_ACTIVE: a disc through it in the
+	                first HandBlockCheckTime of the flight is blocked. A swing
+	                within POINT_BLOCK_WINDOW (+ ping) of the release is a
+	                Point Block (+FLOW). Swings are rate-limited.
 	  Force side    each team's markers force a side per point (UBState
 	                ForceA / ForceB = "FH" | "BH", set by MatchService);
 	                forceFor(team) reads it for bots and the HUD.
@@ -53,6 +59,30 @@ local HAND_BLOCK_RADIUS = 14
 local JUMP_NOISE = 0.3
 
 local DefenseService = {}
+
+local TechConfig = require(Shared.Config.Tech)
+
+-- active hand-block swings: actor id -> { t = server time, dir = flat aim }
+local swings: { [number]: { t: number, dir: Vector3 } } = {}
+local ARM_REACH = 1.6 -- studs from the shoulder toward the aim
+local ARM_RADIUS = 1.5
+local SHOULDER = 1.3 -- above the root
+local SWING_EVERY = 0.4 -- a whiff's recovery: no faster swings
+
+-- A marker swings an arm toward `dir` (flat). Returns whether it counted.
+function DefenseService.swing(actorId: number, dir: Vector3): boolean
+	local last = swings[actorId]
+	local t = Net.now()
+	if last and t - last.t < SWING_EVERY then
+		return false
+	end
+	local flat = Vector3.new(dir.X, 0, dir.Z)
+	if flat.Magnitude < 0.1 or flat.Magnitude ~= flat.Magnitude then
+		return false
+	end
+	swings[actorId] = { t = t, dir = flat.Unit }
+	return true
+end
 
 DefenseService.StallOut = Signal.new() -- (holderId)
 DefenseService.StallTick = Signal.new() -- (count)
@@ -265,7 +295,7 @@ local function stepStall(dt: number)
 	end
 end
 
-type Candidate = { id: number, box: CatchGeometry.MarkBox }
+type Candidate = { id: number, box: CatchGeometry.MarkBox, arm: Vector3?, point: boolean }
 
 -- How far back the thrower saw the markers when the release reaches us.
 -- MovementService.ping is one-way: the release took one ping to arrive, and
@@ -301,7 +331,19 @@ function DefenseService.checkHandBlock(
 			if (pos - pivot).Magnitude < HAND_BLOCK_RADIUS then
 				local rise = pos.Y - groundY - services.MovementService.standHeight(a.id)
 				local stance: CatchGeometry.MarkStance = stanceAt(a.id, rewindT)
+				-- an active swing live around the release adds the arm
+				local sw = swings[a.id]
+				local releaseAt = at or now()
+				local lag = services.MovementService.ping(throwerId) + services.MovementService.ping(a.id)
+				local arm: Vector3? = nil
+				local point = false
+				if sw and releaseAt - sw.t <= TechConfig.HAND_BLOCK_ACTIVE + lag and sw.t - releaseAt <= 0.05 + lag then
+					arm = pos + Vector3.new(0, SHOULDER, 0) + sw.dir * ARM_REACH
+					point = math.abs(releaseAt - sw.t) <= TechConfig.POINT_BLOCK_WINDOW / 1000 + lag
+				end
 				table.insert(candidates, {
+					arm = arm,
+					point = point,
 					id = a.id,
 					box = CatchGeometry.markBox(
 						pos,
@@ -324,7 +366,16 @@ function DefenseService.checkHandBlock(
 		DiscPhysics.step(s, dt, wind)
 		local p = Vector3.new(s.px, s.py, s.pz)
 		for _, c in candidates do
-			if CatchGeometry.inMarkBox(c.box, p) then
+			local armHit = c.arm ~= nil and (p - (c.arm :: Vector3)).Magnitude <= ARM_RADIUS
+			if armHit or CatchGeometry.inMarkBox(c.box, p) then
+				if armHit then
+					swings[c.id] = nil
+					services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
+					local actor = services.PlayerService.get(c.id)
+					if actor and actor.player then
+						Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })
+					end
+				end
 				return c.id, s.t, p
 			end
 		end
@@ -346,6 +397,7 @@ function DefenseService.Start()
 	RunService.Heartbeat:Connect(stepStall)
 	services.PlayerService.ActorRemoving:Connect(function(actor)
 		stances[actor.id] = nil
+		swings[actor.id] = nil
 	end)
 end
 

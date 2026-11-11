@@ -35,6 +35,7 @@ local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local SignaturesConfig = require(Shared.Config.Signatures)
 local UI = script.Parent.Parent.UI
 local Theme = require(UI.Theme)
+local TechCore = require(ReplicatedStorage:WaitForChild("Shared").Movement.TechCore)
 local Hud = require(UI.Hud)
 local ThrowHud = require(UI.ThrowHud)
 local Menu = require(UI.Menu)
@@ -155,6 +156,16 @@ local function onFeedback(kind: string, payload: any)
 		controllers.AudioController.play("Highlight")
 	elseif kind == "DrillTick" and type(payload) == "table" then
 		Hud.feedback(payload.text or "", C.Text, 4)
+	elseif kind == "HandBlock" and type(payload) == "table" then
+		-- your swing got it (DefenseService)
+		local point = payload.point == true
+		controllers.TechFeedback.play(
+			if point then "Point Block" else "Hand Block",
+			if point then "Perfect" else "Clean"
+		)
+		if point then
+			TechCore.addBurst(controllers.MovementController.techState(), 20)
+		end
 	elseif kind == "OpenLauncher" then
 		Hud.toast("Free launcher: press M > Training to set up and fire launches.", C.Accent, 6)
 	end

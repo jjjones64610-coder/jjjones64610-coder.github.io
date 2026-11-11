@@ -860,6 +860,19 @@ function CatchController.Start()
 		if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
 			return
 		end
+		if action == "Primary" and marking and controllers.MovementController.engine() == "Tech" then
+			-- Hand Block: swing the arm toward your aim (DefenseService)
+			local aim = VecMath.flatUnit(controllers.CameraController.getAimDirection())
+			Net.event("Action"):FireServer("HandBlock", aim)
+			reachAt = now()
+			reachDir = aim
+			local c = player.Character
+			if c then
+				c:SetAttribute("UB_LocalReach", reachAt)
+				c:SetAttribute("UB_LocalReachDir", aim)
+			end
+			return
+		end
 		if action == "Primary" then
 			catchPressAt = now()
 			if not requestPickup() then
