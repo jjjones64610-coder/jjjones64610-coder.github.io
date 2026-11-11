@@ -326,7 +326,7 @@ function CatchingService.claim(
 		return false
 	end
 	local untimed = false
-	if TechConfig.TIMED_CATCH and not actor.isBot then
+	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and not actor.isBot then
 		local closest = ev.t or t
 		local allow = TechConfig.CATCH_WINDOW / 1000 + TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
 		untimed = not (type(pressT) == "number" and pressT == pressT and math.abs(pressT - closest) <= allow)

@@ -588,8 +588,8 @@ local function sendClaim(folder: Configuration, id: string, c: Contact, discPos:
 		c.closestT = nil
 	end
 	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel, pressT)
-	if TechConfig.TIMED_CATCH and pressT == nil then
-		-- no timed press: the server will bobble it, so predict nothing
+	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and pressT == nil then
+		-- strict: no timed press means the server bobbles it, so predict nothing
 		return
 	end
 	if likelyBlock(folder, c) then
@@ -678,7 +678,10 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 				c.closestT = tNow
 			end
 			local closest = c.closestT :: number
-			if catchPressAt < closest - CATCH_W and tNow < closest + CATCH_W then
+			-- strict waits the whole window for a late press; otherwise only
+			-- the Perfect part (a touch is a catch anyway)
+			local wait = if TechConfig.TIMED_CATCH_STRICT then CATCH_W else TechConfig.CATCH_PERFECT / 1000
+			if catchPressAt < closest - CATCH_W and tNow < closest + wait then
 				return
 			end
 		end
@@ -827,7 +830,7 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
-		if result == "Bobble" and TechConfig.TIMED_CATCH then
+		if result == "Bobble" and TechConfig.TIMED_CATCH_STRICT then
 			controllers.TechFeedback.play("Bobble", "Miss")
 		end
 	else

@@ -46,7 +46,7 @@ test("charge: below and in the zone are Clean, the snap is Perfect, past the zon
 	expect(q2 == "Perfect" and p2 == 1 and s2 == T.SnapSpin, "snap")
 	expect(q3 == "Over" and p3 > 1 and s3 == T.OverSpin, "over")
 	expect(q4 == "Over" and s4 == T.LongSpin, "held too long")
-	expect(ThrowModel.chargePhase(0.78 * CT, "Backhand") == "Zone", "meter phase")
+	expect(ThrowModel.chargePhase(0.76 * CT, "Backhand") == "Zone", "meter phase")
 end)
 
 test("forehand charges faster than backhand", function()

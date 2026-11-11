@@ -20,9 +20,9 @@ Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 Tech.BOTS_USE_TECH = true
 
 -- running
-Tech.RUN_TOP_SPEED = 22
-Tech.RUN_ACCEL = 60
-Tech.GROUND_FRICTION = 80 -- no input (and HoldingDisc / Downed)
+Tech.RUN_TOP_SPEED = 24 -- (spec 22; faster after playtest)
+Tech.RUN_ACCEL = 72
+Tech.GROUND_FRICTION = 70 -- no input (and HoldingDisc / Downed)
 Tech.OVERSPEED_DECAY_GROUND = 15
 Tech.OVERSPEED_DECAY_AIR = 4
 Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
@@ -31,13 +31,14 @@ Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
 -- (linear between points, flat past the last one)
 Tech.TURN_FREE_SPEED = 12
 Tech.TURN_RATE = {
-	{ speed = 12, rate = 300 },
-	{ speed = 30, rate = 180 },
-	{ speed = 50, rate = 90 },
+	{ speed = 12, rate = 380 },
+	{ speed = 30, rate = 250 },
+	{ speed = 50, rate = 140 },
 }
 -- Steering harder than the turn rate drifts: every 90° turned while the
 -- stick asks for more than you can turn costs this fraction of your speed.
-Tech.TURN_DRIFT_LOSS = 0.25
+Tech.TURN_DRIFT_LOSS = 0.12
+Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
 Tech.PLAYER_GRAVITY = 140
@@ -50,7 +51,7 @@ Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
 -- burst
-Tech.BURST_TOP_SPEED = 30
+Tech.BURST_TOP_SPEED = 32
 Tech.BURST_ACCEL = 90
 Tech.BURST_DRAIN = 30
 Tech.BURST_REFILL = 15
@@ -163,13 +164,16 @@ Tech.SKY_REACH = 1 -- studs of extra reach on a Perfect Sky
 
 -- catching
 Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
+-- strict: a touch with no timed press bobbles (the spec). Off: it is still a
+-- catch, and a timed press earns the Perfect Catch / Hot Hands bonus.
+Tech.TIMED_CATCH_STRICT = false
 Tech.CATCH_LAG_ALLOWANCE = 100 -- ms the server adds (plus ping)
 Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
 Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
 Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
-Tech.CATCH_WINDOW = 150 -- ± ms
-Tech.CATCH_PERFECT = 40 -- ± ms
+Tech.CATCH_WINDOW = 180 -- ± ms
+Tech.CATCH_PERFECT = 50 -- ± ms
 Tech.LAYOUT_DOWN_TIME = 0.9
 Tech.TECH_ROLL_WINDOW = 100 -- ms
 Tech.TECH_ROLL_PERFECT = 40

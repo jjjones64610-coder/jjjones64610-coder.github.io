@@ -58,8 +58,9 @@
 	  Layout (Dive, 15+)   speed + 8 toward the aim, 10 up; Downed 0.9 s
 	  Tech Roll            Jump within 100 ms of the layout landing: up in
 	                       0.25 s keeping 50 % (Perfect 40 ms: 75 %)
-	  Sky                  standing or jogging, hold Jump: release after
-	                       0.2 s for a charged leap up to 1.6x (1.7x Perfect)
+	  Sky                  standing or jogging, crouch (hold Slide) 0.2 s+ and
+	                       press Jump: a charged leap up to 1.6x (1.7x Perfect
+	                       at 0.35-0.40 s). Jump itself always fires at once.
 
 	WORLD-CLASS TECH (not in the spec; the gap between good and great)
 	  Flip Reset           your FEET touch a disc in flight (footContact()):
@@ -1021,8 +1022,10 @@ local function tryStall(s: State): boolean
 	return true
 end
 
--- A Jump press on the ground: a Slide Hop from a slide, a Sky charge when
--- slow, or a jump.
+local skyJump: (State, number) -> ()
+
+-- A Jump press on the ground: a Slide Hop from a slide, a Sky out of a
+-- crouch, or a jump (always at once).
 local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if s.state == "Downed" then
 		return tryTechRoll(s, at)
@@ -1043,8 +1046,10 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if s.holding then
 		return false -- the pivot hop belongs to the throwing step
 	end
-	if flatOf(s.vel).Magnitude <= Config.SKY_MAX_SPEED then
-		s.skyChargeAt = s.now -- the jump happens on release
+	-- a crouch (Slide held while slow) charges a Sky; otherwise jump at once
+	local crouch = s.skyChargeAt
+	if crouch and s.now - crouch >= Config.SKY_MIN_HOLD then
+		skyJump(s, s.now - crouch)
 		return true
 	end
 	jumpOff(s, Config.JUMP_TAP, true)
@@ -1052,25 +1057,9 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	return true
 end
 
--- Jump released while charging: a tap / full jump, or a Sky.
-local function releaseCharge(s: State)
-	local at = s.skyChargeAt
-	if at == nil then
-		return
-	end
+-- The Sky: a jump out of a crouch held `held` seconds.
+skyJump = function(s: State, held: number)
 	s.skyChargeAt = nil
-	if not RUNNING[s.state] then
-		return
-	end
-	local held = s.now - at
-	if held < Config.SKY_MIN_HOLD then
-		-- a quick tap jumps at once with the rest of the hold window open
-		jumpOff(s, Config.JUMP_TAP, false)
-		local extra = math.clamp(held / Config.JUMP_HOLD, 0, 1) * (Config.JUMP_FULL - Config.JUMP_TAP)
-		s.vel = Vector3.new(s.vel.X, s.vel.Y + extra, s.vel.Z)
-		emit(s, "Jump", "Clean", s.heading)
-		return
-	end
 	local c = math.clamp(held / Config.SKY_CHARGE, 0, 1)
 	local quality = noteRange(
 		s,
@@ -1358,9 +1347,9 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	if speed > top then
 		speed = math.max(top, speed - Config.OVERSPEED_DECAY_GROUND * dt)
 	elseif speed < target then
-		if not s.drifting then
-			speed = moveToward(speed, target, accel * dt)
-		end
+		-- drifting still accelerates, just slower
+		local share = if s.drifting then Config.DRIFT_ACCEL_SHARE else 1
+		speed = moveToward(speed, target, accel * share * dt)
 	elseif speed > target then
 		-- a part-pushed stick (or a Sky charge) slows you like friction
 		speed = math.max(target, speed - Config.GROUND_FRICTION * dt)
@@ -1475,8 +1464,16 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	-- held edges
 	updateBurst(s, input, dt)
 	local jumpHeld = isHeld(input, "Jump")
-	if s.skyChargeAt and not jumpHeld then
-		releaseCharge(s)
+	-- the Sky crouch: Slide held on the ground while slow (not a slide)
+	local crouching = s.grounded
+		and RUNNING[s.state] == true
+		and not s.holding
+		and isHeld(input, "Slide")
+		and flatOf(s.vel).Magnitude <= Config.SKY_MAX_SPEED
+	if crouching then
+		s.skyChargeAt = s.skyChargeAt or s.now
+	else
+		s.skyChargeAt = nil
 	end
 	s.slidePrimed = (not s.grounded) and isHeld(input, "Slide")
 

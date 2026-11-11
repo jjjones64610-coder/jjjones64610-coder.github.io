@@ -100,11 +100,13 @@ end)
 
 test("turn rate curve matches the spec points", function()
 	expect(TechCore.turnRate(11.9) == math.huge, "instant under 12")
-	expect(near(TechCore.turnRate(12), 300, 1e-6), "300 at 12")
-	expect(near(TechCore.turnRate(30), 180, 1e-6), "180 at 30")
-	expect(near(TechCore.turnRate(50), 90, 1e-6), "90 at 50")
-	expect(near(TechCore.turnRate(21), 240, 1e-6), "linear between")
-	expect(near(TechCore.turnRate(60), 90, 1e-6), "flat past 50")
+	local R = Config.TURN_RATE
+	expect(near(TechCore.turnRate(12), R[1].rate, 1e-6), "first point")
+	expect(near(TechCore.turnRate(30), R[2].rate, 1e-6), "second point")
+	expect(near(TechCore.turnRate(50), R[3].rate, 1e-6), "third point")
+	expect(near(TechCore.turnRate(21), (R[1].rate + R[2].rate) / 2, 1e-6), "linear between")
+	expect(near(TechCore.turnRate(60), R[3].rate, 1e-6), "flat past the last")
+	expect(R[1].rate > R[2].rate and R[2].rate > R[3].rate, "faster turns slower")
 end)
 
 test("turning is instant when slow", function()
@@ -130,7 +132,10 @@ test("fast turns are rate-limited and drifting costs speed", function()
 	end, 2)
 	expect(t ~= nil, "finishes the turn")
 	local kept = TechCore.flatSpeed(d) / Config.RUN_TOP_SPEED
-	expect(kept < 0.85 and kept > 0.6, string.format("kept %.2f of the speed through 90°", kept))
+	expect(
+		kept < 1 - Config.TURN_DRIFT_LOSS * 0.5 and kept > 1 - Config.TURN_DRIFT_LOSS * 1.6,
+		string.format("kept %.2f of the speed through 90°", kept)
+	)
 
 	-- a gentle curve inside the limit costs nothing
 	local c = moving(Config.RUN_TOP_SPEED)
@@ -461,7 +466,10 @@ test("cut: an early press is buffered to the crossing; repeats are capped", func
 		return #events(x.s, "Cut") >= 2
 	end, 0.3)
 	expect(#events(w.s, "Cut") == 2, "second cut")
-	expect(TechCore.flatSpeed(w.s) <= before * Config.CUT_REPEAT_CAP + 0.6, "capped at 85 %")
+	expect(
+		TechCore.flatSpeed(w.s) <= before * Config.CUT_REPEAT_CAP + Config.RUN_ACCEL * TechCore.STEP + 0.05,
+		"capped at 85 %"
+	)
 end)
 
 test("juke: the stick back to the line in the plant keeps it at 90 %", function()
@@ -632,7 +640,7 @@ test("air dodge: +12 the held way with a hang; one per airtime; neutral goes up"
 	n.move = Vector3.zero
 	tap(n, "Jump")
 	n.held.Jump = false
-	worldRun(n, 0.02) -- slow: the jump fires on release
+	worldRun(n, 0.02)
 	worldRun(n, 0.1)
 	local vy = n.s.vel.Y
 	tap(n, "Jump")
@@ -711,7 +719,7 @@ test("burst dive: standstill jump, diagonal dodge, Cut: run at 28-32", function(
 	tap(w, "Jump")
 	worldRun(w, 0.03)
 	w.held.Jump = false
-	worldStep(w) -- jumps on release
+	worldStep(w) -- (the jump fired on the press)
 	expect(not w.s.grounded, "jumped")
 	w.move = (FWD + RIGHT).Unit
 	tap(w, "Jump")
@@ -769,26 +777,32 @@ test("air layout spends the dodge", function()
 	expect(w.s.state == "Diving" and not w.s.dodgeAvailable, "air layout")
 end)
 
-test("sky: hold Jump when slow for a higher leap; Perfect at 0.35-0.40 s", function()
-	local function peak(hold: number): (number, any)
+test("sky: crouch (hold Slide) while slow, then Jump, for a higher leap; Perfect at 0.35-0.40 s", function()
+	local function peak(crouch: number): (number, any)
 		local w = newWorld(0)
 		w.move = Vector3.zero
-		w.held.Jump = true
+		w.held.Slide = true
+		worldRun(w, crouch)
 		tap(w, "Jump")
-		worldRun(w, hold)
-		w.held.Jump = false
 		local top = 0
 		worldStep(w)
+		w.held.Slide = false
 		worldUntil(w, function(x)
 			top = math.max(top, x.y)
 			return x.s.grounded
 		end, 3)
 		return top, events(w.s, "Sky")[1]
 	end
-	local full = peak(0.19)
+	local plain = peak(0)
 	local sky, e = peak(0.37)
 	expect(e and e.quality == "Perfect", "Perfect sky")
-	expect(sky > full * 1.3, string.format("sky %.2f vs jump %.2f", sky, full))
+	expect(sky > plain * 1.3, string.format("sky %.2f vs jump %.2f", sky, plain))
+	-- no crouch: Jump fires on the press, even standing still
+	local w = newWorld(0)
+	w.move = Vector3.zero
+	tap(w, "Jump")
+	worldStep(w)
+	expect(not w.s.grounded, "jumps at once")
 end)
 
 test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdrive never drains", function()

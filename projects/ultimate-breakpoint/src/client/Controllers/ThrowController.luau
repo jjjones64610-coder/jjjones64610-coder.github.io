@@ -215,28 +215,33 @@ end
 
 -- Edge past this many degrees turns a backhand / forehand into a Blade.
 local BLADE_EDGE = 35
-local EDGE_PER_PIXEL = 0.004
-local ANGLE_PER_PIXEL = 0.08
+local EDGE_RATE = 2.2 -- of the full edge per second while Q / E is held
+local shapedAt = os.clock()
 
--- The charge ended: give the mouse back to the camera.
+-- The charge ended.
 local function stopShaping()
-	if state.shaping then
-		state.shaping = false
-		controllers.CameraController.captureLook(false)
-	end
+	state.shaping = false
 end
 
--- While charging on the tech engine: mouse / stick X tilts the edge, Y the
--- launch angle (docs/tech-spec.md 26). The bank pip shows the edge.
+-- While charging on the tech engine you keep aiming with the mouse (the
+-- launch angle follows the camera, -5..35 deg); hold Cut (Q) / Dive (E) to
+-- tilt the edge left / right (docs/tech-spec.md 26). The bank pip shows it.
 local function shapeThrow()
+	local now0 = os.clock()
+	local dt = math.min(now0 - shapedAt, 0.1)
+	shapedAt = now0
 	if not state.shaping then
 		return
 	end
-	local d = controllers.CameraController.takeLook()
-	if d.Magnitude > 0 then
-		state.edge = math.clamp(state.edge + d.X * EDGE_PER_PIXEL, -1, 1)
-		state.launchDeg =
-			math.clamp(state.launchDeg - d.Y * ANGLE_PER_PIXEL, TechConfig.LAUNCH_ANGLE[1], TechConfig.LAUNCH_ANGLE[2])
+	state.launchDeg = math.clamp(
+		math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
+		TechConfig.LAUNCH_ANGLE[1],
+		TechConfig.LAUNCH_ANGLE[2]
+	)
+	local input = controllers.InputController
+	local dir = (if input.isHeld("Dive") then 1 else 0) - (if input.isHeld("Cut") then 1 else 0)
+	if dir ~= 0 then
+		state.edge = math.clamp(state.edge + dir * EDGE_RATE * dt, -1, 1)
 		state.bankStep = math.clamp(math.floor(state.edge * BANK_STEPS + 0.5), -BANK_STEPS, BANK_STEPS)
 		ThrowController.Changed:Fire()
 	end
@@ -540,7 +545,7 @@ local function release()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
-	shapeThrow() -- the last of the mouse movement counts
+	shapeThrow() -- the last frame of Q / E counts
 	local params = currentParams(hold)
 	stopShaping()
 	params.perfectCatch = controllers.CatchController.hotHands() or nil
@@ -763,15 +768,11 @@ local function beginCharge()
 	state.chargeStart = os.clock()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
 	if controllers.MovementController.engine() == "Tech" then
-		-- the camera locks; the mouse shapes the throw
+		-- Q / E tilt the edge while charging; the mouse keeps aiming
 		state.shaping = true
 		state.edge = state.bankStep / BANK_STEPS
-		state.launchDeg = math.clamp(
-			math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
-			TechConfig.LAUNCH_ANGLE[1],
-			TechConfig.LAUNCH_ANGLE[2]
-		)
-		controllers.CameraController.captureLook(true)
+		shapedAt = os.clock()
+		shapeThrow()
 	end
 	if controllers.CatchController.hotHands() then
 		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once

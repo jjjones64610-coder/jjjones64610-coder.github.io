@@ -51,16 +51,16 @@ local Disc = {
 		-- Charge and Snap Release (docs/tech-spec.md 25): the ring fills over
 		-- ChargeTime; the snap zone is SnapZone of the fill and the Snap
 		-- Release is SnapPoint ± SnapPerfect. Model power 1 is a snap.
-		ChargeTime = 1.0, -- seconds for the ring to fill
+		ChargeTime = 0.7, -- seconds for the ring to fill (spec 1.0; quicker after playtest)
 		SnapZone = { 0.75, 0.85 }, -- of the fill: a clean, stable release
 		SnapPoint = 0.80,
-		SnapPerfect = 0.02, -- s either side of the snap point = Snap Release
+		SnapPerfect = 0.025, -- s either side of the snap point = Snap Release
 		MinPowerFill = 0, -- the spec floors power at 0.3; 0 keeps the short no-charge dump (the speed floor is Throw.MinSpeed)
 		SnapSpin = 1.2,
 		OverSpin = 0.6, -- above the zone: full power, wobbly
 		LongHold = 1.2, -- of ChargeTime: held this long, spin drops to LongSpin
 		LongSpin = 0.4,
-		PerfectWindow = 0.04, -- (meter) the Snap band height: 2 x SnapPerfect
+		PerfectWindow = 0.05, -- (meter) the Snap band height: 2 x SnapPerfect
 		PerfectSpeedMult = 1.05,
 		PerfectSpinMult = 1.2,
 		OffBalancePowerCap = 0.75,

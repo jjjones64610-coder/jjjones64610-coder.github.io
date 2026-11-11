@@ -1034,16 +1034,16 @@ local Disc = {
 		-- Charge and Snap Release (docs/tech-spec.md 25): the ring fills over
 		-- ChargeTime; the snap zone is SnapZone of the fill and the Snap
 		-- Release is SnapPoint ± SnapPerfect. Model power 1 is a snap.
-		ChargeTime = 1.0, -- seconds for the ring to fill
+		ChargeTime = 0.7, -- seconds for the ring to fill (spec 1.0; quicker after playtest)
 		SnapZone = { 0.75, 0.85 }, -- of the fill: a clean, stable release
 		SnapPoint = 0.80,
-		SnapPerfect = 0.02, -- s either side of the snap point = Snap Release
+		SnapPerfect = 0.025, -- s either side of the snap point = Snap Release
 		MinPowerFill = 0, -- the spec floors power at 0.3; 0 keeps the short no-charge dump (the speed floor is Throw.MinSpeed)
 		SnapSpin = 1.2,
 		OverSpin = 0.6, -- above the zone: full power, wobbly
 		LongHold = 1.2, -- of ChargeTime: held this long, spin drops to LongSpin
 		LongSpin = 0.4,
-		PerfectWindow = 0.04, -- (meter) the Snap band height: 2 x SnapPerfect
+		PerfectWindow = 0.05, -- (meter) the Snap band height: 2 x SnapPerfect
 		PerfectSpeedMult = 1.05,
 		PerfectSpinMult = 1.2,
 		OffBalancePowerCap = 0.75,
@@ -2846,9 +2846,9 @@ Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 Tech.BOTS_USE_TECH = true
 
 -- running
-Tech.RUN_TOP_SPEED = 22
-Tech.RUN_ACCEL = 60
-Tech.GROUND_FRICTION = 80 -- no input (and HoldingDisc / Downed)
+Tech.RUN_TOP_SPEED = 24 -- (spec 22; faster after playtest)
+Tech.RUN_ACCEL = 72
+Tech.GROUND_FRICTION = 70 -- no input (and HoldingDisc / Downed)
 Tech.OVERSPEED_DECAY_GROUND = 15
 Tech.OVERSPEED_DECAY_AIR = 4
 Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
@@ -2857,13 +2857,14 @@ Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
 -- (linear between points, flat past the last one)
 Tech.TURN_FREE_SPEED = 12
 Tech.TURN_RATE = {
-	{ speed = 12, rate = 300 },
-	{ speed = 30, rate = 180 },
-	{ speed = 50, rate = 90 },
+	{ speed = 12, rate = 380 },
+	{ speed = 30, rate = 250 },
+	{ speed = 50, rate = 140 },
 }
 -- Steering harder than the turn rate drifts: every 90° turned while the
 -- stick asks for more than you can turn costs this fraction of your speed.
-Tech.TURN_DRIFT_LOSS = 0.25
+Tech.TURN_DRIFT_LOSS = 0.12
+Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
 Tech.PLAYER_GRAVITY = 140
@@ -2876,7 +2877,7 @@ Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
 -- burst
-Tech.BURST_TOP_SPEED = 30
+Tech.BURST_TOP_SPEED = 32
 Tech.BURST_ACCEL = 90
 Tech.BURST_DRAIN = 30
 Tech.BURST_REFILL = 15
@@ -2989,13 +2990,16 @@ Tech.SKY_REACH = 1 -- studs of extra reach on a Perfect Sky
 
 -- catching
 Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
+-- strict: a touch with no timed press bobbles (the spec). Off: it is still a
+-- catch, and a timed press earns the Perfect Catch / Hot Hands bonus.
+Tech.TIMED_CATCH_STRICT = false
 Tech.CATCH_LAG_ALLOWANCE = 100 -- ms the server adds (plus ping)
 Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
 Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
 Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
-Tech.CATCH_WINDOW = 150 -- ± ms
-Tech.CATCH_PERFECT = 40 -- ± ms
+Tech.CATCH_WINDOW = 180 -- ± ms
+Tech.CATCH_PERFECT = 50 -- ± ms
 Tech.LAYOUT_DOWN_TIME = 0.9
 Tech.TECH_ROLL_WINDOW = 100 -- ms
 Tech.TECH_ROLL_PERFECT = 40
@@ -6397,8 +6401,9 @@ return MovementSim
 	  Layout (Dive, 15+)   speed + 8 toward the aim, 10 up; Downed 0.9 s
 	  Tech Roll            Jump within 100 ms of the layout landing: up in
 	                       0.25 s keeping 50 % (Perfect 40 ms: 75 %)
-	  Sky                  standing or jogging, hold Jump: release after
-	                       0.2 s for a charged leap up to 1.6x (1.7x Perfect)
+	  Sky                  standing or jogging, crouch (hold Slide) 0.2 s+ and
+	                       press Jump: a charged leap up to 1.6x (1.7x Perfect
+	                       at 0.35-0.40 s). Jump itself always fires at once.
 
 	WORLD-CLASS TECH (not in the spec; the gap between good and great)
 	  Flip Reset           your FEET touch a disc in flight (footContact()):
@@ -7360,8 +7365,10 @@ local function tryStall(s: State): boolean
 	return true
 end
 
--- A Jump press on the ground: a Slide Hop from a slide, a Sky charge when
--- slow, or a jump.
+local skyJump: (State, number) -> ()
+
+-- A Jump press on the ground: a Slide Hop from a slide, a Sky out of a
+-- crouch, or a jump (always at once).
 local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if s.state == "Downed" then
 		return tryTechRoll(s, at)
@@ -7382,8 +7389,10 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if s.holding then
 		return false -- the pivot hop belongs to the throwing step
 	end
-	if flatOf(s.vel).Magnitude <= Config.SKY_MAX_SPEED then
-		s.skyChargeAt = s.now -- the jump happens on release
+	-- a crouch (Slide held while slow) charges a Sky; otherwise jump at once
+	local crouch = s.skyChargeAt
+	if crouch and s.now - crouch >= Config.SKY_MIN_HOLD then
+		skyJump(s, s.now - crouch)
 		return true
 	end
 	jumpOff(s, Config.JUMP_TAP, true)
@@ -7391,25 +7400,9 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	return true
 end
 
--- Jump released while charging: a tap / full jump, or a Sky.
-local function releaseCharge(s: State)
-	local at = s.skyChargeAt
-	if at == nil then
-		return
-	end
+-- The Sky: a jump out of a crouch held `held` seconds.
+skyJump = function(s: State, held: number)
 	s.skyChargeAt = nil
-	if not RUNNING[s.state] then
-		return
-	end
-	local held = s.now - at
-	if held < Config.SKY_MIN_HOLD then
-		-- a quick tap jumps at once with the rest of the hold window open
-		jumpOff(s, Config.JUMP_TAP, false)
-		local extra = math.clamp(held / Config.JUMP_HOLD, 0, 1) * (Config.JUMP_FULL - Config.JUMP_TAP)
-		s.vel = Vector3.new(s.vel.X, s.vel.Y + extra, s.vel.Z)
-		emit(s, "Jump", "Clean", s.heading)
-		return
-	end
 	local c = math.clamp(held / Config.SKY_CHARGE, 0, 1)
 	local quality = noteRange(
 		s,
@@ -7697,9 +7690,9 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	if speed > top then
 		speed = math.max(top, speed - Config.OVERSPEED_DECAY_GROUND * dt)
 	elseif speed < target then
-		if not s.drifting then
-			speed = moveToward(speed, target, accel * dt)
-		end
+		-- drifting still accelerates, just slower
+		local share = if s.drifting then Config.DRIFT_ACCEL_SHARE else 1
+		speed = moveToward(speed, target, accel * share * dt)
 	elseif speed > target then
 		-- a part-pushed stick (or a Sky charge) slows you like friction
 		speed = math.max(target, speed - Config.GROUND_FRICTION * dt)
@@ -7814,8 +7807,16 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	-- held edges
 	updateBurst(s, input, dt)
 	local jumpHeld = isHeld(input, "Jump")
-	if s.skyChargeAt and not jumpHeld then
-		releaseCharge(s)
+	-- the Sky crouch: Slide held on the ground while slow (not a slide)
+	local crouching = s.grounded
+		and RUNNING[s.state] == true
+		and not s.holding
+		and isHeld(input, "Slide")
+		and flatOf(s.vel).Magnitude <= Config.SKY_MAX_SPEED
+	if crouching then
+		s.skyChargeAt = s.skyChargeAt or s.now
+	else
+		s.skyChargeAt = nil
 	end
 	s.slidePrimed = (not s.grounded) and isHeld(input, "Slide")
 
@@ -15975,7 +15976,7 @@ function CatchingService.claim(
 		return false
 	end
 	local untimed = false
-	if TechConfig.TIMED_CATCH and not actor.isBot then
+	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and not actor.isBot then
 		local closest = ev.t or t
 		local allow = TechConfig.CATCH_WINDOW / 1000 + TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
 		untimed = not (type(pressT) == "number" and pressT == pressT and math.abs(pressT - closest) <= allow)
@@ -26570,8 +26571,8 @@ local function sendClaim(folder: Configuration, id: string, c: Contact, discPos:
 		c.closestT = nil
 	end
 	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel, pressT)
-	if TechConfig.TIMED_CATCH and pressT == nil then
-		-- no timed press: the server will bobble it, so predict nothing
+	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and pressT == nil then
+		-- strict: no timed press means the server bobbles it, so predict nothing
 		return
 	end
 	if likelyBlock(folder, c) then
@@ -26660,7 +26661,10 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 				c.closestT = tNow
 			end
 			local closest = c.closestT :: number
-			if catchPressAt < closest - CATCH_W and tNow < closest + CATCH_W then
+			-- strict waits the whole window for a late press; otherwise only
+			-- the Perfect part (a touch is a catch anyway)
+			local wait = if TechConfig.TIMED_CATCH_STRICT then CATCH_W else TechConfig.CATCH_PERFECT / 1000
+			if catchPressAt < closest - CATCH_W and tNow < closest + wait then
 				return
 			end
 		end
@@ -26809,7 +26813,7 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
-		if result == "Bobble" and TechConfig.TIMED_CATCH then
+		if result == "Bobble" and TechConfig.TIMED_CATCH_STRICT then
 			controllers.TechFeedback.play("Bobble", "Miss")
 		end
 	else
@@ -32674,28 +32678,33 @@ end
 
 -- Edge past this many degrees turns a backhand / forehand into a Blade.
 local BLADE_EDGE = 35
-local EDGE_PER_PIXEL = 0.004
-local ANGLE_PER_PIXEL = 0.08
+local EDGE_RATE = 2.2 -- of the full edge per second while Q / E is held
+local shapedAt = os.clock()
 
--- The charge ended: give the mouse back to the camera.
+-- The charge ended.
 local function stopShaping()
-	if state.shaping then
-		state.shaping = false
-		controllers.CameraController.captureLook(false)
-	end
+	state.shaping = false
 end
 
--- While charging on the tech engine: mouse / stick X tilts the edge, Y the
--- launch angle (docs/tech-spec.md 26). The bank pip shows the edge.
+-- While charging on the tech engine you keep aiming with the mouse (the
+-- launch angle follows the camera, -5..35 deg); hold Cut (Q) / Dive (E) to
+-- tilt the edge left / right (docs/tech-spec.md 26). The bank pip shows it.
 local function shapeThrow()
+	local now0 = os.clock()
+	local dt = math.min(now0 - shapedAt, 0.1)
+	shapedAt = now0
 	if not state.shaping then
 		return
 	end
-	local d = controllers.CameraController.takeLook()
-	if d.Magnitude > 0 then
-		state.edge = math.clamp(state.edge + d.X * EDGE_PER_PIXEL, -1, 1)
-		state.launchDeg =
-			math.clamp(state.launchDeg - d.Y * ANGLE_PER_PIXEL, TechConfig.LAUNCH_ANGLE[1], TechConfig.LAUNCH_ANGLE[2])
+	state.launchDeg = math.clamp(
+		math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
+		TechConfig.LAUNCH_ANGLE[1],
+		TechConfig.LAUNCH_ANGLE[2]
+	)
+	local input = controllers.InputController
+	local dir = (if input.isHeld("Dive") then 1 else 0) - (if input.isHeld("Cut") then 1 else 0)
+	if dir ~= 0 then
+		state.edge = math.clamp(state.edge + dir * EDGE_RATE * dt, -1, 1)
 		state.bankStep = math.clamp(math.floor(state.edge * BANK_STEPS + 0.5), -BANK_STEPS, BANK_STEPS)
 		ThrowController.Changed:Fire()
 	end
@@ -32999,7 +33008,7 @@ local function release()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
-	shapeThrow() -- the last of the mouse movement counts
+	shapeThrow() -- the last frame of Q / E counts
 	local params = currentParams(hold)
 	stopShaping()
 	params.perfectCatch = controllers.CatchController.hotHands() or nil
@@ -33222,15 +33231,11 @@ local function beginCharge()
 	state.chargeStart = os.clock()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
 	if controllers.MovementController.engine() == "Tech" then
-		-- the camera locks; the mouse shapes the throw
+		-- Q / E tilt the edge while charging; the mouse keeps aiming
 		state.shaping = true
 		state.edge = state.bankStep / BANK_STEPS
-		state.launchDeg = math.clamp(
-			math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
-			TechConfig.LAUNCH_ANGLE[1],
-			TechConfig.LAUNCH_ANGLE[2]
-		)
-		controllers.CameraController.captureLook(true)
+		shapedAt = os.clock()
+		shapeThrow()
 	end
 	if controllers.CatchController.hotHands() then
 		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once
