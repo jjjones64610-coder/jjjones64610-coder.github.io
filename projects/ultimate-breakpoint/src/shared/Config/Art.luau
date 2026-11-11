@@ -16,6 +16,26 @@ Art.Images = {
 	Button = "72548992304180", -- every menu / panel button
 }
 
+-- Anime effect textures (ForgeGUI, transparent sprites) for AnimeFX and
+-- the ability auras. Empty = the effect falls back to plain neon shapes.
+Art.Vfx = {
+	Impact = "114639680211643", -- spiky starburst (Perfect impact frames)
+	Slash = "126416714683393", -- crescent slash arc (cuts, zap dashes)
+	Aura = "92068753120602", -- flame wisp (ability auras)
+	Shockwave = "140164455409997", -- ring (wavedash, plant stop, landings)
+	Sparkle = "109676763334543", -- four-point glint (resets, Perfect catches)
+	Streak = "", -- motion streak (speed lines)
+}
+
+-- "rbxassetid://123" for an effect texture, or nil when the slot is empty.
+function Art.vfx(name: string): string?
+	local id = (Art.Vfx :: any)[name]
+	if type(id) == "string" and id ~= "" then
+		return "rbxassetid://" .. id
+	end
+	return nil
+end
+
 -- Not used in code; listed so they are easy to find.
 Art.Store = {
 	Icon = "122240476504741",

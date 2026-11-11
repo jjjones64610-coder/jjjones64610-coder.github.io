@@ -24,6 +24,7 @@ local TechCore = require(Shared.Movement.TechCore)
 local VecMath = require(Shared.Util.VecMath)
 local Net = require(Shared.Net)
 local Theme = require(script.Parent.Parent.UI.Theme)
+local Art = require(Shared.Config.Art)
 
 local AbilityController = {}
 
@@ -94,7 +95,16 @@ local function onStamp(c: Model)
 		TechCore.startAbility(tech, def.id, def.duration, Abilities.ZoneScale, Abilities.SkyWalkDodges)
 	end
 	controllers.TechFeedback.play(def.name, "Perfect")
+	controllers.AudioController.play("Ability")
+	if def.id == "FlashStep" then
+		controllers.AudioController.play("Dash")
+	end
 	controllers.AnimeFX.impactFrame(def.color)
+	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if root then
+		controllers.AnimeFX.impactBurst(root.Position, def.color, 9)
+		controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), def.color, 8)
+	end
 end
 
 -- Every character with an active ability glows in its colour.
@@ -140,8 +150,32 @@ local function refreshAuras()
 			local a = aura :: Highlight
 			a.FillColor = def.color
 			a.OutlineColor = def.color
+			-- anime aura flames rising off the body (ForgeGUI texture)
+			local root = m:FindFirstChild("HumanoidRootPart")
+			local tex = Art.vfx("Aura")
+			if root and tex and not root:FindFirstChild("UBAuraFlames") then
+				local e = Instance.new("ParticleEmitter")
+				e.Name = "UBAuraFlames"
+				e.Texture = tex
+				e.Color = ColorSequence.new(def.color)
+				e.LightEmission = 0.8
+				e.Rate = 26
+				e.Lifetime = NumberRange.new(0.35, 0.6)
+				e.Speed = NumberRange.new(4, 7)
+				e.SpreadAngle = Vector2.new(25, 25)
+				e.EmissionDirection = Enum.NormalId.Top
+				e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.8), NumberSequenceKeypoint.new(1, 0.4) })
+				e.Transparency =
+					NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1) })
+				e.Parent = root
+			end
 		elseif aura then
 			aura:Destroy()
+			local root = m:FindFirstChild("HumanoidRootPart")
+			local flames = root and root:FindFirstChild("UBAuraFlames")
+			if flames then
+				flames:Destroy()
+			end
 		end
 	end
 	for m in lastStamp do

@@ -14,10 +14,10 @@
 local Audio = {}
 
 Audio.Cues = {
-	Throw = { id = "rbxasset://sounds/swoosh.wav", volume = 0.5, pitch = 1.1 },
-	PerfectRelease = { id = "rbxasset://sounds/swoosh.wav", volume = 0.7, pitch = 1.35 },
-	Catch = { id = "rbxasset://sounds/clickfast.wav", volume = 0.7, pitch = 0.8 },
-	CleanCatch = { id = "rbxasset://sounds/clickfast.wav", volume = 0.9, pitch = 0.65 },
+	Throw = { id = "rbxassetid://104805615068791", volume = 0.6, pitch = 1.0 }, -- ForgeGUI
+	PerfectRelease = { id = "rbxassetid://104805615068791", volume = 0.8, pitch = 1.2 },
+	Catch = { id = "rbxassetid://111413366524280", volume = 0.7, pitch = 1.0 }, -- ForgeGUI
+	CleanCatch = { id = "rbxassetid://111413366524280", volume = 0.9, pitch = 0.9 },
 	Layout = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.9, pitch = 0.85 },
 	Block = { id = "rbxasset://sounds/snap.mp3", volume = 0.9, pitch = 0.9 },
 	Bobble = { id = "rbxasset://sounds/snap.mp3", volume = 0.6, pitch = 1.4 },
@@ -27,8 +27,8 @@ Audio.Cues = {
 	StallOut = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.7, pitch = 0.5 },
 	Whistle = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.6 },
 	Tech = { id = "rbxasset://sounds/swoosh.wav", volume = 0.25, pitch = 1.6 },
-	TechPerfect = { id = "rbxasset://sounds/swoosh.wav", volume = 0.35, pitch = 1.9 },
-	Burst = { id = "rbxasset://sounds/swoosh.wav", volume = 0.45, pitch = 0.75 },
+	TechPerfect = { id = "rbxassetid://86078047585706", volume = 0.55, pitch = 1.0 }, -- ForgeGUI anime impact
+	Burst = { id = "rbxassetid://97962321370622", volume = 0.5, pitch = 1.0 }, -- ForgeGUI anime dash
 	Land = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.35, pitch = 1.0 },
 	PrecisionLand = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.5, pitch = 1.4 },
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
@@ -39,7 +39,10 @@ Audio.Cues = {
 	ComboConvert = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.55, pitch = 1.7 },
 	Tip = { id = "rbxasset://sounds/clickfast.wav", volume = 0.8, pitch = 1.5 },
 	Reset = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.45, pitch = 2.0 },
-	Signature = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.8, pitch = 0.9 },
+	Signature = { id = "rbxassetid://102977794641930", volume = 0.8, pitch = 1.0 }, -- ForgeGUI power-up
+	Dash = { id = "rbxassetid://97962321370622", volume = 0.45, pitch = 1.1 }, -- dodges, zap dashes, flash step
+	Impact = { id = "rbxassetid://86078047585706", volume = 0.6, pitch = 1.0 }, -- impact frames
+	Ability = { id = "rbxassetid://102977794641930", volume = 0.85, pitch = 1.0 }, -- ability activation
 	-- Supply your own looping crowd ambience and cheer to enable these.
 	CrowdLoop = { id = "", volume = 0.35, pitch = 1.0, looped = true },
 	CrowdCheer = { id = "", volume = 0.7, pitch = 1.0 },
