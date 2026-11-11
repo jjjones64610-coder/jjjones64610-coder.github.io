@@ -936,6 +936,7 @@ function render.Settings(content: Instance)
 		{ key = "MasterVolume", label = "Master volume", step = 0.1, min = 0, max = 1 },
 		{ key = "SfxVolume", label = "Effects volume", step = 0.1, min = 0, max = 1 },
 		{ key = "CrowdVolume", label = "Crowd volume", step = 0.1, min = 0, max = 1 },
+		{ key = "MusicVolume", label = "Music volume", step = 0.1, min = 0, max = 1 },
 	}
 	for _, n in numeric do
 		local v = s.get(n.key)

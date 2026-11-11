@@ -303,6 +303,7 @@ local function buildLines()
 	g.ResetOnSpawn = false
 	g.DisplayOrder = 2
 	g.Parent = player:WaitForChild("PlayerGui")
+	local streak = Art.vfx("Streak")
 	for i = 1, LINE_COUNT do
 		local f = Instance.new("Frame")
 		f.Name = "Line" .. i
@@ -311,6 +312,17 @@ local function buildLines()
 		f.BorderSizePixel = 0
 		f.BackgroundTransparency = 1
 		f.Parent = g
+		if streak then
+			-- the ForgeGUI streak sprite rides on the line (the frame stays clear)
+			local img = Instance.new("ImageLabel")
+			img.Name = "Streak"
+			img.BackgroundTransparency = 1
+			img.Size = UDim2.new(1, 0, 0, 10)
+			img.Position = UDim2.new(0, 0, 0.5, -5)
+			img.Image = streak
+			img.ImageTransparency = 1
+			img.Parent = f
+		end
 		table.insert(lines, f)
 	end
 	lineGui = g
@@ -352,6 +364,10 @@ local function updateLines(dt: number)
 	for i, f in lines do
 		if i > shown then
 			f.BackgroundTransparency = 1
+			local hidden = f:FindFirstChild("Streak") :: ImageLabel?
+			if hidden then
+				hidden.ImageTransparency = 1
+			end
 		else
 			local a = rng:NextNumber() * math.pi * 2
 			local r = 0.42 + rng:NextNumber() * 0.12
@@ -359,8 +375,16 @@ local function updateLines(dt: number)
 			f.Position = UDim2.fromScale(0.5 + math.cos(a) * r, 0.5 + math.sin(a) * r * 0.9)
 			f.Size = UDim2.fromOffset(len, 2)
 			f.Rotation = math.deg(a)
-			f.BackgroundColor3 = if pulse then Theme.Colors.Perfect else Color3.new(1, 1, 1)
-			f.BackgroundTransparency = 0.75 - 0.4 * k
+			local col = if pulse then Theme.Colors.Perfect else Color3.new(1, 1, 1)
+			local alpha = 0.75 - 0.4 * k
+			local img = f:FindFirstChild("Streak") :: ImageLabel?
+			if img then
+				img.ImageColor3 = col
+				img.ImageTransparency = alpha
+			else
+				f.BackgroundColor3 = col
+				f.BackgroundTransparency = alpha
+			end
 		end
 	end
 end

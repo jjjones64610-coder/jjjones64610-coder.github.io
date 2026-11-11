@@ -230,6 +230,7 @@ Input.DefaultSettings = {
 	MasterVolume = 0.8,
 	SfxVolume = 1.0,
 	CrowdVolume = 0.7,
+	MusicVolume = 0.5, -- the soundtrack (Config/Music)
 }
 
 return Input

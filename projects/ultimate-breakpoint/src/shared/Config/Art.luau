@@ -24,7 +24,7 @@ Art.Vfx = {
 	Aura = "92068753120602", -- flame wisp (ability auras)
 	Shockwave = "140164455409997", -- ring (wavedash, plant stop, landings)
 	Sparkle = "109676763334543", -- four-point glint (resets, Perfect catches)
-	Streak = "", -- motion streak (speed lines)
+	Streak = "132502257002630", -- motion streak (speed lines)
 }
 
 -- "rbxassetid://123" for an effect texture, or nil when the slot is empty.
