@@ -34,13 +34,19 @@ local function sideOf(throwType)
 	return ThrowModel.typeInfo(throwType).Side
 end
 
-test("charge: partial is Clean, peak window is Perfect, late is Over", function()
-	local p1, q1 = ThrowModel.charge(0.2, "Backhand")
-	local p2, q2, s2 = ThrowModel.charge(T.ChargeTime + 0.05, "Backhand")
-	local p3, q3, s3 = ThrowModel.charge(T.ChargeTime + 0.5, "Backhand")
-	expect(q1 == "Clean" and p1 < 1, "partial")
-	expect(q2 == "Perfect" and p2 == 1 and s2 > 1, "perfect")
-	expect(q3 == "Over" and p3 == 1 and s3 < 1, "over")
+test("charge: below and in the zone are Clean, the snap is Perfect, past the zone is Over", function()
+	local CT = T.ChargeTime
+	local p1, q1, s1 = ThrowModel.charge(0.4 * CT, "Backhand")
+	local pz, qz, sz = ThrowModel.charge(0.76 * CT, "Backhand")
+	local p2, q2, s2 = ThrowModel.charge(T.SnapPoint * CT + 0.01, "Backhand")
+	local p3, q3, s3 = ThrowModel.charge(0.95 * CT, "Backhand")
+	local p4, q4, s4 = ThrowModel.charge(1.3 * CT, "Backhand")
+	expect(q1 == "Clean" and p1 < 0.6 and s1 == 1, "partial")
+	expect(qz == "Clean" and pz > 0.85 and pz < 1 and sz == 1, "in the zone")
+	expect(q2 == "Perfect" and p2 == 1 and s2 == T.SnapSpin, "snap")
+	expect(q3 == "Over" and p3 > 1 and s3 == T.OverSpin, "over")
+	expect(q4 == "Over" and s4 == T.LongSpin, "held too long")
+	expect(ThrowModel.chargePhase(0.78 * CT, "Backhand") == "Zone", "meter phase")
 end)
 
 test("forehand charges faster than backhand", function()
@@ -108,7 +114,7 @@ test("sanitize clamps hostile steps into the pivot's reach", function()
 end)
 
 test("off-balance throws are capped", function()
-	local base = params({ holdTime = 0.6 })
+	local base = params({ holdTime = T.SnapPoint * T.ChargeTime })
 	local normal = ThrowModel.launch(base, Vector3.zero, Vector3.zero)
 	base.offBalance = true
 	local air = ThrowModel.launch(base, Vector3.zero, Vector3.zero)

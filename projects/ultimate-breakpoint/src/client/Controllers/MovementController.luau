@@ -133,6 +133,12 @@ local FILTER_REFRESH = 0.25
 local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
 local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
 local lastTTL: number? = nil -- time to land last frame (airborne)
+-- the tech-engine pivot
+local pivotStickMag = 0
+local pivotTapAt = -math.huge
+local pivotTapDir = Vector3.zero
+local pivotLungeUntil = -math.huge
+local pivotRecoverUntil = -math.huge
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -930,6 +936,38 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		techEvent(e)
 	end
 	checkContact(pos)
+
+	-- the pivot (docs/tech-spec.md 23): planted, the free foot steps up to
+	-- PIVOT_REACH around P; a double-tap lunges PIVOT_LUNGE, then recovers
+	local planted = MovementSim.getPivot(sim)
+	if tech.holding and tech.grounded and planted and TechCore.flatSpeed(tech) < 6 then
+		local stick = if menu then Vector3.zero else VecMath.flat(inputs.moveVector())
+		local clock = os.clock()
+		local tapped = stick.Magnitude > 0.5 and pivotStickMag <= 0.5
+		pivotStickMag = stick.Magnitude
+		if tapped and clock >= pivotRecoverUntil then
+			local dir = stick.Unit
+			if clock - pivotTapAt <= 0.3 and dir:Dot(pivotTapDir) > 0.8 then
+				pivotLungeUntil = clock + TechConfig.PIVOT_LUNGE_TIME
+				pivotRecoverUntil = pivotLungeUntil + TechConfig.PIVOT_LUNGE_RECOVER
+				pivotTapAt = -math.huge
+				controllers.TechFeedback.play("Lunge", "Clean")
+			else
+				pivotTapAt, pivotTapDir = clock, dir
+			end
+		end
+		local reach = if clock < pivotLungeUntil then TechConfig.PIVOT_LUNGE else TechConfig.PIVOT_REACH
+		if clock >= pivotLungeUntil and clock < pivotRecoverUntil then
+			stick *= 0.3 -- the lunge's recovery: barely any footwork
+		end
+		local want = Vector3.new(planted.X, pos.Y, planted.Z) + VecMath.clampMagnitude(stick, 1) * reach
+		local toward = VecMath.flat(want - pos)
+		local v = VecMath.clampMagnitude(toward * 14, 18)
+		tech.vel = Vector3.new(v.X, tech.vel.Y, v.Z)
+		lastStep = VecMath.flat(pos - planted)
+	elseif not tech.holding then
+		lastStep = Vector3.zero
+	end
 
 	local flat = VecMath.flat(tech.vel)
 	local lined = applyLine(c, pos, flat)

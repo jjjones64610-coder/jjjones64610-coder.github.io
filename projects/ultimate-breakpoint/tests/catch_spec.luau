@@ -300,7 +300,7 @@ local function markCase()
 			throwType = o.throwType,
 			yaw = math.rad(o.outward or 0) * (if o.throwType == "Forehand" then -1 else 1),
 			pitch = 0,
-			holdTime = 0.4,
+			holdTime = 0.62, -- the same power as before the snap-release curve
 			bank = 0,
 			height = o.height or "Mid",
 			pivot = P,

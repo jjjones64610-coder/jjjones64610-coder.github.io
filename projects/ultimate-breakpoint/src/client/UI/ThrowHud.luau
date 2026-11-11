@@ -129,7 +129,7 @@ local function onFeedback(kind: any, payload: any)
 	elseif payload.heightAsked == "High" and payload.heightUsed ~= "High" then
 		text, color = "RELEASED MID — the hop was not seen", C.Sloppy
 	elseif payload.quality == "Perfect" then
-		text, color = "PERFECT RELEASE", C.Perfect
+		text, color = "SNAP RELEASE", C.Perfect
 	elseif payload.quality == "Over" then
 		text, color = "OVERCHARGED — less spin", C.Sloppy
 	end
@@ -233,17 +233,33 @@ function ThrowHud.build(parent: ScreenGui, c: any)
 		Parent = panel,
 		Theme.corner(6),
 	})
-	local meterScale = 1.4 -- meter shows up to 140% of the charge time
-	local fullY = 1 - 1 / meterScale
-	local perfectH = (DiscConfig.Throw.PerfectWindow / DiscConfig.Throw.ChargeTime) / meterScale
+	-- the meter shows up to 140 % of the charge time: the snap zone is the
+	-- pale band, the Snap Release the gold line in it, red above is overcharge
+	local meterScale = 1.4
+	local TH = DiscConfig.Throw
+	local function yOf(fill: number): number
+		return 1 - fill / meterScale
+	end
+	local zoneLo, zoneHi = TH.SnapZone[1], TH.SnapZone[2]
+	make("Frame", {
+		Name = "Zone",
+		BackgroundColor3 = C.Accent,
+		BackgroundTransparency = 0.6,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, yOf(zoneHi), 0),
+		Size = UDim2.new(1, 0, (zoneHi - zoneLo) / meterScale, 0),
+		ZIndex = 2,
+		Parent = meter,
+	})
+	local snapH = math.max((2 * TH.SnapPerfect / TH.ChargeTime) / meterScale, 0.012)
 	make("Frame", {
 		Name = "Perfect",
 		BackgroundColor3 = C.Perfect,
-		BackgroundTransparency = 0.35,
+		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, fullY - perfectH, 0),
-		Size = UDim2.new(1, 0, perfectH, 0),
-		ZIndex = 2,
+		Position = UDim2.new(0, -3, yOf(TH.SnapPoint) - snapH / 2, 0),
+		Size = UDim2.new(1, 6, snapH, 0),
+		ZIndex = 4,
 		Parent = meter,
 	})
 	make("Frame", {
@@ -251,7 +267,7 @@ function ThrowHud.build(parent: ScreenGui, c: any)
 		BackgroundColor3 = C.Bad,
 		BackgroundTransparency = 0.7,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, fullY - perfectH, 0),
+		Size = UDim2.new(1, 0, yOf(zoneHi), 0),
 		ZIndex = 2,
 		Parent = meter,
 	})
@@ -442,6 +458,7 @@ function ThrowHud.update()
 	refs.fill.BackgroundColor3 = if h.phase == "Perfect"
 		then C.Perfect
 		elseif h.phase == "Over" then C.Bad
+		elseif h.phase == "Zone" then C.Accent
 		else Color3.new(1, 1, 1)
 	if h.idealPower then
 		refs.ideal.Visible = true

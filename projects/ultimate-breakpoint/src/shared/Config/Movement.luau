@@ -312,6 +312,7 @@ local Movement = {
 		TipReset = 220,
 		-- tech engine (Movement/TechCore)
 		PerfectCatch = 150,
+		FakeSwitch = 180,
 		FlipReset = 300,
 		ResetFlip = 250,
 		Stall = 220,
@@ -367,6 +368,7 @@ local Movement = {
 		Sky = "Sky",
 		Plant = "Plant",
 		PerfectCatch = "Perfect Catch",
+		FakeSwitch = "Fake Switch",
 		FlipReset = "Flip Reset",
 		ResetFlip = "Reset Flip",
 		Stall = "Stall",
@@ -404,6 +406,7 @@ Movement.TechCosts = {
 	-- tech engine
 	Plant = 0,
 	PerfectCatch = 0,
+	FakeSwitch = 0,
 	FlipReset = 0,
 	ResetFlip = 0,
 	Stall = 0,
@@ -446,6 +449,7 @@ Movement.TechCooldowns = {
 	-- tech engine
 	Plant = 0,
 	PerfectCatch = 0,
+	FakeSwitch = 0,
 	FlipReset = 0,
 	ResetFlip = 0,
 	Stall = 0,

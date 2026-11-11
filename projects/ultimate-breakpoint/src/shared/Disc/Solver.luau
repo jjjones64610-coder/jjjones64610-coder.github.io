@@ -64,11 +64,13 @@ end
 local function holdForPower(power: number, throwType: string): number
 	local info = ThrowModel.typeInfo(throwType)
 	local mult = info.ChargeMult or 1
+	local T = DiscConfig.Throw
 	if power >= 0.999 then
-		-- land inside the Perfect window
-		return (DiscConfig.Throw.ChargeTime + DiscConfig.Throw.PerfectWindow * 0.5) / mult
+		-- a Snap Release
+		return T.SnapPoint * T.ChargeTime / mult
 	end
-	return power * DiscConfig.Throw.ChargeTime / mult
+	-- model power = fill / top of the snap zone
+	return power * T.SnapZone[2] * T.ChargeTime / mult
 end
 
 -- Simulates one candidate; returns closest catchable approach to the moving

@@ -831,6 +831,7 @@ DRILLS.Launcher = {
 			yaw = 0,
 			pitch = math.rad(if type(payload.pitch) == "number" then payload.pitch else 8),
 			holdTime = (if type(payload.power) == "number" then math.clamp(payload.power, 0.05, 1) else 0.5)
+				* DiscConfig.Throw.SnapZone[2]
 				* DiscConfig.Throw.ChargeTime,
 			bank = payload.bank,
 			height = "Mid",

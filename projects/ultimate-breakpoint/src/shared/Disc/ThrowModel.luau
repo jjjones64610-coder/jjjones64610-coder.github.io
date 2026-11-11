@@ -99,21 +99,47 @@ function ThrowModel.basis(yaw: number): (Vector3, Vector3)
 	return forward, right
 end
 
--- Charge time -> (power, quality, spinFactor). Power rises linearly to full at
--- ChargeTime (scaled by the throw's ChargeMult). Releasing inside the Perfect
--- window at full charge is a Perfect release.
+-- Charge time -> (power, quality, spinFactor), the Charge and Snap Release
+-- of docs/tech-spec.md 25 (time scaled by the throw's ChargeMult). The fill
+-- is hold / ChargeTime; spec power is the fill (never under MinPowerFill)
+-- and model power is spec power / the top of the snap zone, so a snap is
+-- power 1 and an overcharge reaches ~1.18:
+--   below the zone   low power, full spin              "Clean"
+--   in the zone      75-85 %, full spin                 "Clean"
+--   snap (80 % ±20ms) 85 %, spin SnapSpin              "Perfect"
+--   above the zone   up to 100 %, spin OverSpin         "Over"
+--   held > LongHold  spin LongSpin                      "Over"
 function ThrowModel.charge(holdTime: number, throwType: string): (number, string, number)
 	local info = ThrowModel.typeInfo(throwType)
 	local t = math.max(0, holdTime) * (info.ChargeMult or 1)
-	if t < T.ChargeTime then
-		return math.clamp(t / T.ChargeTime, 0, 1), "Clean", 1
+	local fill = t / T.ChargeTime
+	local top = T.SnapZone[2]
+	if math.abs(t - T.SnapPoint * T.ChargeTime) <= T.SnapPerfect then
+		return 1, "Perfect", T.SnapSpin
 	end
-	local over = t - T.ChargeTime
-	if over <= T.PerfectWindow then
-		return 1, "Perfect", T.PerfectSpinMult
+	local power = math.max(T.MinPowerFill, math.min(fill, 1)) / top
+	if fill <= top then
+		return power, "Clean", 1
 	end
-	local spin = math.max(T.MinOverSpin, 1 - (over - T.PerfectWindow) * T.OverchargeDecay)
-	return 1, "Over", spin
+	if fill > T.LongHold then
+		return power, "Over", T.LongSpin
+	end
+	return power, "Over", T.OverSpin
+end
+
+-- Which part of the charge a fill is in, for the meter.
+function ThrowModel.chargePhase(holdTime: number, throwType: string): string
+	local info = ThrowModel.typeInfo(throwType)
+	local t = math.max(0, holdTime) * (info.ChargeMult or 1)
+	local _, quality = ThrowModel.charge(holdTime, throwType)
+	if quality == "Perfect" then
+		return "Perfect"
+	elseif quality == "Over" then
+		return "Over"
+	elseif t / T.ChargeTime >= T.SnapZone[1] then
+		return "Zone"
+	end
+	return "Charging"
 end
 
 -- Clamps any value into a legal step for aim `yaw`: a flat Vector3 with

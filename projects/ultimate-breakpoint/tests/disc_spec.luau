@@ -8,7 +8,7 @@ local Modes = H.require("Config/Modes")
 local test, expect = H.test, H.expect
 
 local ROOT = Vector3.new(0, 3, 0)
-local FULL = DiscConfig.Throw.ChargeTime + DiscConfig.Throw.PerfectWindow * 0.5 -- a Perfect full charge
+local FULL = DiscConfig.Throw.SnapPoint * DiscConfig.Throw.ChargeTime -- a Snap Release (full power)
 
 local function fly(throwType, hold, pitchDeg, bank, wind)
 	local launch = ThrowModel.launch({
@@ -45,7 +45,8 @@ end)
 
 test("power increases range monotonically (flat backhand)", function()
 	local last = 0
-	for _, hold in { 0.05, 0.15, 0.25, 0.35, 0.45, 0.55 } do
+	for _, fill in { 0.15, 0.3, 0.45, 0.6, 0.75, 0.8 } do
+		local hold = fill * DiscConfig.Throw.ChargeTime
 		local r = fly("Backhand", hold, 0)
 		expect(r.distance > last, string.format("hold %.2f range %.1f <= %.1f", hold, r.distance, last))
 		last = r.distance
@@ -128,8 +129,8 @@ test("blade is fast and short-lived compared with a floaty backhand", function()
 end)
 
 test("an overcharged (low-spin) release rolls more than a perfect one", function()
-	local perfect = fly("Backhand", 0.6, 0)
-	local over = fly("Backhand", 1.4, 0)
+	local perfect = fly("Backhand", FULL, 0)
+	local over = fly("Backhand", 1.4 * DiscConfig.Throw.ChargeTime, 0)
 	expect(perfect.launch.quality == "Perfect", "perfect window")
 	expect(over.launch.quality == "Over", "overcharged")
 	local rollP = 1 - perfect.final.ny

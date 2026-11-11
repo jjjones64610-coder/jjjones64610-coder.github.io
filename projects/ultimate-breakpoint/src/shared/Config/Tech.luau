@@ -184,6 +184,14 @@ Tech.SPIN_DECAY = 0.15
 Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
+Tech.FAKE_RECOVERY = 0.2 -- s after a pump fake before the next throw
+Tech.FAKE_SWITCH_WINDOW = 0.15 -- s: the other throw this soon skips the recovery
+
+-- the pivot (holding the disc)
+Tech.PIVOT_REACH = 1.2 -- studs the free foot steps from the pivot
+Tech.PIVOT_LUNGE = 1.8 -- a double-tap lunge
+Tech.PIVOT_LUNGE_TIME = 0.2
+Tech.PIVOT_LUNGE_RECOVER = 0.25
 
 -- defense and rules
 Tech.STALL_COUNT = 10

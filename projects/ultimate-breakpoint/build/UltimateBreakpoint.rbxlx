@@ -1027,12 +1027,21 @@ local Disc = {
 
 	Throw = {
 		SpinBase = 50 * TEMPO, -- rad/s (~8 rev/s at real tempo)
-		ChargeTime = 0.55, -- seconds of holding to reach full power
-		PerfectWindow = 0.10, -- release within [ChargeTime, ChargeTime + PerfectWindow] = Perfect
-		OverchargeDecay = 0.8, -- spin factor lost per second held beyond the window
-		MinOverSpin = 0.6,
+		-- Charge and Snap Release (docs/tech-spec.md 25): the ring fills over
+		-- ChargeTime; the snap zone is SnapZone of the fill and the Snap
+		-- Release is SnapPoint ± SnapPerfect. Model power 1 is a snap.
+		ChargeTime = 1.0, -- seconds for the ring to fill
+		SnapZone = { 0.75, 0.85 }, -- of the fill: a clean, stable release
+		SnapPoint = 0.80,
+		SnapPerfect = 0.02, -- s either side of the snap point = Snap Release
+		MinPowerFill = 0, -- the spec floors power at 0.3; 0 keeps the short no-charge dump (the speed floor is Throw.MinSpeed)
+		SnapSpin = 1.2,
+		OverSpin = 0.6, -- above the zone: full power, wobbly
+		LongHold = 1.2, -- of ChargeTime: held this long, spin drops to LongSpin
+		LongSpin = 0.4,
+		PerfectWindow = 0.04, -- (meter) the Snap band height: 2 x SnapPerfect
 		PerfectSpeedMult = 1.05,
-		PerfectSpinMult = 1.15,
+		PerfectSpinMult = 1.2,
 		OffBalancePowerCap = 0.75,
 		OffBalanceSpin = 0.8,
 		GroundThrowPowerCap = 0.6,
@@ -2132,6 +2141,7 @@ local Movement = {
 		TipReset = 220,
 		-- tech engine (Movement/TechCore)
 		PerfectCatch = 150,
+		FakeSwitch = 180,
 		FlipReset = 300,
 		ResetFlip = 250,
 		Stall = 220,
@@ -2187,6 +2197,7 @@ local Movement = {
 		Sky = "Sky",
 		Plant = "Plant",
 		PerfectCatch = "Perfect Catch",
+		FakeSwitch = "Fake Switch",
 		FlipReset = "Flip Reset",
 		ResetFlip = "Reset Flip",
 		Stall = "Stall",
@@ -2224,6 +2235,7 @@ Movement.TechCosts = {
 	-- tech engine
 	Plant = 0,
 	PerfectCatch = 0,
+	FakeSwitch = 0,
 	FlipReset = 0,
 	ResetFlip = 0,
 	Stall = 0,
@@ -2266,6 +2278,7 @@ Movement.TechCooldowns = {
 	-- tech engine
 	Plant = 0,
 	PerfectCatch = 0,
+	FakeSwitch = 0,
 	FlipReset = 0,
 	ResetFlip = 0,
 	Stall = 0,
@@ -2963,6 +2976,14 @@ Tech.SPIN_DECAY = 0.15
 Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
+Tech.FAKE_RECOVERY = 0.2 -- s after a pump fake before the next throw
+Tech.FAKE_SWITCH_WINDOW = 0.15 -- s: the other throw this soon skips the recovery
+
+-- the pivot (holding the disc)
+Tech.PIVOT_REACH = 1.2 -- studs the free foot steps from the pivot
+Tech.PIVOT_LUNGE = 1.8 -- a double-tap lunge
+Tech.PIVOT_LUNGE_TIME = 0.2
+Tech.PIVOT_LUNGE_RECOVER = 0.25
 
 -- defense and rules
 Tech.STALL_COUNT = 10
@@ -3365,11 +3386,13 @@ end
 local function holdForPower(power: number, throwType: string): number
 	local info = ThrowModel.typeInfo(throwType)
 	local mult = info.ChargeMult or 1
+	local T = DiscConfig.Throw
 	if power >= 0.999 then
-		-- land inside the Perfect window
-		return (DiscConfig.Throw.ChargeTime + DiscConfig.Throw.PerfectWindow * 0.5) / mult
+		-- a Snap Release
+		return T.SnapPoint * T.ChargeTime / mult
 	end
-	return power * DiscConfig.Throw.ChargeTime / mult
+	-- model power = fill / top of the snap zone
+	return power * T.SnapZone[2] * T.ChargeTime / mult
 end
 
 -- Simulates one candidate; returns closest catchable approach to the moving
@@ -3623,21 +3646,47 @@ function ThrowModel.basis(yaw: number): (Vector3, Vector3)
 	return forward, right
 end
 
--- Charge time -> (power, quality, spinFactor). Power rises linearly to full at
--- ChargeTime (scaled by the throw's ChargeMult). Releasing inside the Perfect
--- window at full charge is a Perfect release.
+-- Charge time -> (power, quality, spinFactor), the Charge and Snap Release
+-- of docs/tech-spec.md 25 (time scaled by the throw's ChargeMult). The fill
+-- is hold / ChargeTime; spec power is the fill (never under MinPowerFill)
+-- and model power is spec power / the top of the snap zone, so a snap is
+-- power 1 and an overcharge reaches ~1.18:
+--   below the zone   low power, full spin              "Clean"
+--   in the zone      75-85 %, full spin                 "Clean"
+--   snap (80 % ±20ms) 85 %, spin SnapSpin              "Perfect"
+--   above the zone   up to 100 %, spin OverSpin         "Over"
+--   held > LongHold  spin LongSpin                      "Over"
 function ThrowModel.charge(holdTime: number, throwType: string): (number, string, number)
 	local info = ThrowModel.typeInfo(throwType)
 	local t = math.max(0, holdTime) * (info.ChargeMult or 1)
-	if t < T.ChargeTime then
-		return math.clamp(t / T.ChargeTime, 0, 1), "Clean", 1
+	local fill = t / T.ChargeTime
+	local top = T.SnapZone[2]
+	if math.abs(t - T.SnapPoint * T.ChargeTime) <= T.SnapPerfect then
+		return 1, "Perfect", T.SnapSpin
 	end
-	local over = t - T.ChargeTime
-	if over <= T.PerfectWindow then
-		return 1, "Perfect", T.PerfectSpinMult
+	local power = math.max(T.MinPowerFill, math.min(fill, 1)) / top
+	if fill <= top then
+		return power, "Clean", 1
 	end
-	local spin = math.max(T.MinOverSpin, 1 - (over - T.PerfectWindow) * T.OverchargeDecay)
-	return 1, "Over", spin
+	if fill > T.LongHold then
+		return power, "Over", T.LongSpin
+	end
+	return power, "Over", T.OverSpin
+end
+
+-- Which part of the charge a fill is in, for the meter.
+function ThrowModel.chargePhase(holdTime: number, throwType: string): string
+	local info = ThrowModel.typeInfo(throwType)
+	local t = math.max(0, holdTime) * (info.ChargeMult or 1)
+	local _, quality = ThrowModel.charge(holdTime, throwType)
+	if quality == "Perfect" then
+		return "Perfect"
+	elseif quality == "Over" then
+		return "Over"
+	elseif t / T.ChargeTime >= T.SnapZone[1] then
+		return "Zone"
+	end
+	return "Charging"
 end
 
 -- Clamps any value into a legal step for aim `yaw`: a flat Vector3 with
@@ -23281,6 +23330,7 @@ DRILLS.Launcher = {
 			yaw = 0,
 			pitch = math.rad(if type(payload.pitch) == "number" then payload.pitch else 8),
 			holdTime = (if type(payload.power) == "number" then math.clamp(payload.power, 0.05, 1) else 0.5)
+				* DiscConfig.Throw.SnapZone[2]
 				* DiscConfig.Throw.ChargeTime,
 			bank = payload.bank,
 			height = "Mid",
@@ -28860,6 +28910,12 @@ local FILTER_REFRESH = 0.25
 local TECH_WALL_RAY = 1.6 -- studs ahead of the root centre (the root is 2 wide)
 local TECH_PIVOT_SPEED = 1 -- plant the pivot once a holder is this slow
 local lastTTL: number? = nil -- time to land last frame (airborne)
+-- the tech-engine pivot
+local pivotStickMag = 0
+local pivotTapAt = -math.huge
+local pivotTapDir = Vector3.zero
+local pivotLungeUntil = -math.huge
+local pivotRecoverUntil = -math.huge
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -29657,6 +29713,38 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		techEvent(e)
 	end
 	checkContact(pos)
+
+	-- the pivot (docs/tech-spec.md 23): planted, the free foot steps up to
+	-- PIVOT_REACH around P; a double-tap lunges PIVOT_LUNGE, then recovers
+	local planted = MovementSim.getPivot(sim)
+	if tech.holding and tech.grounded and planted and TechCore.flatSpeed(tech) < 6 then
+		local stick = if menu then Vector3.zero else VecMath.flat(inputs.moveVector())
+		local clock = os.clock()
+		local tapped = stick.Magnitude > 0.5 and pivotStickMag <= 0.5
+		pivotStickMag = stick.Magnitude
+		if tapped and clock >= pivotRecoverUntil then
+			local dir = stick.Unit
+			if clock - pivotTapAt <= 0.3 and dir:Dot(pivotTapDir) > 0.8 then
+				pivotLungeUntil = clock + TechConfig.PIVOT_LUNGE_TIME
+				pivotRecoverUntil = pivotLungeUntil + TechConfig.PIVOT_LUNGE_RECOVER
+				pivotTapAt = -math.huge
+				controllers.TechFeedback.play("Lunge", "Clean")
+			else
+				pivotTapAt, pivotTapDir = clock, dir
+			end
+		end
+		local reach = if clock < pivotLungeUntil then TechConfig.PIVOT_LUNGE else TechConfig.PIVOT_REACH
+		if clock >= pivotLungeUntil and clock < pivotRecoverUntil then
+			stick *= 0.3 -- the lunge's recovery: barely any footwork
+		end
+		local want = Vector3.new(planted.X, pos.Y, planted.Z) + VecMath.clampMagnitude(stick, 1) * reach
+		local toward = VecMath.flat(want - pos)
+		local v = VecMath.clampMagnitude(toward * 14, 18)
+		tech.vel = Vector3.new(v.X, tech.vel.Y, v.Z)
+		lastStep = VecMath.flat(pos - planted)
+	elseif not tech.holding then
+		lastStep = Vector3.zero
+	end
 
 	local flat = VecMath.flat(tech.vel)
 	local lined = applyLine(c, pos, flat)
@@ -31640,6 +31728,8 @@ local state = {
 	leadSolution = nil :: Solver.Solution?,
 	lastSolve = 0,
 	lastFake = -math.huge,
+	fakedType = "", -- the throw a fake sold (Fake Switch: the other one)
+	chargeButton = "Primary", -- the button holding the charge (tech engine)
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
@@ -31679,10 +31769,9 @@ function ThrowController.chargeFraction(): (number, string)
 		return 0, "Idle"
 	end
 	local hold = os.clock() - state.chargeStart
-	local power, quality = ThrowModel.charge(hold, state.throwType)
 	local info = ThrowModel.typeInfo(state.throwType)
 	local t = hold * (info.ChargeMult or 1)
-	return math.min(t / T.ChargeTime, 1.6), if quality == "Clean" and power < 1 then "Charging" else quality
+	return math.min(t / T.ChargeTime, 1.6), ThrowModel.chargePhase(hold, state.throwType)
 end
 
 local function airborne(): boolean
@@ -32327,6 +32416,36 @@ function ThrowController.Start()
 			return
 		end
 		-- Cut / Dive / Jump while holding are swings and the hop (MovementController)
+		if controllers.MovementController.engine() == "Tech" then
+			-- the tech-spec throws: LMB backhand (F: scoober), RMB forehand
+			-- (F: hammer), the Slide key fakes while charging
+			local overhead = input.isHeld("Overhead")
+			if action == "Primary" or action == "Secondary" then
+				if state.charging then
+					return
+				end
+				local kind = if action == "Primary"
+					then (if overhead then "Scoober" else "Backhand")
+					else (if overhead then "Hammer" else "Forehand")
+				local sinceFake = os.clock() - state.lastFake
+				local switch = sinceFake <= TechConfig.FAKE_SWITCH_WINDOW and kind ~= state.fakedType
+				if sinceFake < TechConfig.FAKE_RECOVERY and not switch then
+					return -- still recovering from the fake
+				end
+				state.chargeButton = action
+				setType(kind)
+				beginCharge()
+				if switch then
+					controllers.TechFeedback.play("Fake Switch", "Perfect")
+					controllers.MovementController.addTech("FakeSwitch", "Perfect", Vector3.zero)
+				end
+				return
+			elseif action == "Slide" and state.charging then
+				state.fakedType = state.throwType
+				fake()
+				return
+			end
+		end
 		if action == "Primary" then
 			beginCharge()
 		elseif action == "Secondary" then
@@ -32356,7 +32475,10 @@ function ThrowController.Start()
 		end
 	end)
 	input.ActionEnded:Connect(function(action)
-		if action == "Primary" then
+		if action == "Primary" or (action == "Secondary" and state.chargeButton == "Secondary") then
+			if action ~= state.chargeButton and controllers.MovementController.engine() == "Tech" then
+				return -- the other button: not the throw being charged
+			end
 			state.pendingCharge = false
 			release()
 		elseif action == "Slide" then
@@ -36400,7 +36522,7 @@ local function onFeedback(kind: any, payload: any)
 	elseif payload.heightAsked == "High" and payload.heightUsed ~= "High" then
 		text, color = "RELEASED MID — the hop was not seen", C.Sloppy
 	elseif payload.quality == "Perfect" then
-		text, color = "PERFECT RELEASE", C.Perfect
+		text, color = "SNAP RELEASE", C.Perfect
 	elseif payload.quality == "Over" then
 		text, color = "OVERCHARGED — less spin", C.Sloppy
 	end
@@ -36504,17 +36626,33 @@ function ThrowHud.build(parent: ScreenGui, c: any)
 		Parent = panel,
 		Theme.corner(6),
 	})
-	local meterScale = 1.4 -- meter shows up to 140% of the charge time
-	local fullY = 1 - 1 / meterScale
-	local perfectH = (DiscConfig.Throw.PerfectWindow / DiscConfig.Throw.ChargeTime) / meterScale
+	-- the meter shows up to 140 % of the charge time: the snap zone is the
+	-- pale band, the Snap Release the gold line in it, red above is overcharge
+	local meterScale = 1.4
+	local TH = DiscConfig.Throw
+	local function yOf(fill: number): number
+		return 1 - fill / meterScale
+	end
+	local zoneLo, zoneHi = TH.SnapZone[1], TH.SnapZone[2]
+	make("Frame", {
+		Name = "Zone",
+		BackgroundColor3 = C.Accent,
+		BackgroundTransparency = 0.6,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, yOf(zoneHi), 0),
+		Size = UDim2.new(1, 0, (zoneHi - zoneLo) / meterScale, 0),
+		ZIndex = 2,
+		Parent = meter,
+	})
+	local snapH = math.max((2 * TH.SnapPerfect / TH.ChargeTime) / meterScale, 0.012)
 	make("Frame", {
 		Name = "Perfect",
 		BackgroundColor3 = C.Perfect,
-		BackgroundTransparency = 0.35,
+		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, fullY - perfectH, 0),
-		Size = UDim2.new(1, 0, perfectH, 0),
-		ZIndex = 2,
+		Position = UDim2.new(0, -3, yOf(TH.SnapPoint) - snapH / 2, 0),
+		Size = UDim2.new(1, 6, snapH, 0),
+		ZIndex = 4,
 		Parent = meter,
 	})
 	make("Frame", {
@@ -36522,7 +36660,7 @@ function ThrowHud.build(parent: ScreenGui, c: any)
 		BackgroundColor3 = C.Bad,
 		BackgroundTransparency = 0.7,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, fullY - perfectH, 0),
+		Size = UDim2.new(1, 0, yOf(zoneHi), 0),
 		ZIndex = 2,
 		Parent = meter,
 	})
@@ -36713,6 +36851,7 @@ function ThrowHud.update()
 	refs.fill.BackgroundColor3 = if h.phase == "Perfect"
 		then C.Perfect
 		elseif h.phase == "Over" then C.Bad
+		elseif h.phase == "Zone" then C.Accent
 		else Color3.new(1, 1, 1)
 	if h.idealPower then
 		refs.ideal.Visible = true

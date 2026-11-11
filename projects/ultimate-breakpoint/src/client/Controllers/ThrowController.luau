@@ -97,6 +97,8 @@ local state = {
 	leadSolution = nil :: Solver.Solution?,
 	lastSolve = 0,
 	lastFake = -math.huge,
+	fakedType = "", -- the throw a fake sold (Fake Switch: the other one)
+	chargeButton = "Primary", -- the button holding the charge (tech engine)
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
@@ -136,10 +138,9 @@ function ThrowController.chargeFraction(): (number, string)
 		return 0, "Idle"
 	end
 	local hold = os.clock() - state.chargeStart
-	local power, quality = ThrowModel.charge(hold, state.throwType)
 	local info = ThrowModel.typeInfo(state.throwType)
 	local t = hold * (info.ChargeMult or 1)
-	return math.min(t / T.ChargeTime, 1.6), if quality == "Clean" and power < 1 then "Charging" else quality
+	return math.min(t / T.ChargeTime, 1.6), ThrowModel.chargePhase(hold, state.throwType)
 end
 
 local function airborne(): boolean
@@ -784,6 +785,36 @@ function ThrowController.Start()
 			return
 		end
 		-- Cut / Dive / Jump while holding are swings and the hop (MovementController)
+		if controllers.MovementController.engine() == "Tech" then
+			-- the tech-spec throws: LMB backhand (F: scoober), RMB forehand
+			-- (F: hammer), the Slide key fakes while charging
+			local overhead = input.isHeld("Overhead")
+			if action == "Primary" or action == "Secondary" then
+				if state.charging then
+					return
+				end
+				local kind = if action == "Primary"
+					then (if overhead then "Scoober" else "Backhand")
+					else (if overhead then "Hammer" else "Forehand")
+				local sinceFake = os.clock() - state.lastFake
+				local switch = sinceFake <= TechConfig.FAKE_SWITCH_WINDOW and kind ~= state.fakedType
+				if sinceFake < TechConfig.FAKE_RECOVERY and not switch then
+					return -- still recovering from the fake
+				end
+				state.chargeButton = action
+				setType(kind)
+				beginCharge()
+				if switch then
+					controllers.TechFeedback.play("Fake Switch", "Perfect")
+					controllers.MovementController.addTech("FakeSwitch", "Perfect", Vector3.zero)
+				end
+				return
+			elseif action == "Slide" and state.charging then
+				state.fakedType = state.throwType
+				fake()
+				return
+			end
+		end
 		if action == "Primary" then
 			beginCharge()
 		elseif action == "Secondary" then
@@ -813,7 +844,10 @@ function ThrowController.Start()
 		end
 	end)
 	input.ActionEnded:Connect(function(action)
-		if action == "Primary" then
+		if action == "Primary" or (action == "Secondary" and state.chargeButton == "Secondary") then
+			if action ~= state.chargeButton and controllers.MovementController.engine() == "Tech" then
+				return -- the other button: not the throw being charged
+			end
 			state.pendingCharge = false
 			release()
 		elseif action == "Slide" then
