@@ -746,6 +746,8 @@ end
 
 -- Techs that only get a sound (a pop for every jump would be noise).
 local QUIET_TECH = { Jump = true, AirDodge = true, Plant = true }
+local checkMirror: () -> () -- defined with the presses
+local checkContact: (Vector3) -> () -- defined with the tech frame
 
 -- A tech the core reports: feedback at once, and (unless it was a miss) the
 -- combo chain and the server, like any technique.
@@ -773,6 +775,48 @@ local function techEvent(e: TechCore.TechEvent)
 		chain = ComboEvaluator.active(combo, t) ~= nil,
 		info = e.info,
 	})
+end
+
+-- Contact rule: entering another body's space costs speed once per overlap.
+local overlapping: { [Model]: boolean } = {}
+local contactScan = 0
+
+checkContact = function(pos: Vector3)
+	contactScan += 1
+	if contactScan % 2 ~= 0 then
+		return
+	end
+	local seen: { [Model]: boolean } = {}
+	local function test(m: Model)
+		if m == character then
+			return
+		end
+		local mr = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not mr then
+			return
+		end
+		local d = VecMath.flat(mr.Position - pos).Magnitude
+		if d < TechConfig.CONTACT_RADIUS and math.abs(mr.Position.Y - pos.Y) < 4 then
+			seen[m] = true
+			if not overlapping[m] and TechCore.flatSpeed(tech) > 6 then
+				TechCore.contact(tech)
+			end
+		end
+	end
+	for _, p in Players:GetPlayers() do
+		if p.Character then
+			test(p.Character)
+		end
+	end
+	local bots = workspace:FindFirstChild("UBBots")
+	if bots then
+		for _, m in bots:GetChildren() do
+			if m:IsA("Model") then
+				test(m)
+			end
+		end
+	end
+	overlapping = seen
 end
 
 -- One frame on the tech engine.
@@ -843,6 +887,7 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 	for _, e in TechCore.drainEvents(tech) do
 		techEvent(e)
 	end
+	checkContact(pos)
 
 	local flat = VecMath.flat(tech.vel)
 	local lined = applyLine(c, pos, flat)
@@ -1039,6 +1084,66 @@ end
 -- presses
 ---------------------------------------------------------------------------
 
+-- Mirror Step: a Cut within MIRROR_WINDOW of the plant of the opponent you're
+-- closest to (within MIRROR_RANGE) mirrors it. If their plant turns out to be
+-- a Juke, you bit on the fake.
+checkMirror = function()
+	local r = root
+	local me = character
+	if not r or not me then
+		return
+	end
+	local myTeam = me:GetAttribute("UBTeam")
+	local best: Model? = nil
+	local bestD = TechConfig.MIRROR_RANGE
+	local candidates: { Model } = {}
+	for _, p in Players:GetPlayers() do
+		if p ~= player and p.Character then
+			table.insert(candidates, p.Character)
+		end
+	end
+	local bots = workspace:FindFirstChild("UBBots")
+	if bots then
+		for _, m in bots:GetChildren() do
+			if m:IsA("Model") then
+				table.insert(candidates, m)
+			end
+		end
+	end
+	for _, m in candidates do
+		local team = m:GetAttribute("UBTeam")
+		local mr = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if mr and team ~= nil and team ~= myTeam then
+			local d = (mr.Position - r.Position).Magnitude
+			if d < bestD then
+				best, bestD = m, d
+			end
+		end
+	end
+	local opp = best
+	if not opp then
+		return
+	end
+	local plantT = opp:GetAttribute("TechT")
+	if opp:GetAttribute("Tech") ~= "Plant" or type(plantT) ~= "number" then
+		return
+	end
+	local okPing, ping = pcall(function()
+		return player:GetNetworkPing()
+	end)
+	local lag = if okPing and type(ping) == "number" then math.clamp(ping, 0, 0.3) else 0.1
+	if now() - plantT > TechConfig.MIRROR_WINDOW / 1000 + lag then
+		return
+	end
+	TechCore.armMirror(tech)
+	-- their plant resolves after it ends: a Juke means you bit
+	task.delay(TechConfig.CUT_PLANT_TIME + lag + 0.05, function()
+		if opp.Parent and opp:GetAttribute("Tech") == "Juke" and engineOn then
+			TechCore.juked(tech)
+		end
+	end)
+end
+
 local function onAction(action: string, scheme: string?)
 	if not MOVEMENT_ACTIONS[action] or not root or not character then
 		return
@@ -1047,8 +1152,10 @@ local function onAction(action: string, scheme: string?)
 		return
 	end
 	if engineOn then
-		-- buffered for the tech that will use it (later build steps)
-		TechCore.press(tech, action, os.clock())
+		if action == "Cut" then
+			checkMirror()
+		end
+		TechCore.press(tech, action)
 		return
 	end
 	if sim.holding then

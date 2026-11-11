@@ -2855,10 +2855,15 @@ Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
 
--- defense and rules (later step: 8)
+-- defense and rules
 Tech.STALL_COUNT = 10
 Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.MIRROR_WINDOW = 120 -- ms
+Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
+Tech.MIRROR_BONUS = 2
+Tech.JUKED_LOSS = 0.30
+Tech.CONTACT_LOSS = 0.30 -- speed lost running through a player
+Tech.CONTACT_RADIUS = 2 -- studs between roots that counts as overlapping
 
 return Tech
 ]]></string>
@@ -6243,6 +6248,7 @@ export type State = {
 		quality: string, -- of the cut it becomes
 		keep: number,
 		bonus: number,
+		mirror: boolean,
 	}?,
 	plantStop: { startAt: number, fromSpeed: number }?,
 	boostUntil: number,
@@ -6289,6 +6295,9 @@ export type State = {
 	extraDodgesLeft: number,
 	skyWalkUntil: number,
 	overdriveUntil: number,
+
+	-- defense
+	mirrorArmed: boolean, -- the next cut mirrors your matchup's (Mirror Step)
 }
 
 local STEP = 1 / Config.PHYSICS_RATE
@@ -6395,6 +6404,8 @@ function TechCore.new(now: number?): State
 		extraDodgesLeft = 0,
 		skyWalkUntil = -math.huge,
 		overdriveUntil = -math.huge,
+
+		mirrorArmed = false,
 	}
 end
 
@@ -6730,9 +6741,11 @@ local function tryCut(s: State, input: Input, at: number): boolean
 	-- judged on the press against the crossing (an early press is buffered)
 	local ms = (at - cross) * 1000
 	local timing = TechCore.noteTiming(s, "Cut", ms, Config.CUT_PERFECT_WINDOW, Config.CUT_PERFECT_WINDOW)
-	local perfect = timing.quality == "Perfect"
+	local mirror = s.mirrorArmed
+	s.mirrorArmed = false
+	local perfect = timing.quality == "Perfect" or mirror
 	local keep = if perfect then Config.PERFECT_KEEP else Config.CUT_KEEP
-	local bonus = if perfect then Config.PERFECT_CUT_BONUS else 0
+	local bonus = (if perfect then Config.PERFECT_CUT_BONUS else 0) + (if mirror then Config.MIRROR_BONUS else 0)
 	if s.now - s.lastCutAt < Config.CUT_REPEAT_TIME then
 		-- zigzag cap: at most 85 % of the speed, no bonus, even if Perfect
 		if keep > Config.CUT_REPEAT_CAP then
@@ -6747,6 +6760,7 @@ local function tryCut(s: State, input: Input, at: number): boolean
 		quality = if perfect then "Perfect" else "Clean",
 		keep = keep,
 		bonus = bonus,
+		mirror = mirror,
 	}
 	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
 	s.lastCutAt = s.now
@@ -6770,7 +6784,7 @@ local function finishPlant(s: State, input: Input)
 	end
 	setFlat(s, want * (p.speed * p.keep + p.bonus))
 	s.crossAt = nil
-	emit(s, "Cut", p.quality, want)
+	emit(s, "Cut", p.quality, want, if p.mirror then "Mirror" else nil)
 end
 
 local function slideAllowed(s: State, speed: number, landing: boolean): boolean
@@ -7076,6 +7090,24 @@ local function releaseBurst(s: State, input: Input)
 	s.burst -= Config.BURST_KICK_COST
 	s.kickReadyAt = s.now + Config.BURST_KICK_COOLDOWN
 	emit(s, "BurstKick", "Clean", dir)
+end
+
+-- Mirror Step (defense): the caller saw the player you guard plant a cut
+-- within MIRROR_WINDOW; your next cut counts as Perfect with +2.
+function TechCore.armMirror(s: State)
+	s.mirrorArmed = true
+end
+
+-- Contact rule: you ran through another player (ultimate is non-contact).
+function TechCore.contact(s: State)
+	setFlat(s, flatOf(s.vel) * (1 - Config.CONTACT_LOSS))
+end
+
+-- The cut you mirrored was a Juke: you bit on the fake.
+function TechCore.juked(s: State)
+	local flat = flatOf(s.vel)
+	setFlat(s, flat * (1 - Config.JUKED_LOSS))
+	emit(s, "Juked", "Miss", s.heading)
 end
 
 -- Something touched the disc while you were in the air (tip, block, bobble,
@@ -28918,6 +28950,8 @@ end
 
 -- Techs that only get a sound (a pop for every jump would be noise).
 local QUIET_TECH = { Jump = true, AirDodge = true, Plant = true }
+local checkMirror: () -> () -- defined with the presses
+local checkContact: (Vector3) -> () -- defined with the tech frame
 
 -- A tech the core reports: feedback at once, and (unless it was a miss) the
 -- combo chain and the server, like any technique.
@@ -28945,6 +28979,48 @@ local function techEvent(e: TechCore.TechEvent)
 		chain = ComboEvaluator.active(combo, t) ~= nil,
 		info = e.info,
 	})
+end
+
+-- Contact rule: entering another body's space costs speed once per overlap.
+local overlapping: { [Model]: boolean } = {}
+local contactScan = 0
+
+checkContact = function(pos: Vector3)
+	contactScan += 1
+	if contactScan % 2 ~= 0 then
+		return
+	end
+	local seen: { [Model]: boolean } = {}
+	local function test(m: Model)
+		if m == character then
+			return
+		end
+		local mr = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not mr then
+			return
+		end
+		local d = VecMath.flat(mr.Position - pos).Magnitude
+		if d < TechConfig.CONTACT_RADIUS and math.abs(mr.Position.Y - pos.Y) < 4 then
+			seen[m] = true
+			if not overlapping[m] and TechCore.flatSpeed(tech) > 6 then
+				TechCore.contact(tech)
+			end
+		end
+	end
+	for _, p in Players:GetPlayers() do
+		if p.Character then
+			test(p.Character)
+		end
+	end
+	local bots = workspace:FindFirstChild("UBBots")
+	if bots then
+		for _, m in bots:GetChildren() do
+			if m:IsA("Model") then
+				test(m)
+			end
+		end
+	end
+	overlapping = seen
 end
 
 -- One frame on the tech engine.
@@ -29015,6 +29091,7 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 	for _, e in TechCore.drainEvents(tech) do
 		techEvent(e)
 	end
+	checkContact(pos)
 
 	local flat = VecMath.flat(tech.vel)
 	local lined = applyLine(c, pos, flat)
@@ -29211,6 +29288,66 @@ end
 -- presses
 ---------------------------------------------------------------------------
 
+-- Mirror Step: a Cut within MIRROR_WINDOW of the plant of the opponent you're
+-- closest to (within MIRROR_RANGE) mirrors it. If their plant turns out to be
+-- a Juke, you bit on the fake.
+checkMirror = function()
+	local r = root
+	local me = character
+	if not r or not me then
+		return
+	end
+	local myTeam = me:GetAttribute("UBTeam")
+	local best: Model? = nil
+	local bestD = TechConfig.MIRROR_RANGE
+	local candidates: { Model } = {}
+	for _, p in Players:GetPlayers() do
+		if p ~= player and p.Character then
+			table.insert(candidates, p.Character)
+		end
+	end
+	local bots = workspace:FindFirstChild("UBBots")
+	if bots then
+		for _, m in bots:GetChildren() do
+			if m:IsA("Model") then
+				table.insert(candidates, m)
+			end
+		end
+	end
+	for _, m in candidates do
+		local team = m:GetAttribute("UBTeam")
+		local mr = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if mr and team ~= nil and team ~= myTeam then
+			local d = (mr.Position - r.Position).Magnitude
+			if d < bestD then
+				best, bestD = m, d
+			end
+		end
+	end
+	local opp = best
+	if not opp then
+		return
+	end
+	local plantT = opp:GetAttribute("TechT")
+	if opp:GetAttribute("Tech") ~= "Plant" or type(plantT) ~= "number" then
+		return
+	end
+	local okPing, ping = pcall(function()
+		return player:GetNetworkPing()
+	end)
+	local lag = if okPing and type(ping) == "number" then math.clamp(ping, 0, 0.3) else 0.1
+	if now() - plantT > TechConfig.MIRROR_WINDOW / 1000 + lag then
+		return
+	end
+	TechCore.armMirror(tech)
+	-- their plant resolves after it ends: a Juke means you bit
+	task.delay(TechConfig.CUT_PLANT_TIME + lag + 0.05, function()
+		if opp.Parent and opp:GetAttribute("Tech") == "Juke" and engineOn then
+			TechCore.juked(tech)
+		end
+	end)
+end
+
 local function onAction(action: string, scheme: string?)
 	if not MOVEMENT_ACTIONS[action] or not root or not character then
 		return
@@ -29219,8 +29356,10 @@ local function onAction(action: string, scheme: string?)
 		return
 	end
 	if engineOn then
-		-- buffered for the tech that will use it (later build steps)
-		TechCore.press(tech, action, os.clock())
+		if action == "Cut" then
+			checkMirror()
+		end
+		TechCore.press(tech, action)
 		return
 	end
 	if sim.holding then

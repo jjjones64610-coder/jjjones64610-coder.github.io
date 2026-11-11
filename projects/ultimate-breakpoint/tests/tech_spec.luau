@@ -828,6 +828,24 @@ test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdriv
 	expect(od.s.burst < 100, "drains again after it ends")
 end)
 
+test("mirror step: an armed cut is Perfect + 2; biting on a juke costs 30 %", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	w.move = RIGHT
+	worldRun(w, 0.15) -- late: a plain cut would be Clean
+	TechCore.armMirror(w.s)
+	tap(w, "Cut")
+	local before = TechCore.flatSpeed(w.s)
+	worldUntil(w, function(x)
+		return #events(x.s, "Cut") > 0
+	end, 0.3)
+	local c = events(w.s, "Cut")[1]
+	expect(c and c.quality == "Perfect" and c.info == "Mirror", "mirrored cut")
+	expect(TechCore.flatSpeed(w.s) > before + Config.PERFECT_CUT_BONUS + Config.MIRROR_BONUS - 0.5, "+3 +2")
+	local sp = TechCore.flatSpeed(w.s)
+	TechCore.juked(w.s)
+	expect(near(TechCore.flatSpeed(w.s), sp * (1 - Config.JUKED_LOSS), 0.01), "juked")
+end)
+
 test("tech fuzz: random presses and holds never break the cap or the states", function()
 	local Rng = H.require("Util/Rng")
 	local rng = Rng.new(11)

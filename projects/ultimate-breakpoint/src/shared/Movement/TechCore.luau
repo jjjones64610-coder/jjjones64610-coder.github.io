@@ -151,6 +151,7 @@ export type State = {
 		quality: string, -- of the cut it becomes
 		keep: number,
 		bonus: number,
+		mirror: boolean,
 	}?,
 	plantStop: { startAt: number, fromSpeed: number }?,
 	boostUntil: number,
@@ -197,6 +198,9 @@ export type State = {
 	extraDodgesLeft: number,
 	skyWalkUntil: number,
 	overdriveUntil: number,
+
+	-- defense
+	mirrorArmed: boolean, -- the next cut mirrors your matchup's (Mirror Step)
 }
 
 local STEP = 1 / Config.PHYSICS_RATE
@@ -303,6 +307,8 @@ function TechCore.new(now: number?): State
 		extraDodgesLeft = 0,
 		skyWalkUntil = -math.huge,
 		overdriveUntil = -math.huge,
+
+		mirrorArmed = false,
 	}
 end
 
@@ -638,9 +644,11 @@ local function tryCut(s: State, input: Input, at: number): boolean
 	-- judged on the press against the crossing (an early press is buffered)
 	local ms = (at - cross) * 1000
 	local timing = TechCore.noteTiming(s, "Cut", ms, Config.CUT_PERFECT_WINDOW, Config.CUT_PERFECT_WINDOW)
-	local perfect = timing.quality == "Perfect"
+	local mirror = s.mirrorArmed
+	s.mirrorArmed = false
+	local perfect = timing.quality == "Perfect" or mirror
 	local keep = if perfect then Config.PERFECT_KEEP else Config.CUT_KEEP
-	local bonus = if perfect then Config.PERFECT_CUT_BONUS else 0
+	local bonus = (if perfect then Config.PERFECT_CUT_BONUS else 0) + (if mirror then Config.MIRROR_BONUS else 0)
 	if s.now - s.lastCutAt < Config.CUT_REPEAT_TIME then
 		-- zigzag cap: at most 85 % of the speed, no bonus, even if Perfect
 		if keep > Config.CUT_REPEAT_CAP then
@@ -655,6 +663,7 @@ local function tryCut(s: State, input: Input, at: number): boolean
 		quality = if perfect then "Perfect" else "Clean",
 		keep = keep,
 		bonus = bonus,
+		mirror = mirror,
 	}
 	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
 	s.lastCutAt = s.now
@@ -678,7 +687,7 @@ local function finishPlant(s: State, input: Input)
 	end
 	setFlat(s, want * (p.speed * p.keep + p.bonus))
 	s.crossAt = nil
-	emit(s, "Cut", p.quality, want)
+	emit(s, "Cut", p.quality, want, if p.mirror then "Mirror" else nil)
 end
 
 local function slideAllowed(s: State, speed: number, landing: boolean): boolean
@@ -984,6 +993,24 @@ local function releaseBurst(s: State, input: Input)
 	s.burst -= Config.BURST_KICK_COST
 	s.kickReadyAt = s.now + Config.BURST_KICK_COOLDOWN
 	emit(s, "BurstKick", "Clean", dir)
+end
+
+-- Mirror Step (defense): the caller saw the player you guard plant a cut
+-- within MIRROR_WINDOW; your next cut counts as Perfect with +2.
+function TechCore.armMirror(s: State)
+	s.mirrorArmed = true
+end
+
+-- Contact rule: you ran through another player (ultimate is non-contact).
+function TechCore.contact(s: State)
+	setFlat(s, flatOf(s.vel) * (1 - Config.CONTACT_LOSS))
+end
+
+-- The cut you mirrored was a Juke: you bit on the fake.
+function TechCore.juked(s: State)
+	local flat = flatOf(s.vel)
+	setFlat(s, flat * (1 - Config.JUKED_LOSS))
+	emit(s, "Juked", "Miss", s.heading)
 end
 
 -- Something touched the disc while you were in the air (tip, block, bobble,

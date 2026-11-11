@@ -165,9 +165,14 @@ Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
 
--- defense and rules (later step: 8)
+-- defense and rules
 Tech.STALL_COUNT = 10
 Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.MIRROR_WINDOW = 120 -- ms
+Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
+Tech.MIRROR_BONUS = 2
+Tech.JUKED_LOSS = 0.30
+Tech.CONTACT_LOSS = 0.30 -- speed lost running through a player
+Tech.CONTACT_RADIUS = 2 -- studs between roots that counts as overlapping
 
 return Tech
