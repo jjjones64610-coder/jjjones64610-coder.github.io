@@ -16,7 +16,7 @@
 -- divided by TEMPO (speeds and spin x TEMPO, accelerations x TEMPO^2). Wind,
 -- deflection and bobble velocities scale the same way, so nothing changes
 -- shape - a 110-stud backhand just arrives in ~2.7 s instead of ~4.1 s.
-local TEMPO = 1.5
+local TEMPO = 1.8
 
 local Disc = {
 	Tempo = TEMPO,
@@ -34,11 +34,11 @@ local Disc = {
 		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
 		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
 		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
-		SpinDecay = 0.15, -- per second (docs/tech-spec.md disc model: SPIN_DECAY)
+		SpinDecay = 0.1 * TEMPO, -- per second (docs/tech-spec.md SPIN_DECAY 0.15 at tempo 1.5)
 		-- fade drift (spec): the tilt rolls toward the fade side at
 		-- (1 - spin share) x FadeDrift, where spin share is |spin| / Throw.SpinBase,
 		-- so a low-spin (overcharged) disc fades early and a Snap holds its edge
-		FadeDrift = math.rad(40), -- radians per second at zero spin
+		FadeDrift = math.rad(40) * TEMPO / 1.5, -- radians per second at zero spin (40 deg/s at tempo 1.5)
 		MinSpin = 8 * TEMPO,
 		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
 		GroundContact = 0.14, -- disc centre height that counts as touching the ground
@@ -80,8 +80,8 @@ local Disc = {
 		MinPitch = -12,
 		MaxPitch = 60,
 		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
-		HandBlockCheckTime = 0.3, -- seconds of early flight checked against markers' hands
-		NoCatchTime = 0.15, -- nobody can catch in the first moments (hand blocks cover that)
+		HandBlockCheckTime = 0.3 * 1.5 / TEMPO, -- seconds of early flight checked against markers' hands (the same distance at any tempo)
+		NoCatchTime = 0.15 * 1.5 / TEMPO, -- nobody can catch in the first moments (hand blocks cover that)
 
 		-- Release from the pivot (ThrowModel.releasePosition with params.pivot):
 		-- P + step + right * (Side * PivotSideScale, +-LowReach for Low)
@@ -258,8 +258,8 @@ local Disc = {
 		MaxFacingOff = 35, -- degrees
 		LowY = { 0.8, 4.6 }, -- above the ground: low/wide stance, knees to chest
 		HighY = { 4.4, 8.2 }, -- hands up: shoulders to well above the head
-		LowHalfWidth = 2.8,
-		HighHalfWidth = 2.2,
+		LowHalfWidth = 2.5, -- (2.8 before hand blocks were sub-stepped; fast discs no longer tunnel)
+		HighHalfWidth = 2.0,
 		JumpBonus = 1, -- jumping lifts the box by the jump height plus up to this (arms stretch)
 		DepthMin = -0.8, -- along the box forward (toward the thrower)
 		DepthMax = 2.0,

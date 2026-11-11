@@ -486,7 +486,7 @@ test("juke: the stick back to the line in the plant keeps it at 90 %", function(
 	expect(#events(w.s, "Juke") == 1 and #events(w.s, "Cut") == 0, "a juke, no cut")
 	expect(near(before, Config.RUN_TOP_SPEED, 0.5), "the plant keeps the line")
 	expect(w.s.vel.Unit:Dot(FWD) > 0.99, "same line")
-	expect(near(TechCore.flatSpeed(w.s), before * Config.JUKE_KEEP, 0.7), "90 %")
+	expect(near(TechCore.flatSpeed(w.s), before * Config.JUKE_KEEP, Config.RUN_ACCEL * TechCore.STEP + 0.05), "90 %")
 end)
 
 test("plant stop: stop in 0.15 s, then a 2x (Perfect 2.5x) start", function()

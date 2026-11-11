@@ -20,8 +20,8 @@ Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 Tech.BOTS_USE_TECH = true
 
 -- running
-Tech.RUN_TOP_SPEED = 24 -- (spec 22; faster after playtest)
-Tech.RUN_ACCEL = 72
+Tech.RUN_TOP_SPEED = 27 -- (spec 22; faster after playtests)
+Tech.RUN_ACCEL = 85
 Tech.GROUND_FRICTION = 70 -- no input (and HoldingDisc / Downed)
 Tech.OVERSPEED_DECAY_GROUND = 15
 Tech.OVERSPEED_DECAY_AIR = 4
@@ -41,7 +41,7 @@ Tech.TURN_DRIFT_LOSS = 0.12
 Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
-Tech.PLAYER_GRAVITY = 140
+Tech.PLAYER_GRAVITY = 155
 Tech.FALL_GRAVITY_MULT = 1.3
 
 -- ground contact (controller, not in the spec table)
@@ -51,8 +51,8 @@ Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
 -- burst
-Tech.BURST_TOP_SPEED = 32
-Tech.BURST_ACCEL = 90
+Tech.BURST_TOP_SPEED = 36
+Tech.BURST_ACCEL = 110
 Tech.BURST_DRAIN = 30
 Tech.BURST_REFILL = 15
 Tech.BURST_LOCK_UNTIL = 20
@@ -99,8 +99,8 @@ Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
 Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
 
 -- air tech
-Tech.JUMP_TAP = 34
-Tech.JUMP_FULL = 46
+Tech.JUMP_TAP = 37
+Tech.JUMP_FULL = 50
 Tech.JUMP_HOLD = 0.2 -- s of hold that adds up to a full jump
 Tech.AIR_ACCEL = 20
 Tech.AIR_TURN = 90 -- °/s
@@ -208,7 +208,7 @@ Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
-Tech.MARK_SPEED = 15 -- studs/s: the mark shuffle (spec 30: 14)
+Tech.MARK_SPEED = 18 -- studs/s: the mark shuffle (spec 30: 14)
 Tech.MARK_ACCEL = 140 -- studs/s²: it starts and stops on a dime
 Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
 Tech.MIRROR_BONUS = 2

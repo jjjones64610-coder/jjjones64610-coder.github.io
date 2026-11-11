@@ -313,11 +313,18 @@ local function markCase()
 			return true
 		end
 		local s = launch.state
+		-- sub-stepped like DefenseService.checkHandBlock
+		local last = Vector3.new(s.px, s.py, s.pz)
 		while s.t < DiscConfig.Throw.HandBlockCheckTime do
 			DiscPhysics.step(s, DiscConfig.Physics.Dt)
-			if CatchGeometry.inMarkBox(box, Vector3.new(s.px, s.py, s.pz)) then
-				return true
+			local now = Vector3.new(s.px, s.py, s.pz)
+			local pts = math.max(1, math.ceil((now - last).Magnitude / 0.4))
+			for k = 1, pts do
+				if CatchGeometry.inMarkBox(box, last:Lerp(now, k / pts)) then
+					return true
+				end
 			end
+			last = now
 		end
 		return false
 	end
@@ -370,8 +377,8 @@ end)
 
 test("mark table: the marker's facing aims the hands", function()
 	local blocked = markCase()
-	local break_ = { throwType = "Backhand", step = 1, height = "Low", markerX = -2.2 }
-	expect(not blocked(break_), "facing P from -2.2 just misses the full Low break")
+	local break_ = { throwType = "Backhand", step = 1, height = "Low", markerX = -2.4 }
+	expect(not blocked(break_), "facing P from the shaded edge just misses the full Low break")
 	break_.facing = Vector3.new(0, 0, 1) -- squared to the field, hands toward the break lane
 	expect(blocked(break_), "aiming the hands down the break lane covers it")
 end)

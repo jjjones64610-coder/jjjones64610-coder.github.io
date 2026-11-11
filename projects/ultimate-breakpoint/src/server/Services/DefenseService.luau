@@ -362,23 +362,31 @@ function DefenseService.checkHandBlock(
 	end
 	local s = DiscPhysics.copy(launch)
 	local dt = DiscConfig.Physics.Dt
+	local last = Vector3.new(s.px, s.py, s.pz)
 	while s.t < DiscConfig.Throw.HandBlockCheckTime do
 		DiscPhysics.step(s, dt, wind)
-		local p = Vector3.new(s.px, s.py, s.pz)
-		for _, c in candidates do
-			local armHit = c.arm ~= nil and (p - (c.arm :: Vector3)).Magnitude <= ARM_RADIUS
-			if armHit or CatchGeometry.inMarkBox(c.box, p) then
-				if armHit then
-					swings[c.id] = nil
-					services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
-					local actor = services.PlayerService.get(c.id)
-					if actor and actor.player then
-						Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })
+		local now = Vector3.new(s.px, s.py, s.pz)
+		-- a fast disc covers more than a stud a step: test points along the
+		-- step too, so it can never tunnel through a pair of hands
+		local pts = math.max(1, math.ceil((now - last).Magnitude / 0.4))
+		for k = 1, pts do
+			local p = last:Lerp(now, k / pts)
+			for _, c in candidates do
+				local armHit = c.arm ~= nil and (p - (c.arm :: Vector3)).Magnitude <= ARM_RADIUS
+				if armHit or CatchGeometry.inMarkBox(c.box, p) then
+					if armHit then
+						swings[c.id] = nil
+						services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
+						local actor = services.PlayerService.get(c.id)
+						if actor and actor.player then
+							Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })
+						end
 					end
+					return c.id, s.t, p
 				end
-				return c.id, s.t, p
 			end
 		end
+		last = now
 	end
 	return nil, nil, nil
 end

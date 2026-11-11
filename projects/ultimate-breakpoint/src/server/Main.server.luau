@@ -33,6 +33,7 @@ local ORDER = {
 	"ShopService",
 	"HighlightService",
 	"TeamService",
+	"JerseyService",
 	"BotService",
 	"TrainingService",
 	"MatchService",

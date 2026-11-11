@@ -1023,7 +1023,7 @@ return Audio
 -- divided by TEMPO (speeds and spin x TEMPO, accelerations x TEMPO^2). Wind,
 -- deflection and bobble velocities scale the same way, so nothing changes
 -- shape - a 110-stud backhand just arrives in ~2.7 s instead of ~4.1 s.
-local TEMPO = 1.5
+local TEMPO = 1.8
 
 local Disc = {
 	Tempo = TEMPO,
@@ -1041,11 +1041,11 @@ local Disc = {
 		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
 		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
 		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
-		SpinDecay = 0.15, -- per second (docs/tech-spec.md disc model: SPIN_DECAY)
+		SpinDecay = 0.1 * TEMPO, -- per second (docs/tech-spec.md SPIN_DECAY 0.15 at tempo 1.5)
 		-- fade drift (spec): the tilt rolls toward the fade side at
 		-- (1 - spin share) x FadeDrift, where spin share is |spin| / Throw.SpinBase,
 		-- so a low-spin (overcharged) disc fades early and a Snap holds its edge
-		FadeDrift = math.rad(40), -- radians per second at zero spin
+		FadeDrift = math.rad(40) * TEMPO / 1.5, -- radians per second at zero spin (40 deg/s at tempo 1.5)
 		MinSpin = 8 * TEMPO,
 		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
 		GroundContact = 0.14, -- disc centre height that counts as touching the ground
@@ -1087,8 +1087,8 @@ local Disc = {
 		MinPitch = -12,
 		MaxPitch = 60,
 		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
-		HandBlockCheckTime = 0.3, -- seconds of early flight checked against markers' hands
-		NoCatchTime = 0.15, -- nobody can catch in the first moments (hand blocks cover that)
+		HandBlockCheckTime = 0.3 * 1.5 / TEMPO, -- seconds of early flight checked against markers' hands (the same distance at any tempo)
+		NoCatchTime = 0.15 * 1.5 / TEMPO, -- nobody can catch in the first moments (hand blocks cover that)
 
 		-- Release from the pivot (ThrowModel.releasePosition with params.pivot):
 		-- P + step + right * (Side * PivotSideScale, +-LowReach for Low)
@@ -1265,8 +1265,8 @@ local Disc = {
 		MaxFacingOff = 35, -- degrees
 		LowY = { 0.8, 4.6 }, -- above the ground: low/wide stance, knees to chest
 		HighY = { 4.4, 8.2 }, -- hands up: shoulders to well above the head
-		LowHalfWidth = 2.8,
-		HighHalfWidth = 2.2,
+		LowHalfWidth = 2.5, -- (2.8 before hand blocks were sub-stepped; fast discs no longer tunnel)
+		HighHalfWidth = 2.0,
 		JumpBonus = 1, -- jumping lifts the box by the jump height plus up to this (arms stretch)
 		DepthMin = -0.8, -- along the box forward (toward the thrower)
 		DepthMax = 2.0,
@@ -2930,12 +2930,18 @@ local Teams = {
 		Color = Color3.fromRGB(32, 140, 255),
 		Dark = Color3.fromRGB(14, 60, 120),
 		BrickColor = BrickColor.new("Bright blue"),
+		-- ForgeGUI-made classic clothing templates (Image ids); empty = the
+		-- jersey is drawn with body colours instead
+		Shirt = "100918681985769", -- ForgeGUI: TIDE jersey
+		Pants = "",
 	},
 	B = {
 		Name = "BLAZE",
 		Color = Color3.fromRGB(255, 120, 30),
 		Dark = Color3.fromRGB(120, 50, 10),
 		BrickColor = BrickColor.new("Neon orange"),
+		Shirt = "98553561031499", -- ForgeGUI: BLAZE jersey
+		Pants = "",
 	},
 	Neutral = {
 		Name = "SIDELINE",
@@ -2973,8 +2979,8 @@ Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 Tech.BOTS_USE_TECH = true
 
 -- running
-Tech.RUN_TOP_SPEED = 24 -- (spec 22; faster after playtest)
-Tech.RUN_ACCEL = 72
+Tech.RUN_TOP_SPEED = 27 -- (spec 22; faster after playtests)
+Tech.RUN_ACCEL = 85
 Tech.GROUND_FRICTION = 70 -- no input (and HoldingDisc / Downed)
 Tech.OVERSPEED_DECAY_GROUND = 15
 Tech.OVERSPEED_DECAY_AIR = 4
@@ -2994,7 +3000,7 @@ Tech.TURN_DRIFT_LOSS = 0.12
 Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
-Tech.PLAYER_GRAVITY = 140
+Tech.PLAYER_GRAVITY = 155
 Tech.FALL_GRAVITY_MULT = 1.3
 
 -- ground contact (controller, not in the spec table)
@@ -3004,8 +3010,8 @@ Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
 -- burst
-Tech.BURST_TOP_SPEED = 32
-Tech.BURST_ACCEL = 90
+Tech.BURST_TOP_SPEED = 36
+Tech.BURST_ACCEL = 110
 Tech.BURST_DRAIN = 30
 Tech.BURST_REFILL = 15
 Tech.BURST_LOCK_UNTIL = 20
@@ -3052,8 +3058,8 @@ Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
 Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
 
 -- air tech
-Tech.JUMP_TAP = 34
-Tech.JUMP_FULL = 46
+Tech.JUMP_TAP = 37
+Tech.JUMP_FULL = 50
 Tech.JUMP_HOLD = 0.2 -- s of hold that adds up to a full jump
 Tech.AIR_ACCEL = 20
 Tech.AIR_TURN = 90 -- °/s
@@ -3161,7 +3167,7 @@ Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
-Tech.MARK_SPEED = 15 -- studs/s: the mark shuffle (spec 30: 14)
+Tech.MARK_SPEED = 18 -- studs/s: the mark shuffle (spec 30: 14)
 Tech.MARK_ACCEL = 140 -- studs/s²: it starts and stops on a dime
 Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
 Tech.MIRROR_BONUS = 2
@@ -12860,6 +12866,7 @@ local ORDER = {
 	"ShopService",
 	"HighlightService",
 	"TeamService",
+	"JerseyService",
 	"BotService",
 	"TrainingService",
 	"MatchService",
@@ -17216,23 +17223,31 @@ function DefenseService.checkHandBlock(
 	end
 	local s = DiscPhysics.copy(launch)
 	local dt = DiscConfig.Physics.Dt
+	local last = Vector3.new(s.px, s.py, s.pz)
 	while s.t < DiscConfig.Throw.HandBlockCheckTime do
 		DiscPhysics.step(s, dt, wind)
-		local p = Vector3.new(s.px, s.py, s.pz)
-		for _, c in candidates do
-			local armHit = c.arm ~= nil and (p - (c.arm :: Vector3)).Magnitude <= ARM_RADIUS
-			if armHit or CatchGeometry.inMarkBox(c.box, p) then
-				if armHit then
-					swings[c.id] = nil
-					services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
-					local actor = services.PlayerService.get(c.id)
-					if actor and actor.player then
-						Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })
+		local now = Vector3.new(s.px, s.py, s.pz)
+		-- a fast disc covers more than a stud a step: test points along the
+		-- step too, so it can never tunnel through a pair of hands
+		local pts = math.max(1, math.ceil((now - last).Magnitude / 0.4))
+		for k = 1, pts do
+			local p = last:Lerp(now, k / pts)
+			for _, c in candidates do
+				local armHit = c.arm ~= nil and (p - (c.arm :: Vector3)).Magnitude <= ARM_RADIUS
+				if armHit or CatchGeometry.inMarkBox(c.box, p) then
+					if armHit then
+						swings[c.id] = nil
+						services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
+						local actor = services.PlayerService.get(c.id)
+						if actor and actor.player then
+							Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })
+						end
 					end
+					return c.id, s.t, p
 				end
-				return c.id, s.t, p
 			end
 		end
+		last = now
 	end
 	return nil, nil, nil
 end
@@ -18030,6 +18045,212 @@ return HighlightService
         </Item>
         <Item class="ModuleScript" referent="59">
           <Properties>
+            <string name="Name">JerseyService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	JerseyService — team kits. Every character on TIDE or BLAZE (players and
+	bots) wears that team's jersey and shorts (Config/Teams Shirt / Pants,
+	ForgeGUI-made clothing templates) with a number on the back; sideline
+	players wear their own clothes. It re-dresses on spawn and whenever the
+	character's team (UBTeam) changes, and puts the player's own clothes back
+	when they leave a team.
+
+	If a team has no template ids yet, the jersey is drawn with body colours:
+	torso and arms in the team colour, legs in its dark shade.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local TeamsConfig = require(Shared.Config.Teams)
+
+local JerseyService = {}
+
+local services: any
+local numbers: { [number]: number } = {} -- actor id -> jersey number
+local nextNumber = 1
+
+local TORSO = { "UpperTorso", "LowerTorso", "Torso" }
+local ARMS = { "LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm", "Left Arm", "Right Arm" }
+local LEGS = { "LeftUpperLeg", "RightUpperLeg", "LeftLowerLeg", "RightLowerLeg", "Left Leg", "Right Leg" }
+
+local function numberFor(id: number): number
+	local n = numbers[id]
+	if n == nil then
+		-- 1..99, handed out in join order and skipping a few for variety
+		n = ((nextNumber * 7) % 99) + 1
+		nextNumber += 1
+		numbers[id] = n
+	end
+	return n
+end
+
+-- Stores the character's own clothes the first time it is dressed.
+local function remember(model: Model)
+	if model:FindFirstChild("UBOwnClothes") then
+		return
+	end
+	local store = Instance.new("Folder")
+	store.Name = "UBOwnClothes"
+	for _, c in model:GetChildren() do
+		if c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") then
+			(c :: Instance).Parent = store
+		end
+	end
+	local bc = model:FindFirstChildOfClass("BodyColors")
+	if bc then
+		bc:Clone().Parent = store
+	end
+	store.Parent = model
+end
+
+local function clearKit(model: Model)
+	for _, c in model:GetChildren() do
+		if c:GetAttribute("UBKit") == true then
+			c:Destroy()
+		end
+	end
+	for _, part in model:GetChildren() do
+		local n = part:FindFirstChild("UBNumber")
+		if n then
+			n:Destroy()
+		end
+	end
+end
+
+local function restore(model: Model)
+	clearKit(model)
+	local store = model:FindFirstChild("UBOwnClothes")
+	if not store then
+		return
+	end
+	local bc = model:FindFirstChildOfClass("BodyColors")
+	for _, c in store:GetChildren() do
+		if c:IsA("BodyColors") then
+			if bc then
+				bc:Destroy()
+			end
+			c:Clone().Parent = model
+		else
+			c:Clone().Parent = model
+		end
+	end
+	store:Destroy()
+end
+
+local function setPartColors(model: Model, names: { string }, color: Color3)
+	for _, n in names do
+		local p = model:FindFirstChild(n)
+		if p and p:IsA("BasePart") then
+			p.Color = color
+		end
+	end
+end
+
+local function addNumber(model: Model, n: number, color: Color3)
+	local torso = model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
+	if not torso or not torso:IsA("BasePart") then
+		return
+	end
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "UBNumber"
+	gui.Face = Enum.NormalId.Back
+	gui.CanvasSize = Vector2.new(200, 200)
+	gui.LightInfluence = 0.6
+	gui.Parent = torso
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Text = tostring(n)
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBlack
+	label.TextColor3 = color
+	label.TextStrokeTransparency = 0.4
+	label.Parent = gui
+end
+
+-- Dresses `model` for `team` ("A" / "B"), or gives back its own clothes.
+function JerseyService.dress(model: Model, team: string?, actorId: number)
+	local kit = if team == "A" then TeamsConfig.A elseif team == "B" then TeamsConfig.B else nil
+	if not kit then
+		restore(model)
+		return
+	end
+	remember(model)
+	clearKit(model)
+	for _, c in model:GetChildren() do
+		if c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") then
+			c:Destroy()
+		end
+	end
+	local k = kit :: any
+	if k.Shirt ~= "" then
+		local s = Instance.new("Shirt")
+		s.ShirtTemplate = "rbxassetid://" .. k.Shirt
+		s:SetAttribute("UBKit", true)
+		s.Parent = model
+	end
+	if k.Pants ~= "" then
+		local p = Instance.new("Pants")
+		p.PantsTemplate = "rbxassetid://" .. k.Pants
+		p:SetAttribute("UBKit", true)
+		p.Parent = model
+	end
+	-- body colours: the jersey colour shows where the template is missing
+	if k.Shirt == "" then
+		setPartColors(model, TORSO, kit.Color)
+		setPartColors(model, ARMS, kit.Color)
+	end
+	if k.Pants == "" then
+		setPartColors(model, LEGS, kit.Dark or kit.Color)
+	end
+	addNumber(model, numberFor(actorId), Color3.new(1, 1, 1))
+end
+
+local function watch(actor: any, model: Model)
+	local function apply()
+		local team = model:GetAttribute("UBTeam")
+		JerseyService.dress(model, if type(team) == "string" then team else nil, actor.id)
+	end
+	-- clothing loads with the avatar (and the standard-body pass re-applies
+	-- the description): dress after it settles, then on every team change
+	task.delay(1.5, apply)
+	model:GetAttributeChangedSignal("UBTeam"):Connect(apply)
+	-- an avatar (re)load that brings its own clothes back gets the kit again
+	model.ChildAdded:Connect(function(c)
+		local team = model:GetAttribute("UBTeam")
+		if
+			(c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic"))
+			and c:GetAttribute("UBKit") ~= true
+			and (team == "A" or team == "B")
+		then
+			task.defer(apply)
+		end
+	end)
+end
+
+function JerseyService.Init(s: any)
+	services = s
+end
+
+function JerseyService.Start()
+	services.PlayerService.CharacterSpawned:Connect(watch)
+	for _, actor in services.PlayerService.all() do
+		if actor.character then
+			watch(actor, actor.character)
+		end
+	end
+	services.PlayerService.ActorRemoving:Connect(function(actor)
+		numbers[actor.id] = nil
+	end)
+end
+
+return JerseyService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="60">
+          <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
 -- LeaderboardService — seasonal ranked leaderboard on an OrderedDataStore.
@@ -18127,7 +18348,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -19906,7 +20127,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21248,7 +21469,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21740,7 +21961,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="63">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22335,7 +22556,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="64">
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">ShopService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22446,7 +22667,7 @@ return ShopService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="65">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22766,7 +22987,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="66">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23258,7 +23479,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="67">
+        <Item class="ModuleScript" referent="68">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -25149,13 +25370,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="68">
+  <Item class="SoundService" referent="69">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="69">
+  <Item class="StarterPlayer" referent="70">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -25168,11 +25389,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="70">
+    <Item class="StarterCharacterScripts" referent="71">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="71">
+      <Item class="LocalScript" referent="72">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -25255,19 +25476,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="72">
+    <Item class="StarterPlayerScripts" referent="73">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="73">
+      <Item class="Folder" referent="74">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="74">
+        <Item class="Folder" referent="75">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">AbilityController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25542,7 +25763,7 @@ return AbilityController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">AnimeFX</string>
               <string name="Source"><![CDATA[--!strict
@@ -26067,7 +26288,7 @@ return AnimeFX
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26207,7 +26428,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26516,7 +26737,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27445,7 +27666,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">CursorController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27566,7 +27787,7 @@ return CursorController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -28432,7 +28653,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29393,7 +29614,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29807,7 +30028,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31192,7 +31413,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31332,7 +31553,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -32557,7 +32778,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -32720,7 +32941,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -32892,7 +33113,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -33040,7 +33261,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33986,7 +34207,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34435,7 +34656,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="92">
+        <Item class="LocalScript" referent="93">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -34490,11 +34711,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="93">
+        <Item class="Folder" referent="94">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="94">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -35538,7 +35759,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">MainMenu</string>
               <string name="Source"><![CDATA[--!strict
@@ -35754,7 +35975,7 @@ return MainMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -37258,7 +37479,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -37544,7 +37765,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -37923,7 +38144,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -38137,7 +38358,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -38458,7 +38679,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -38939,12 +39160,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="102">
+  <Item class="Teams" referent="103">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="103">
+  <Item class="Workspace" referent="104">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>
