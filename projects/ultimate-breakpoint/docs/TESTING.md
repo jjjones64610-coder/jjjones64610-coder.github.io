@@ -123,6 +123,16 @@ the last timed press in ms ("Cut: 34 ms early").
 - [ ] Throwing past bots: stepping out beats the mark more often; bot defenders don't pick off every throw. The preview arc shows most of the flight.
 - [ ] Catching: near-misses on your screen still count.
 
+### 0a++. Round 7 (speed, abilities, combos, anime)
+- [ ] The whole game is quicker: run 30, Burst 40, faster accel and snappier jumps. Nothing feels floaty.
+- [ ] Abilities last: Zone / Sky Walk 8 s, Overdrive 7 s (+6 top speed, Burst never drains), Flash Step blinks 18 studs and surges you forward.
+- [ ] Sky Walk floats (lower gravity) and gives three extra Air Dodges per jump.
+- [ ] Shop sells Magnet Hands (catch reach +2.5 for 8 s) and Tempest Throw (next throw in 10 s is 35 % faster, shows "TEMPEST"). Both have icons.
+- [ ] Every cast plays the power-up: crouch and tremble, then arms flung wide, rings of light, impact frame and a camera punch. Others see the pose and rings too.
+- [ ] Saves: a low layout catch says DIVING SAVE, a catch at the laces says SHOESTRING. Catch in the air and throw before landing: ALLEY-OOP.
+- [ ] Quick passes (released within 2 s of the catch) build a PASS CHAIN xN on the HUD and fill FLOW for both players.
+- [ ] Anime sprint: past run speed the body pitches low with the arms straight back. Catches snap the disc into the chest; throws snap through the follow-through.
+
 ### 0b. Art (Config/Art, ForgeGUI images on Roblox)
 - [ ] The scoreboard bar and the menu buttons show the new art (not stretched badly, text readable on top).
 - [ ] A selected tab, a toggle that is on and the gold Play button still show their colour (the art steps aside for state colours).

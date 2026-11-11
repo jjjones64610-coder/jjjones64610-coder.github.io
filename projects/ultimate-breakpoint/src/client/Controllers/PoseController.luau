@@ -144,8 +144,8 @@ local SHUFFLE_STRIDE = 2.2 -- studs per step of the mark shuffle
 local SHUFFLE_MAX_CADENCE = 3 -- gait cycles per second at most
 local SHUFFLE_LIFT = 0.3
 
-local NINJA_FROM = 28 -- studs/s: the anime sprint starts past a run's top speed
-local NINJA_FULL = 36
+local NINJA_FROM = 31 -- studs/s: the anime sprint starts past a run's top speed
+local NINJA_FULL = 40
 local CAST_TIME = 0.6 -- s of the ability cast pose
 
 local function now(): number

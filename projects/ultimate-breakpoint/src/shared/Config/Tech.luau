@@ -20,9 +20,9 @@ Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 Tech.BOTS_USE_TECH = true
 
 -- running
-Tech.RUN_TOP_SPEED = 27 -- (spec 22; faster after playtests)
-Tech.RUN_ACCEL = 85
-Tech.GROUND_FRICTION = 70 -- no input (and HoldingDisc / Downed)
+Tech.RUN_TOP_SPEED = 30 -- (spec 22; faster after playtests)
+Tech.RUN_ACCEL = 105
+Tech.GROUND_FRICTION = 85 -- no input (and HoldingDisc / Downed)
 Tech.OVERSPEED_DECAY_GROUND = 15
 Tech.OVERSPEED_DECAY_AIR = 4
 Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
@@ -41,7 +41,7 @@ Tech.TURN_DRIFT_LOSS = 0.12
 Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
-Tech.PLAYER_GRAVITY = 155
+Tech.PLAYER_GRAVITY = 175
 Tech.FALL_GRAVITY_MULT = 1.3
 
 -- ground contact (controller, not in the spec table)
@@ -51,10 +51,10 @@ Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
 -- burst
-Tech.BURST_TOP_SPEED = 36
-Tech.BURST_ACCEL = 110
+Tech.BURST_TOP_SPEED = 40
+Tech.BURST_ACCEL = 135
 Tech.BURST_DRAIN = 30
-Tech.BURST_REFILL = 15
+Tech.BURST_REFILL = 20
 Tech.BURST_LOCK_UNTIL = 20
 Tech.PERFECT_BURST_REFUND = 10
 Tech.BURST_KICK = 6
@@ -99,10 +99,10 @@ Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
 Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
 
 -- air tech
-Tech.JUMP_TAP = 37
-Tech.JUMP_FULL = 50
+Tech.JUMP_TAP = 40
+Tech.JUMP_FULL = 54
 Tech.JUMP_HOLD = 0.2 -- s of hold that adds up to a full jump
-Tech.AIR_ACCEL = 20
+Tech.AIR_ACCEL = 26
 Tech.AIR_TURN = 90 -- °/s
 Tech.AIR_DODGE_NEUTRAL = 20
 Tech.FAST_FALL_MULT = 2.2
@@ -208,8 +208,8 @@ Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
-Tech.MARK_SPEED = 18 -- studs/s: the mark shuffle (spec 30: 14)
-Tech.MARK_ACCEL = 140 -- studs/s²: it starts and stops on a dime
+Tech.MARK_SPEED = 20 -- studs/s: the mark shuffle (spec 30: 14)
+Tech.MARK_ACCEL = 160 -- studs/s²: it starts and stops on a dime
 Tech.MIRROR_RANGE = 8 -- studs: only the opponent you're closest to within this
 Tech.MIRROR_BONUS = 2
 Tech.JUKED_LOSS = 0.30

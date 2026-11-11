@@ -394,10 +394,14 @@ test("burst: hold for 30 top speed, drains, refills, locks at 0", function()
 	worldRun(w, 1)
 	expect(TechCore.flatSpeed(w.s) <= Config.RUN_TOP_SPEED + 0.5, "locked: back to run speed")
 	w.held.Burst = false
-	worldRun(w, 1)
+	local unlockAt = Config.BURST_LOCK_UNTIL / Config.BURST_REFILL
+	worldRun(w, unlockAt - 0.15)
 	expect(w.s.burstLocked, "still locked under 20")
-	worldRun(w, 0.5)
-	expect(not w.s.burstLocked and near(w.s.burst, Config.BURST_REFILL * 1.5, 1), "unlocked: " .. w.s.burst)
+	worldRun(w, 0.4)
+	expect(
+		not w.s.burstLocked and near(w.s.burst, Config.BURST_REFILL * (unlockAt + 0.25), 1),
+		"unlocked: " .. w.s.burst
+	)
 end)
 
 test("burst kick: a tap adds 6 now, costs 15, has a cooldown", function()
