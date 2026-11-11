@@ -11,7 +11,7 @@ local Teams = {
 		-- ForgeGUI-made classic clothing templates (Image ids); empty = the
 		-- jersey is drawn with body colours instead
 		Shirt = "100918681985769", -- ForgeGUI: TIDE jersey
-		Pants = "",
+		Pants = "119376365144429", -- ForgeGUI: TIDE shorts
 	},
 	B = {
 		Name = "BLAZE",
@@ -19,7 +19,7 @@ local Teams = {
 		Dark = Color3.fromRGB(120, 50, 10),
 		BrickColor = BrickColor.new("Neon orange"),
 		Shirt = "98553561031499", -- ForgeGUI: BLAZE jersey
-		Pants = "",
+		Pants = "132446203367408", -- ForgeGUI: BLAZE shorts
 	},
 	Neutral = {
 		Name = "SIDELINE",
