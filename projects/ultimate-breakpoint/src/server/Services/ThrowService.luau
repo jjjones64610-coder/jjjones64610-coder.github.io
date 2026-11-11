@@ -55,6 +55,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
 local ThrowModel = require(Shared.Disc.ThrowModel)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local Net = require(Shared.Net)
@@ -296,6 +297,16 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	if not bot then
 		local started = chargeStart[actorId]
 		local measured = if started then clock - started else 0
+		-- Hot Hands: right after a catch the release skips the charge
+		-- (docs/tech-spec.md 28), up to HOT_HANDS_POWER of a full charge
+		local track = services.MovementService.track(actorId)
+		local hot = track ~= nil
+			and os.clock() - track.lastCatchClock <= TechConfig.HOT_HANDS_TIME + 0.35
+			and measured < 0.25
+		local hotHold = DiscConfig.Throw.ChargeTime * TechConfig.HOT_HANDS_POWER
+		if hot and p.holdTime > measured and p.holdTime <= hotHold + 0.01 then
+			measured = p.holdTime
+		end
 		if math.abs(measured - p.holdTime) > 0.2 then
 			p.holdTime = measured
 		end

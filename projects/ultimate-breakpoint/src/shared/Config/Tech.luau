@@ -141,7 +141,12 @@ Tech.SKY_HEIGHT = 1.6
 Tech.SKY_HEIGHT_PERFECT = 1.7
 Tech.SKY_REACH = 1 -- studs of extra reach on a Perfect Sky
 
--- catching (later step: 6)
+-- catching
+Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
+Tech.CATCH_LAG_ALLOWANCE = 100 -- ms the server adds (plus ping)
+Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
+Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
+Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
 Tech.CATCH_WINDOW = 150 -- ± ms
 Tech.CATCH_PERFECT = 40 -- ± ms

@@ -2108,6 +2108,7 @@ local Movement = {
 		Break = 250,
 		TipReset = 220,
 		-- tech engine (Movement/TechCore)
+		PerfectCatch = 150,
 		Cut = 100,
 		Juke = 130,
 		PlantStop = 110,
@@ -2156,6 +2157,7 @@ local Movement = {
 		TechRoll = "Tech Roll",
 		Sky = "Sky",
 		Plant = "Plant",
+		PerfectCatch = "Perfect Catch",
 		Layout = "Layout",
 		Signature = "Signature",
 	},
@@ -2186,6 +2188,7 @@ Movement.TechCosts = {
 	TipReset = 0,
 	-- tech engine
 	Plant = 0,
+	PerfectCatch = 0,
 	Cut = 0,
 	Juke = 0,
 	PlantStop = 0,
@@ -2221,6 +2224,7 @@ Movement.TechCooldowns = {
 	TipReset = Movement.Reset.TipCooldown,
 	-- tech engine
 	Plant = 0,
+	PerfectCatch = 0,
 	Cut = Tech.CUT_COOLDOWN,
 	Juke = Tech.CUT_COOLDOWN,
 	PlantStop = 0,
@@ -2827,7 +2831,12 @@ Tech.SKY_HEIGHT = 1.6
 Tech.SKY_HEIGHT_PERFECT = 1.7
 Tech.SKY_REACH = 1 -- studs of extra reach on a Perfect Sky
 
--- catching (later step: 6)
+-- catching
+Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
+Tech.CATCH_LAG_ALLOWANCE = 100 -- ms the server adds (plus ping)
+Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
+Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
+Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
 Tech.CATCH_WINDOW = 150 -- ± ms
 Tech.CATCH_PERFECT = 40 -- ± ms
@@ -15167,6 +15176,14 @@ return BotService
 	the touch instead of rewinding. The disc stays live; the toucher may not
 	re-claim it for a moment.
 
+	Timed catch (docs/tech-spec.md 17; TechConfig.TIMED_CATCH): a human's
+	catch claim carries the time they pressed Catch. A press within
+	CATCH_WINDOW (+ CATCH_LAG_ALLOWANCE + ping) of the disc's closest
+	approach catches; no press, or one outside the window, turns the catch
+	into a Bobble that the same player may re-catch with a timed press. A
+	second untimed touch within UNTIMED_RETRY is not a claim at all: the
+	disc drops. Bots catch on contact as before.
+
 	Tips (the Tip Reset): an airborne player presses Secondary as the disc
 	passes their hands; the client sends a claim of kind "Tip" with the press
 	time. The server judges it on the disc's closest pass within
@@ -15317,7 +15334,8 @@ local function addClaim(
 	ev: CatchGeometry.Evaluation,
 	discVel: Vector3,
 	body: Vector3,
-	tip: boolean?
+	tip: boolean?,
+	untimed: boolean?
 )
 	local discPos = services.DiscService.positionAt(d, t)
 	for _, c in d.claims do
@@ -15325,6 +15343,9 @@ local function addClaim(
 			if tip then
 				-- the player chose to tip: that intent wins over a catch claim
 				c.tip = true
+			end
+			if not untimed then
+				c.untimed = false -- any timed press of the touch counts
 			end
 			-- a repeated claim: the earliest touch orders it, the deepest
 			-- point of either window is its quality
@@ -15352,6 +15373,7 @@ local function addClaim(
 		discPos = discPos,
 		body = body,
 		tip = tip == true,
+		untimed = untimed == true,
 	})
 	if d.resolveAt == nil then
 		d.resolveAt = now() + C.ResolveDelay
@@ -15368,7 +15390,8 @@ function CatchingService.claim(
 	_kind: string?,
 	reachDir: Vector3?,
 	clientRoot: any?,
-	clientVel: any?
+	clientVel: any?,
+	pressT: any?
 ): boolean
 	local actor = services.PlayerService.get(actorId)
 	if not actor or actor.role == "Spectate" or actor.role == "Bench" then
@@ -15444,7 +15467,17 @@ function CatchingService.claim(
 	if not ev then
 		return false
 	end
-	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body)
+	local untimed = false
+	if TechConfig.TIMED_CATCH and not actor.isBot then
+		local closest = ev.t or t
+		local allow = TechConfig.CATCH_WINDOW / 1000 + TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
+		untimed = not (type(pressT) == "number" and pressT == pressT and math.abs(pressT - closest) <= allow)
+		local last = d.untimedAt and d.untimedAt[actorId]
+		if untimed and last and tNow - last < TechConfig.UNTIMED_RETRY then
+			return false -- the second miss: let it drop
+		end
+	end
+	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body, nil, untimed)
 	return true
 end
 
@@ -15539,6 +15572,13 @@ function CatchingService.resolve(d: any)
 	local discVel: Vector3 = w.discVel or services.DiscService.velocity(d)
 	local isDefender = d.throwerTeam ~= nil and d.throwerTeam ~= "" and w.team ~= d.throwerTeam and not d.pull
 	local outcome = if w.tip then "Tip" else CatchGeometry.outcome(resolution, isDefender)
+	local untimedBobble = outcome == "Catch" and w.untimed == true
+	if untimedBobble then
+		-- no timed Catch press: it pops out of the hands (one re-catch allowed)
+		outcome = "Bobble"
+		d.untimedAt = d.untimedAt or {}
+		d.untimedAt[w.id] = now()
+	end
 
 	notifyClaimers(d, w.id, outcome)
 	local claims = d.claims
@@ -15601,7 +15641,9 @@ function CatchingService.resolve(d: any)
 		newVel = discVel * C.BobbleCarry + Vector3.new(0, C.BobbleUp, 0) + away * (2 * tempo)
 	end
 	local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
-	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12 * tempo, w.t, w.id)
+	-- an untimed bobble stays catchable by the same hands (the re-press)
+	local toucher = if untimedBobble then nil else w.id
+	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12 * tempo, w.t, toucher)
 	Net.event("Effect"):FireAllClients(outcome, discPos, w.id, w.quality, w.zone)
 	d.handler.onTouched(
 		d,
@@ -15649,7 +15691,7 @@ function CatchingService.Start()
 			CatchingService.reach(actor.id, v)
 		end
 	end)
-	Net.event("Catch").OnServerEvent:Connect(function(player, discId, t, kind, reachDir, rootPos, rootVel)
+	Net.event("Catch").OnServerEvent:Connect(function(player, discId, t, kind, reachDir, rootPos, rootVel, pressT)
 		local actor = services.PlayerService.fromPlayer(player)
 		if not actor or type(discId) ~= "string" then
 			return
@@ -15675,7 +15717,8 @@ function CatchingService.Start()
 			if type(kind) == "string" then kind else nil,
 			finiteVec(reachDir),
 			rootPos,
-			rootVel
+			rootVel,
+			pressT
 		)
 		if not ok then
 			deny()
@@ -19120,6 +19163,7 @@ export type Track = {
 	airRedirects: number,
 	airLayouts: number,
 	airResets: number, -- accepted Tip Resets + Wall Rebounds
+	lastCatchClock: number, -- os.clock() of the last catch given to this actor
 	airTips: number,
 	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
 	lastLandAt: number, -- ... and of the last airborne -> grounded one
@@ -19245,6 +19289,7 @@ local function newTrack(id: number, pos: Vector3): Track
 		airRedirects = 0,
 		airLayouts = 0,
 		airResets = 0,
+		lastCatchClock = -math.huge,
 		airTips = 0,
 		lastTakeoffAt = -math.huge,
 		lastLandAt = -math.huge,
@@ -19765,7 +19810,13 @@ end
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
 local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
-	if tech == "TipReset" then
+	if tech == "PerfectCatch" then
+		-- only a catch the server just gave this player
+		if os.clock() - t.lastCatchClock > 1.5 then
+			return nil
+		end
+		return quality
+	elseif tech == "TipReset" then
 		-- only right after a tip the server is resolving (or resolved)
 		if t.airTips >= RS.MaxTipsPerAir or not services.CatchingService.recentTip(t.id, ts, 0.4) then
 			return nil
@@ -20115,6 +20166,7 @@ function MovementService.noteCatch(id: number, discId: string, interception: boo
 	if not t then
 		return
 	end
+	t.lastCatchClock = os.clock()
 	-- in the air at the catch time? (the answer comes a round trip after
 	-- the catch, often after the landing was reported)
 	local tookOff = t.lastTakeoffAt <= at + 0.05
@@ -21587,6 +21639,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
 local ThrowModel = require(Shared.Disc.ThrowModel)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local Net = require(Shared.Net)
@@ -21828,6 +21881,16 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	if not bot then
 		local started = chargeStart[actorId]
 		local measured = if started then clock - started else 0
+		-- Hot Hands: right after a catch the release skips the charge
+		-- (docs/tech-spec.md 28), up to HOT_HANDS_POWER of a full charge
+		local track = services.MovementService.track(actorId)
+		local hot = track ~= nil
+			and os.clock() - track.lastCatchClock <= TechConfig.HOT_HANDS_TIME + 0.35
+			and measured < 0.25
+		local hotHold = DiscConfig.Throw.ChargeTime * TechConfig.HOT_HANDS_POWER
+		if hot and p.holdTime > measured and p.holdTime <= hotHold + 0.01 then
+			measured = p.holdTime
+		end
 		if math.abs(measured - p.holdTime) > 0.2 then
 			p.holdTime = measured
 		end
@@ -25007,6 +25070,16 @@ return CameraController
 	everyone (a Denied tip just eases the disc back onto its flight). A press
 	with no disc close enough says so.
 
+	Timed catch (TechConfig.TIMED_CATCH): Catch is Primary. A claim carries
+	the time you pressed it. At the closest approach with no press yet, the
+	claim waits up to CATCH_WINDOW for a late press. Only a press inside the
+	window predicts the catch (slow-down, disc in hand); otherwise the claim
+	still goes out and the server bobbles it (you get one re-press). The
+	grade (Perfect within ±40 ms) goes to the debug readout; a confirmed
+	Perfect Catch refunds Burst, scores a PerfectCatch and opens Hot Hands
+	(hotHands()) for HOT_HANDS_TIME. The catch ring (DiscRenderer-free, a
+	ring on the disc) closes as the disc nears your hands.
+
 	Marking: hold Secondary within Marking.Range of an opposing holder (their
 	pivot) for the mark shuffle (MovementController.setMarking) with your
 	hands up, replicated as MarkStance(on, stance). The Slide key toggles High
@@ -25021,6 +25094,8 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
+local TechCore = require(Shared.Movement.TechCore)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
@@ -25077,9 +25152,20 @@ type Contact = {
 	sentAt: number, -- os.clock() of the last claim
 	fxDone: boolean, -- local catch feedback already played for this segment
 	settled: boolean, -- the server decided this segment (caught / lost): no more claims
+	closestT: number?, -- timed catch: when the disc was closest (claim held for a late press)
+	grade: string?, -- the timed grade of the claim that went out
 }
 local contacts: { [string]: Contact } = {}
 local lastLocalFx = -math.huge -- os.clock() of the last local catch feedback
+local catchPressAt = -math.huge -- Net.now() of the last Catch press
+local grades: { [string]: string } = {} -- disc id -> grade of our pending claim
+local hotHandsUntil = -math.huge -- os.clock()
+local CATCH_W = TechConfig.CATCH_WINDOW / 1000
+
+-- Open for HOT_HANDS_TIME after a confirmed Perfect Catch (ThrowController).
+function CatchController.hotHands(): boolean
+	return os.clock() < hotHandsUntil
+end
 
 local function now(): number
 	return Net.now()
@@ -25513,7 +25599,30 @@ local function sendClaim(folder: Configuration, id: string, c: Contact, discPos:
 	c.sentAt = os.clock()
 	c.awaiting = true
 	c.retry = false
-	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel)
+	local pressT: number? = nil
+	if TechConfig.TIMED_CATCH then
+		local closest = c.closestT or now()
+		local offset = catchPressAt - closest
+		local tech = controllers.MovementController.techState()
+		if math.abs(offset) <= CATCH_W then
+			pressT = catchPressAt
+			local timing =
+				TechCore.noteTiming(tech, "Catch", offset * 1000, TechConfig.CATCH_WINDOW, TechConfig.CATCH_PERFECT)
+			c.grade = timing.quality
+		else
+			c.grade = "Miss"
+			if catchPressAt > closest - 1 then
+				TechCore.noteTiming(tech, "Catch", offset * 1000, TechConfig.CATCH_WINDOW, TechConfig.CATCH_PERFECT)
+			end
+		end
+		grades[id] = c.grade :: string
+		c.closestT = nil
+	end
+	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel, pressT)
+	if TechConfig.TIMED_CATCH and pressT == nil then
+		-- no timed press: the server will bobble it, so predict nothing
+		return
+	end
 	if likelyBlock(folder, c) then
 		-- a rim touch on defense is a Block: no predicted catch (no slow-down,
 		-- no disc in the hand); an interception after all is confirmed by
@@ -25594,10 +25703,103 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 	local tracked = tNow - tFirst >= C.ClaimTrackTime
 	c.lastDepth = if ev then ev.depth else 1
 	if (c.retry or receding or tracked) and clock - c.sentAt >= C.ClaimThrottle then
+		if TechConfig.TIMED_CATCH then
+			-- hold the claim at the closest approach for a late press
+			if c.closestT == nil then
+				c.closestT = tNow
+			end
+			local closest = c.closestT :: number
+			if catchPressAt < closest - CATCH_W and tNow < closest + CATCH_W then
+				return
+			end
+		end
 		sendClaim(folder, id, c, p)
 		if ev == nil then
 			c.tFirst = nil -- the disc has left the zones; a new touch is a new episode
 		end
+	end
+end
+
+-- The catch ring: a circle on the disc that closes as its closest approach
+-- to your hands nears, gold inside the Perfect window (timed catch only).
+local ring: Frame? = nil
+local RING_LOOK = 0.6 -- s ahead the ring watches
+local RING_MISS = 4 -- studs: only discs passing this close to your hands
+
+local function ensureRing(): Frame
+	local r = ring
+	if r and r.Parent then
+		return r
+	end
+	local g = Instance.new("ScreenGui")
+	g.Name = "UBCatchRing"
+	g.IgnoreGuiInset = true
+	g.ResetOnSpawn = false
+	g.Parent = player:WaitForChild("PlayerGui")
+	local f = Instance.new("Frame")
+	f.Name = "Ring"
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.BackgroundTransparency = 1
+	f.Visible = false
+	f.Parent = g
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = f
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 3
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Parent = f
+	ring = f
+	return f
+end
+
+local function updateRing(root: BasePart, tNow: number)
+	if not TechConfig.TIMED_CATCH then
+		return
+	end
+	local f = ensureRing()
+	local hands = root.Position + Vector3.new(0, C.ShoulderHeight, 0)
+	local bestT, bestPos = math.huge, nil :: Vector3?
+	for _, folder in controllers.DiscRenderer.folders() do
+		local id = folder:GetAttribute("Id")
+		if type(id) == "string" and folder:GetAttribute("Mode") == "Flight" then
+			local sim, launchTime, _, _, landed = controllers.DiscRenderer.flight(id)
+			if sim and not landed then
+				local minD, minT = math.huge, 0
+				for i = 0, 12 do
+					local dt = RING_LOOK * i / 12
+					local x, y, z = DiscPhysics.positionAt(sim, tNow + dt - launchTime)
+					local d = (Vector3.new(x, y, z) - hands).Magnitude
+					if d < minD then
+						minD, minT = d, dt
+					end
+				end
+				if minD < RING_MISS and minT > 0 and minT < bestT then
+					local x, y, z = DiscPhysics.positionAt(sim, tNow - launchTime)
+					bestT, bestPos = minT, Vector3.new(x, y, z)
+				end
+			end
+		end
+	end
+	local cam = workspace.CurrentCamera
+	if not bestPos or not cam or controllers.ThrowController.isHolding() then
+		f.Visible = false
+		return
+	end
+	local sp, onScreen = cam:WorldToViewportPoint(bestPos)
+	if not onScreen then
+		f.Visible = false
+		return
+	end
+	local size = 24 + 150 * math.clamp(bestT / RING_LOOK, 0, 1)
+	f.Visible = true
+	f.Position = UDim2.fromOffset(sp.X, sp.Y)
+	f.Size = UDim2.fromOffset(size, size)
+	local stroke = f:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		local perfect = bestT * 1000 <= TechConfig.CATCH_PERFECT + 25
+		stroke.Color = if perfect then Color3.fromRGB(255, 215, 80) else Color3.new(1, 1, 1)
+		stroke.Transparency = 0.15
 	end
 end
 
@@ -25607,6 +25809,7 @@ local function step()
 		return
 	end
 	updateMarking()
+	updateRing(root, now())
 	if controllers.ThrowController.isHolding() then
 		table.clear(contacts)
 		return
@@ -25650,10 +25853,22 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			c.settled = true -- caught, or someone else won it
 		end
 	end
+	local grade = grades[discId]
+	grades[discId] = nil
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
+		if result == "Bobble" and TechConfig.TIMED_CATCH then
+			controllers.TechFeedback.play("Bobble", "Miss")
+		end
 	else
+		if grade == "Perfect" then
+			-- Perfect Catch: Burst back, a scored tech, and Hot Hands
+			hotHandsUntil = os.clock() + TechConfig.HOT_HANDS_TIME
+			TechCore.addBurst(controllers.MovementController.techState(), TechConfig.PERFECT_BURST_REFUND)
+			controllers.TechFeedback.play("Perfect Catch", "Perfect")
+			controllers.MovementController.addTech("PerfectCatch", "Perfect", Vector3.zero)
+		end
 		local folder = controllers.DiscRenderer.folderOf(discId)
 		local me = player.Character
 		local throwerTeam = folder and folder:GetAttribute("ThrowerTeam")
@@ -25677,6 +25892,7 @@ function CatchController.Start()
 			return
 		end
 		if action == "Primary" then
+			catchPressAt = now()
 			if not requestPickup() then
 				CatchController.reach()
 			end
@@ -30650,6 +30866,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local ThrowModel = require(Shared.Disc.ThrowModel)
@@ -31298,6 +31515,12 @@ local function beginCharge()
 	state.charging = true
 	state.chargeStart = os.clock()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
+	if controllers.CatchController.hotHands() then
+		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once
+		state.chargeStart = os.clock() - T.ChargeTime * TechConfig.HOT_HANDS_POWER
+		controllers.TechFeedback.play("Hot Hands", "Perfect")
+		release()
+	end
 end
 
 local function step()

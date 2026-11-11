@@ -53,6 +53,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local ThrowModel = require(Shared.Disc.ThrowModel)
@@ -701,6 +702,12 @@ local function beginCharge()
 	state.charging = true
 	state.chargeStart = os.clock()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
+	if controllers.CatchController.hotHands() then
+		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once
+		state.chargeStart = os.clock() - T.ChargeTime * TechConfig.HOT_HANDS_POWER
+		controllers.TechFeedback.play("Hot Hands", "Perfect")
+		release()
+	end
 end
 
 local function step()

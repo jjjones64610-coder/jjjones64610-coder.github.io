@@ -119,6 +119,7 @@ export type Track = {
 	airRedirects: number,
 	airLayouts: number,
 	airResets: number, -- accepted Tip Resets + Wall Rebounds
+	lastCatchClock: number, -- os.clock() of the last catch given to this actor
 	airTips: number,
 	lastTakeoffAt: number, -- client time (arrival - ping) of the last grounded -> airborne mode change
 	lastLandAt: number, -- ... and of the last airborne -> grounded one
@@ -244,6 +245,7 @@ local function newTrack(id: number, pos: Vector3): Track
 		airRedirects = 0,
 		airLayouts = 0,
 		airResets = 0,
+		lastCatchClock = -math.huge,
 		airTips = 0,
 		lastTakeoffAt = -math.huge,
 		lastLandAt = -math.huge,
@@ -764,7 +766,13 @@ end
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
 local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
-	if tech == "TipReset" then
+	if tech == "PerfectCatch" then
+		-- only a catch the server just gave this player
+		if os.clock() - t.lastCatchClock > 1.5 then
+			return nil
+		end
+		return quality
+	elseif tech == "TipReset" then
 		-- only right after a tip the server is resolving (or resolved)
 		if t.airTips >= RS.MaxTipsPerAir or not services.CatchingService.recentTip(t.id, ts, 0.4) then
 			return nil
@@ -1114,6 +1122,7 @@ function MovementService.noteCatch(id: number, discId: string, interception: boo
 	if not t then
 		return
 	end
+	t.lastCatchClock = os.clock()
 	-- in the air at the catch time? (the answer comes a round trip after
 	-- the catch, often after the landing was reported)
 	local tookOff = t.lastTakeoffAt <= at + 0.05

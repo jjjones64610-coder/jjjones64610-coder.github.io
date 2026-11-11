@@ -39,6 +39,16 @@
 	everyone (a Denied tip just eases the disc back onto its flight). A press
 	with no disc close enough says so.
 
+	Timed catch (TechConfig.TIMED_CATCH): Catch is Primary. A claim carries
+	the time you pressed it. At the closest approach with no press yet, the
+	claim waits up to CATCH_WINDOW for a late press. Only a press inside the
+	window predicts the catch (slow-down, disc in hand); otherwise the claim
+	still goes out and the server bobbles it (you get one re-press). The
+	grade (Perfect within ±40 ms) goes to the debug readout; a confirmed
+	Perfect Catch refunds Burst, scores a PerfectCatch and opens Hot Hands
+	(hotHands()) for HOT_HANDS_TIME. The catch ring (DiscRenderer-free, a
+	ring on the disc) closes as the disc nears your hands.
+
 	Marking: hold Secondary within Marking.Range of an opposing holder (their
 	pivot) for the mark shuffle (MovementController.setMarking) with your
 	hands up, replicated as MarkStance(on, stance). The Slide key toggles High
@@ -53,6 +63,8 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
+local TechCore = require(Shared.Movement.TechCore)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
@@ -109,9 +121,20 @@ type Contact = {
 	sentAt: number, -- os.clock() of the last claim
 	fxDone: boolean, -- local catch feedback already played for this segment
 	settled: boolean, -- the server decided this segment (caught / lost): no more claims
+	closestT: number?, -- timed catch: when the disc was closest (claim held for a late press)
+	grade: string?, -- the timed grade of the claim that went out
 }
 local contacts: { [string]: Contact } = {}
 local lastLocalFx = -math.huge -- os.clock() of the last local catch feedback
+local catchPressAt = -math.huge -- Net.now() of the last Catch press
+local grades: { [string]: string } = {} -- disc id -> grade of our pending claim
+local hotHandsUntil = -math.huge -- os.clock()
+local CATCH_W = TechConfig.CATCH_WINDOW / 1000
+
+-- Open for HOT_HANDS_TIME after a confirmed Perfect Catch (ThrowController).
+function CatchController.hotHands(): boolean
+	return os.clock() < hotHandsUntil
+end
 
 local function now(): number
 	return Net.now()
@@ -545,7 +568,30 @@ local function sendClaim(folder: Configuration, id: string, c: Contact, discPos:
 	c.sentAt = os.clock()
 	c.awaiting = true
 	c.retry = false
-	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel)
+	local pressT: number? = nil
+	if TechConfig.TIMED_CATCH then
+		local closest = c.closestT or now()
+		local offset = catchPressAt - closest
+		local tech = controllers.MovementController.techState()
+		if math.abs(offset) <= CATCH_W then
+			pressT = catchPressAt
+			local timing =
+				TechCore.noteTiming(tech, "Catch", offset * 1000, TechConfig.CATCH_WINDOW, TechConfig.CATCH_PERFECT)
+			c.grade = timing.quality
+		else
+			c.grade = "Miss"
+			if catchPressAt > closest - 1 then
+				TechCore.noteTiming(tech, "Catch", offset * 1000, TechConfig.CATCH_WINDOW, TechConfig.CATCH_PERFECT)
+			end
+		end
+		grades[id] = c.grade :: string
+		c.closestT = nil
+	end
+	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel, pressT)
+	if TechConfig.TIMED_CATCH and pressT == nil then
+		-- no timed press: the server will bobble it, so predict nothing
+		return
+	end
 	if likelyBlock(folder, c) then
 		-- a rim touch on defense is a Block: no predicted catch (no slow-down,
 		-- no disc in the hand); an interception after all is confirmed by
@@ -626,10 +672,103 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 	local tracked = tNow - tFirst >= C.ClaimTrackTime
 	c.lastDepth = if ev then ev.depth else 1
 	if (c.retry or receding or tracked) and clock - c.sentAt >= C.ClaimThrottle then
+		if TechConfig.TIMED_CATCH then
+			-- hold the claim at the closest approach for a late press
+			if c.closestT == nil then
+				c.closestT = tNow
+			end
+			local closest = c.closestT :: number
+			if catchPressAt < closest - CATCH_W and tNow < closest + CATCH_W then
+				return
+			end
+		end
 		sendClaim(folder, id, c, p)
 		if ev == nil then
 			c.tFirst = nil -- the disc has left the zones; a new touch is a new episode
 		end
+	end
+end
+
+-- The catch ring: a circle on the disc that closes as its closest approach
+-- to your hands nears, gold inside the Perfect window (timed catch only).
+local ring: Frame? = nil
+local RING_LOOK = 0.6 -- s ahead the ring watches
+local RING_MISS = 4 -- studs: only discs passing this close to your hands
+
+local function ensureRing(): Frame
+	local r = ring
+	if r and r.Parent then
+		return r
+	end
+	local g = Instance.new("ScreenGui")
+	g.Name = "UBCatchRing"
+	g.IgnoreGuiInset = true
+	g.ResetOnSpawn = false
+	g.Parent = player:WaitForChild("PlayerGui")
+	local f = Instance.new("Frame")
+	f.Name = "Ring"
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.BackgroundTransparency = 1
+	f.Visible = false
+	f.Parent = g
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = f
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 3
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Parent = f
+	ring = f
+	return f
+end
+
+local function updateRing(root: BasePart, tNow: number)
+	if not TechConfig.TIMED_CATCH then
+		return
+	end
+	local f = ensureRing()
+	local hands = root.Position + Vector3.new(0, C.ShoulderHeight, 0)
+	local bestT, bestPos = math.huge, nil :: Vector3?
+	for _, folder in controllers.DiscRenderer.folders() do
+		local id = folder:GetAttribute("Id")
+		if type(id) == "string" and folder:GetAttribute("Mode") == "Flight" then
+			local sim, launchTime, _, _, landed = controllers.DiscRenderer.flight(id)
+			if sim and not landed then
+				local minD, minT = math.huge, 0
+				for i = 0, 12 do
+					local dt = RING_LOOK * i / 12
+					local x, y, z = DiscPhysics.positionAt(sim, tNow + dt - launchTime)
+					local d = (Vector3.new(x, y, z) - hands).Magnitude
+					if d < minD then
+						minD, minT = d, dt
+					end
+				end
+				if minD < RING_MISS and minT > 0 and minT < bestT then
+					local x, y, z = DiscPhysics.positionAt(sim, tNow - launchTime)
+					bestT, bestPos = minT, Vector3.new(x, y, z)
+				end
+			end
+		end
+	end
+	local cam = workspace.CurrentCamera
+	if not bestPos or not cam or controllers.ThrowController.isHolding() then
+		f.Visible = false
+		return
+	end
+	local sp, onScreen = cam:WorldToViewportPoint(bestPos)
+	if not onScreen then
+		f.Visible = false
+		return
+	end
+	local size = 24 + 150 * math.clamp(bestT / RING_LOOK, 0, 1)
+	f.Visible = true
+	f.Position = UDim2.fromOffset(sp.X, sp.Y)
+	f.Size = UDim2.fromOffset(size, size)
+	local stroke = f:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		local perfect = bestT * 1000 <= TechConfig.CATCH_PERFECT + 25
+		stroke.Color = if perfect then Color3.fromRGB(255, 215, 80) else Color3.new(1, 1, 1)
+		stroke.Transparency = 0.15
 	end
 end
 
@@ -639,6 +778,7 @@ local function step()
 		return
 	end
 	updateMarking()
+	updateRing(root, now())
 	if controllers.ThrowController.isHolding() then
 		table.clear(contacts)
 		return
@@ -682,10 +822,22 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			c.settled = true -- caught, or someone else won it
 		end
 	end
+	local grade = grades[discId]
+	grades[discId] = nil
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
+		if result == "Bobble" and TechConfig.TIMED_CATCH then
+			controllers.TechFeedback.play("Bobble", "Miss")
+		end
 	else
+		if grade == "Perfect" then
+			-- Perfect Catch: Burst back, a scored tech, and Hot Hands
+			hotHandsUntil = os.clock() + TechConfig.HOT_HANDS_TIME
+			TechCore.addBurst(controllers.MovementController.techState(), TechConfig.PERFECT_BURST_REFUND)
+			controllers.TechFeedback.play("Perfect Catch", "Perfect")
+			controllers.MovementController.addTech("PerfectCatch", "Perfect", Vector3.zero)
+		end
 		local folder = controllers.DiscRenderer.folderOf(discId)
 		local me = player.Character
 		local throwerTeam = folder and folder:GetAttribute("ThrowerTeam")
@@ -709,6 +861,7 @@ function CatchController.Start()
 			return
 		end
 		if action == "Primary" then
+			catchPressAt = now()
 			if not requestPickup() then
 				CatchController.reach()
 			end

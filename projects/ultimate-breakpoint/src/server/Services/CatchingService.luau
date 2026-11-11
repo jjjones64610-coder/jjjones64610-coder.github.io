@@ -34,6 +34,14 @@
 	the touch instead of rewinding. The disc stays live; the toucher may not
 	re-claim it for a moment.
 
+	Timed catch (docs/tech-spec.md 17; TechConfig.TIMED_CATCH): a human's
+	catch claim carries the time they pressed Catch. A press within
+	CATCH_WINDOW (+ CATCH_LAG_ALLOWANCE + ping) of the disc's closest
+	approach catches; no press, or one outside the window, turns the catch
+	into a Bobble that the same player may re-catch with a timed press. A
+	second untimed touch within UNTIMED_RETRY is not a claim at all: the
+	disc drops. Bots catch on contact as before.
+
 	Tips (the Tip Reset): an airborne player presses Secondary as the disc
 	passes their hands; the client sends a claim of kind "Tip" with the press
 	time. The server judges it on the disc's closest pass within
@@ -184,7 +192,8 @@ local function addClaim(
 	ev: CatchGeometry.Evaluation,
 	discVel: Vector3,
 	body: Vector3,
-	tip: boolean?
+	tip: boolean?,
+	untimed: boolean?
 )
 	local discPos = services.DiscService.positionAt(d, t)
 	for _, c in d.claims do
@@ -192,6 +201,9 @@ local function addClaim(
 			if tip then
 				-- the player chose to tip: that intent wins over a catch claim
 				c.tip = true
+			end
+			if not untimed then
+				c.untimed = false -- any timed press of the touch counts
 			end
 			-- a repeated claim: the earliest touch orders it, the deepest
 			-- point of either window is its quality
@@ -219,6 +231,7 @@ local function addClaim(
 		discPos = discPos,
 		body = body,
 		tip = tip == true,
+		untimed = untimed == true,
 	})
 	if d.resolveAt == nil then
 		d.resolveAt = now() + C.ResolveDelay
@@ -235,7 +248,8 @@ function CatchingService.claim(
 	_kind: string?,
 	reachDir: Vector3?,
 	clientRoot: any?,
-	clientVel: any?
+	clientVel: any?,
+	pressT: any?
 ): boolean
 	local actor = services.PlayerService.get(actorId)
 	if not actor or actor.role == "Spectate" or actor.role == "Bench" then
@@ -311,7 +325,17 @@ function CatchingService.claim(
 	if not ev then
 		return false
 	end
-	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body)
+	local untimed = false
+	if TechConfig.TIMED_CATCH and not actor.isBot then
+		local closest = ev.t or t
+		local allow = TechConfig.CATCH_WINDOW / 1000 + TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
+		untimed = not (type(pressT) == "number" and pressT == pressT and math.abs(pressT - closest) <= allow)
+		local last = d.untimedAt and d.untimedAt[actorId]
+		if untimed and last and tNow - last < TechConfig.UNTIMED_RETRY then
+			return false -- the second miss: let it drop
+		end
+	end
+	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body, nil, untimed)
 	return true
 end
 
@@ -406,6 +430,13 @@ function CatchingService.resolve(d: any)
 	local discVel: Vector3 = w.discVel or services.DiscService.velocity(d)
 	local isDefender = d.throwerTeam ~= nil and d.throwerTeam ~= "" and w.team ~= d.throwerTeam and not d.pull
 	local outcome = if w.tip then "Tip" else CatchGeometry.outcome(resolution, isDefender)
+	local untimedBobble = outcome == "Catch" and w.untimed == true
+	if untimedBobble then
+		-- no timed Catch press: it pops out of the hands (one re-catch allowed)
+		outcome = "Bobble"
+		d.untimedAt = d.untimedAt or {}
+		d.untimedAt[w.id] = now()
+	end
 
 	notifyClaimers(d, w.id, outcome)
 	local claims = d.claims
@@ -468,7 +499,9 @@ function CatchingService.resolve(d: any)
 		newVel = discVel * C.BobbleCarry + Vector3.new(0, C.BobbleUp, 0) + away * (2 * tempo)
 	end
 	local pos = Vector3.new(discPos.X, math.max(discPos.Y, d.groundY + 0.6), discPos.Z)
-	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12 * tempo, w.t, w.id)
+	-- an untimed bobble stays catchable by the same hands (the re-press)
+	local toucher = if untimedBobble then nil else w.id
+	services.DiscService.deflect(d, pos, newVel, Vector3.new(0.3, 1, 0.2).Unit, 12 * tempo, w.t, toucher)
 	Net.event("Effect"):FireAllClients(outcome, discPos, w.id, w.quality, w.zone)
 	d.handler.onTouched(
 		d,
@@ -516,7 +549,7 @@ function CatchingService.Start()
 			CatchingService.reach(actor.id, v)
 		end
 	end)
-	Net.event("Catch").OnServerEvent:Connect(function(player, discId, t, kind, reachDir, rootPos, rootVel)
+	Net.event("Catch").OnServerEvent:Connect(function(player, discId, t, kind, reachDir, rootPos, rootVel, pressT)
 		local actor = services.PlayerService.fromPlayer(player)
 		if not actor or type(discId) ~= "string" then
 			return
@@ -542,7 +575,8 @@ function CatchingService.Start()
 			if type(kind) == "string" then kind else nil,
 			finiteVec(reachDir),
 			rootPos,
-			rootVel
+			rootVel,
+			pressT
 		)
 		if not ok then
 			deny()
