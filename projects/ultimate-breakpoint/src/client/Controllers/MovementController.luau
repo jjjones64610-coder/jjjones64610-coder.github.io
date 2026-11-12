@@ -717,8 +717,18 @@ local function techEvent(e: TechCore.TechEvent)
 		controllers.AudioController.play(if e.quality == "Perfect" then "CutPerfect" else "CutClean", 0.08)
 	elseif e.tech == "Juke" then
 		controllers.AudioController.play("CutClean", 0.08, 1.15)
+	elseif e.tech == "Jump" or e.tech == "SlideHop" then
+		controllers.AudioController.play("JumpOff", 0.1)
+	elseif e.tech == "Layout" then
+		controllers.AudioController.play("DiveLaunch", 0.06)
+	elseif e.tech == "TechRoll" then
+		controllers.AudioController.play("TechRoll", 0.05, if e.quality == "Perfect" then 1.08 else 1)
+	elseif e.tech == "Wavedash" then
+		controllers.AudioController.play("WavedashSlide", 0.05)
 	elseif e.tech == "Skid" then
 		controllers.AudioController.play("Skid", 0.06)
+		-- a miss scores nothing, but your own body still poses the skid
+		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = now(), dir = e.dir, chain = false })
 	end
 	if e.quality == "Miss" then
 		return
@@ -987,7 +997,11 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 		c:SetAttribute("UB_Air", air)
 	end
 	if report.landed then
-		MovementController.Landed:Fire(false, report.landingSpeed)
+		local fromDive = tech.state == "Downed"
+		if fromDive then
+			controllers.AudioController.play("DiveLand", 0.06)
+		end
+		MovementController.Landed:Fire(fromDive, report.landingSpeed)
 		feedSignatures({ kind = "Land", t = now() })
 	end
 

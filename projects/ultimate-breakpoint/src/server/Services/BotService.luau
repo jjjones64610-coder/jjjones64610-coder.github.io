@@ -524,9 +524,10 @@ end
 -- A press on the tech engine. Bots only get the inputs players have
 -- (docs/CORE_DESIGN.md): Burst is a short hold, a Cut on the ground is the
 -- player's gesture (let go of the stick, then the brain's new direction;
--- better bots time the let-go closer to Perfect), a Cut in the air is an air
--- dodge, and there is no Slide (skids come from hard turns).
-local function techPress(b: Bot, action: string)
+-- better bots time the let-go closer to Perfect), there is no Slide (skids
+-- come from hard turns), and a Dive is what a player does: Space, then Space
+-- again in the air with the direction held (a Cut in the air is that too).
+local function techPress(b: Bot, action: string, dir: Vector3?)
 	local tech = b.tech
 	local t = now()
 	if action == "Burst" then
@@ -539,12 +540,18 @@ local function techPress(b: Bot, action: string)
 		b.releaseUntil = t + math.clamp(mid + miss, 0.02, TechConfig.CUT_RELEASE_MAX)
 		return
 	elseif action == "Cut" then
-		action = "Jump" -- air redirect -> air dodge
+		action = "Jump" -- in the air: the air action toward the stick
 	elseif action == "Slide" then
 		return
+	elseif action == "Dive" then
+		if tech.grounded then
+			-- jump now, dive a beat later (better bots dive lower and later)
+			b.jumpUntil = t + 0.05
+			press(b, "Jump", dir, 0.12 + 0.08 * b.skill)
+		end
+		action = "Jump"
 	elseif action == "Jump" then
-		local slow = TechCore.flatSpeed(tech) <= TechConfig.SKY_MAX_SPEED
-		b.jumpUntil = t + (if slow and b.rng:next() < b.skill then TechConfig.SKY_PERFECT[1] + 0.02 else 0.15)
+		b.jumpUntil = t + 0.15
 	end
 	TechCore.press(tech, action)
 end
@@ -814,7 +821,7 @@ local function runPresses(b: Bot, input: MovementSim.Input, env: MovementSim.Env
 			end
 			local ok
 			if usesTech(b) then
-				techPress(b, p.action)
+				techPress(b, p.action, dir)
 				ok = true
 			else
 				ok = MovementSim.press(sim, p.action :: any, inp, env)

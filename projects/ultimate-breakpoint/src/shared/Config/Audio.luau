@@ -35,6 +35,12 @@ Audio.Cues = {
 	CutPerfect = { id = "rbxassetid://138365407787910", volume = 0.7, pitch = 1.0 }, -- squeak + sparkle (ForgeGUI)
 	CutClean = { id = "", volume = 0.5, pitch = 1.0 }, -- cleat plant
 	Skid = { id = "", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
+	-- stage 2 air (ForgeGUI)
+	JumpOff = { id = "", volume = 0.4, pitch = 1.0 }, -- push-off scuff
+	DiveLaunch = { id = "", volume = 0.7, pitch = 1.0 }, -- layout whoosh + grunt
+	DiveLand = { id = "", volume = 0.7, pitch = 1.0 }, -- chest-first thud + skid
+	TechRoll = { id = "", volume = 0.7, pitch = 1.0 }, -- roll + sparkle
+	WavedashSlide = { id = "", volume = 0.7, pitch = 1.0 }, -- impact into a power slide
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
 	UiClick = { id = "rbxassetid://136877996742041", volume = 0.5, pitch = 1.0 }, -- ForgeGUI
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },

@@ -57,6 +57,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
+local Abilities = require(Shared.Config.Abilities)
 local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
@@ -783,22 +784,27 @@ end
 
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
--- Sky Walk (an ability) is live on this character: two extra dodges.
+-- Sky Walk (an ability) is live on this character: extra air actions.
 local function skyWalkDodges(t: Track): number
 	local c = character(t.id)
 	if c and c:GetAttribute("UBAbility") == "SkyWalk" then
 		local untilT = c:GetAttribute("UBAbilityUntil")
 		if type(untilT) == "number" and now() <= untilT + 0.5 then
-			return 2
+			return Abilities.SkyWalkDodges
 		end
 	end
 	return 0
 end
 
+-- The one air action per airtime (stage 2): a dive or a Sky Reach.
+local function isAirAction(tech: string, info: string?): boolean
+	return tech == "AirDodge" or tech == "SkyReach" or (tech == "Layout" and info == "Air")
+end
+
 local function judge(t: Track, tech: string, quality: string, info: string?, ts: number): string?
 	-- tech engine air limits (the network pass): one dodge per airtime plus
 	-- one per thing that gives it back; each give-back has its own limit
-	if tech == "AirDodge" then
+	if isAirAction(tech, info) then
 		if t.airDodges >= 1 + t.airGrants + skyWalkDodges(t) then
 			return nil
 		end
@@ -980,7 +986,7 @@ local function record(id: number, t: Track, tech: string, quality: string, dir: 
 	t.lastTech = tech
 	t.lastTechAt = ts
 	-- tech engine air bookkeeping
-	if tech == "AirDodge" then
+	if isAirAction(tech, info) then
 		t.airDodges += 1
 	elseif tech == "DiscReset" or tech == "WallKick" or tech == "Stall" then
 		t.airGrants += 1

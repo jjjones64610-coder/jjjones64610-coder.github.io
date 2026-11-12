@@ -776,11 +776,27 @@ local function compute(ctx: Ctx): Pose
 
 	local mode = ctx.mode
 	local airUp = false
-	if mode == "Slide" then
+	if mode == "Slide" and tech == "Skid" and age < 0.6 then
+		-- the skid: upright-ish, leaning back against the slide, feet wide
+		-- and dug in, arms flung out for balance
+		pose.drop, pose.pitch, pose.roll = 0.7, 0.35, -math.sign(dx) * 0.35
+		pose.legs = "stance"
+		pose.stance = "wide"
+		pose.RShoulder = CFrame.Angles(0.4, 0, 1.3)
+		pose.LShoulder = CFrame.Angles(0.4, 0, -1.3)
+		pose.rate = 24
+	elseif mode == "Slide" then
 		pose.drop, pose.pitch, pose.roll = 1.7, 0.95, 0
 		pose.legs = "slide"
 		pose.LShoulder = CFrame.Angles(0.9, 0, -0.7)
 		pose.rate = 20
+	elseif mode == "DiveSlide" and tech == "Scramble" and age < 0.2 then
+		-- the scramble: a push-up off the turf
+		pose.drop, pose.pitch, pose.roll = 1.2, -0.7, 0
+		pose.legs = "none"
+		pose.RShoulder = CFrame.Angles(1.4, 0, 0.3)
+		pose.LShoulder = CFrame.Angles(1.4, 0, -0.3)
+		pose.rate = 30
 	elseif mode == "Dive" then
 		pose.drop, pose.pitch, pose.roll = 0.5, -1.35, 0
 		pose.legs = "none"
@@ -835,7 +851,7 @@ local function compute(ctx: Ctx): Pose
 		pose.drop, pose.pitch = 0.25, -0.1
 		pose.legs = "stance"
 		pose.stance = "high"
-	elseif airUp and tech == "Sky" and age < 1.2 then
+	elseif airUp and (tech == "Sky" or tech == "SkyReach") and age < 1.2 then
 		-- Sky: both hands straight up, reaching over the defender
 		pose.RShoulder = CFrame.Angles(3.05, 0, 0.12)
 		pose.LShoulder = CFrame.Angles(3.05, 0, -0.12)

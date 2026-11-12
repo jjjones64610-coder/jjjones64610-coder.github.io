@@ -114,42 +114,46 @@ Tech.LANDING_SLIDE_PERFECT = 40 -- ms
 Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
 Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
 
--- jumping and air (stage 2)
-Tech.JUMP_TAP = 40 -- FEEL: jump speed of a tap; hold Space up to JUMP_HOLD for JUMP_FULL
-Tech.JUMP_FULL = 54
+-- JUMP (Space on the ground): fires at once, keeps your run speed
+Tech.JUMP_TAP = 40 -- FEEL: jump speed of a tap ...
+Tech.JUMP_FULL = 54 -- ... and of Space held for JUMP_HOLD (higher)
 Tech.JUMP_HOLD = 0.2 -- s of hold that adds up to a full jump
+-- FEEL: air control is real but limited, so a jump is a commitment: push
+-- at AIR_ACCEL, turn at most AIR_TURN °/s, never faster than your takeoff
 Tech.AIR_ACCEL = 26
 Tech.AIR_TURN = 90 -- °/s
-Tech.AIR_DODGE_NEUTRAL = 20
-Tech.FAST_FALL_MULT = 2.2
-Tech.REVERSE_SNAP_ANGLE = 120 -- ° from your line that counts as a backward dodge
-Tech.REVERSE_SNAP_KEEP = 0.9
-Tech.STUMBLE_TIME = 0.3
-Tech.BURST_DIVE_START_SPEED = 4 -- "from a standstill"
-Tech.BURST_DIVE_DODGE_WINDOW = 80 -- ms after the jump
-Tech.BURST_DIVE_CUT = { 50, 120 } -- ms into the dodge
-Tech.BURST_DIVE_CUT_PERFECT = { 70, 100 }
-Tech.BURST_DIVE_ANGLE = { 15, 75 } -- ° from forward that counts as forward-diagonal
-Tech.AIR_DODGE_WINDOW = 1.25
-Tech.AIR_DODGE_BURST = 12
-Tech.AIR_DODGE_HANG = 0.18
+
+-- THE AIR ACTION (Space again in the air; one per airtime)
+--   with a direction: the DIVE (layout) that way
+Tech.DIVE_BOOST = 9 -- FEEL: studs/s the dive adds along its direction (distance)
+Tech.DIVE_UP = 9 -- FEEL: lift at the start of the dive (higher = longer, floatier arc)
+Tech.DIVE_VY_KEEP = 0.4 -- share of your upward speed the dive keeps
+Tech.DIVE_TURN_KEEP = 0.35 -- share of your speed carried into a dive straight backwards (100 % straight ahead)
+Tech.DIVE_MAX_SPEED = 46
+Tech.DIVE_GRAVITY_MULT = 0.9 -- gravity x this while diving
+--   ... close to the ground: the WAVEDASH (no layout, land in a fast slide)
 Tech.WAVEDASH_WINDOW = 80 -- ms before landing
 Tech.WAVEDASH_PERFECT = 40
-Tech.WAVEDASH_BURST = 10
+Tech.WAVEDASH_BURST = 10 -- studs/s added
 Tech.WAVEDASH_BURST_PERFECT = 14
-Tech.REVERSE_SNAP_WINDOW = { 60, 140 } -- ms
-Tech.REVERSE_SNAP_PERFECT = { 80, 110 } -- ms
-Tech.BURST_DIVE_SPEED = 28
-Tech.BURST_DIVE_SPEED_PERFECT = 32
+Tech.WAVE_SLIDE_TIME = 0.45 -- s of slide before you run again (Space hops, Shift carves)
+--   with no direction: the SKY REACH (hands up at the top of a jump)
+Tech.SKY_REACH_HANG = 0.12 -- s you hang
+Tech.SKY_REACH_TIME = 0.4 -- s the extra reach lasts
+Tech.SKY_REACH = 1 -- studs of extra catch reach
 
--- world-class tech (TechCore header)
-Tech.STALL_WINDOW = 30 -- ms after the dodge
-Tech.STALL_PERFECT = 15
-Tech.STALL_HANG = 0.25
-Tech.ZAP_WINDOW = 60 -- ms after the wavedash lands
-Tech.ZAP_PERFECT = 25
-Tech.ZAP_BURST = 8
-Tech.ZAP_BURST_PERFECT = 11
+-- LANDING OUT OF A DIVE
+Tech.DIVE_SLIDE_FRICTION = 35 -- FEEL: the belly slide (lower = slides further)
+Tech.LAYOUT_DOWN_TIME = 0.55 -- FEEL: s face down before getting up ...
+Tech.GETUP_TIME = 0.3 -- ... then s getting up (no control)
+Tech.TECH_ROLL_WINDOW = 100 -- ms either side of the touchdown: Space is a Tech Roll ...
+Tech.TECH_ROLL_PERFECT = 40 -- ... Perfect within this either side
+Tech.TECH_ROLL_RECOVER = 0.25 -- s of roll before you run again
+Tech.TECH_ROLL_KEEP = 0.5 -- share of the dive's speed a Clean roll keeps
+Tech.TECH_ROLL_KEEP_PERFECT = 0.75 -- ... and a Perfect one
+Tech.SCRAMBLE_DOWN = 0.15 -- s: Space after the roll window cuts the rest of the face-down time to this
+
+-- world-class tech
 Tech.WALL_KICK_WINDOW = 80 -- ms after touching the wall
 Tech.WALL_KICK_PERFECT = 30
 Tech.WALL_KICK_PUSH = 10
@@ -161,22 +165,6 @@ Tech.PINCH_WINDOW = 40 -- ms either side of touchdown
 Tech.PINCH_PERFECT = 15
 Tech.PINCH_SPEED = 1.3 -- disc speed x this
 Tech.PINCH_SPEED_PERFECT = 1.4
-
--- layout, tech roll, sky
-Tech.LAYOUT_MIN_SPEED = 15
-Tech.LAYOUT_BOOST = 8
-Tech.LAYOUT_UP = 10
-Tech.LAYOUT_CONE = 45
-Tech.TECH_ROLL_RECOVER = 0.25
-Tech.TECH_ROLL_KEEP = 0.5
-Tech.TECH_ROLL_KEEP_PERFECT = 0.75
-Tech.GETUP_TIME = 0.35 -- Recovering after a full Downed
-Tech.SKY_MAX_SPEED = 10 -- slower than this, Jump charges a Sky instead of jumping
-Tech.SKY_MIN_HOLD = 0.2
-Tech.SKY_SLOW = 0.6
-Tech.SKY_HEIGHT = 1.6
-Tech.SKY_HEIGHT_PERFECT = 1.7
-Tech.SKY_REACH = 1 -- studs of extra reach on a Perfect Sky
 
 -- catching
 Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
@@ -193,11 +181,6 @@ Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
 Tech.CATCH_WINDOW = 180 -- ± ms
 Tech.CATCH_PERFECT = 50 -- ± ms
-Tech.LAYOUT_DOWN_TIME = 0.9
-Tech.TECH_ROLL_WINDOW = 100 -- ms
-Tech.TECH_ROLL_PERFECT = 40
-Tech.SKY_CHARGE = 0.4
-Tech.SKY_PERFECT = { 0.35, 0.40 }
 
 -- disc (later step: 5)
 Tech.DISC_GRAVITY = 60

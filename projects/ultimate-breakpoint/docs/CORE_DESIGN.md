@@ -81,6 +81,12 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 2 — jump, dive, landing recovery (built, awaiting playtest).**
+  Space again in the air is the one air action: a dive toward the held
+  direction, a wavedash slide near the ground, or a Sky Reach with no
+  direction. Dives land in a belly slide; Space on the touchdown tech-rolls,
+  later it scrambles. The separate air dodge, fast fall, crouch jump, stall,
+  reverse snap, burst dive and ground layouts are gone.
 - **Stage 1 — movement and turning (built, awaiting playtest).** Cuts come
   from the stick (let go, then snap); skids from yanks without a plant; one
   engine; six inputs plus the chord; `Config/Tuning.luau`; the test field.

@@ -552,212 +552,143 @@ test("jump: a tap is JUMP_TAP up, a hold reaches JUMP_FULL", function()
 	expect(peakFull > peakTap * 1.5, string.format("full %.2f vs tap %.2f", peakFull, peakTap))
 end)
 
-test("fast fall: Slide held in the air falls faster and lands in a Perfect slide", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
+-- Jump, then the air action `seconds` later with the stick on `dir`.
+local function jumpThen(w, seconds: number, dir: Vector3)
 	tap(w, "Jump")
-	worldRun(w, 0.15)
-	local up = newWorld(Config.RUN_TOP_SPEED)
-	tap(up, "Jump")
-	worldRun(up, 0.15)
-	w.held.Slide = true
-	worldRun(w, 0.1)
-	worldRun(up, 0.1)
-	expect(w.s.vel.Y < up.s.vel.Y - 3, "falls faster")
+	worldRun(w, seconds)
+	w.move = dir
+	tap(w, "Jump")
+	worldStep(w)
+end
+
+local function untilLanded(w)
 	worldUntil(w, function(x)
 		return x.s.grounded
-	end, 2)
+	end, 3)
+end
+
+test("dive: Space again in the air with a direction lays out that way", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	jumpThen(w, 0.12, FWD)
+	local e = events(w.s, "Layout")
+	expect(#e == 1 and w.s.state == "Diving", "diving")
+	expect(
+		near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED + Config.DIVE_BOOST, 0.6),
+		"speed + DIVE_BOOST: " .. TechCore.flatSpeed(w.s)
+	)
+	-- sideways: the speed swings into the new direction, a little lost
+	local side = newWorld(Config.RUN_TOP_SPEED)
+	jumpThen(side, 0.12, RIGHT)
+	expect(Vector3.new(side.s.vel.X, 0, side.s.vel.Z).Unit:Dot(RIGHT) > 0.99, "dives where the stick points")
+	local keep = 1 + (Config.DIVE_TURN_KEEP - 1) * 0.5
+	expect(near(TechCore.flatSpeed(side.s), Config.RUN_TOP_SPEED * keep + Config.DIVE_BOOST, 0.6), "90° keeps less")
+	-- one air action per airtime
+	tap(w, "Jump")
 	worldStep(w)
-	local e = events(w.s, "LandingSlide")
-	expect(#e == 1 and e[1].quality == "Perfect" and e[1].info == "Held", "held through the landing")
+	expect(#events(w.s, "Layout") == 1, "only one dive")
+	-- no Space on the ground ever dives (the old dive key is gone)
+	local g = newWorld(Config.RUN_TOP_SPEED)
+	TechCore.press(g.s, "Dive", g.s.now)
+	worldStep(g)
+	expect(#events(g.s, "Layout") == 0, "no ground dive")
 end)
 
-test("air dodge: +12 the held way with a hang; one per airtime; neutral goes up", function()
+test("dive landing: belly slide, then get up; Space on the touchdown is a Tech Roll", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
-	tap(w, "Jump")
+	jumpThen(w, 0.12, FWD)
+	untilLanded(w)
+	worldStep(w)
+	expect(w.s.state == "Downed", "face down")
+	local sp = TechCore.flatSpeed(w.s)
 	worldRun(w, 0.2)
-	w.move = RIGHT
-	local flat0 = Vector3.new(w.s.vel.X, 0, w.s.vel.Z)
-	tap(w, "Jump")
-	worldStep(w)
-	expect(w.s.state == "AirDodging" and w.s.vel.Y == 0, "dodging, hanging")
-	local flat1 = Vector3.new(w.s.vel.X, 0, w.s.vel.Z)
-	expect(near((flat1 - flat0):Dot(RIGHT), Config.AIR_DODGE_BURST, 1.5), "+12 sideways")
-	worldRun(w, Config.AIR_DODGE_HANG)
-	expect(w.s.state == "Airborne", "hang over")
-	tap(w, "Jump")
-	worldStep(w)
-	expect(#events(w.s, "AirDodge") == 1, "only one")
+	expect(near(TechCore.flatSpeed(w.s), sp - Config.DIVE_SLIDE_FRICTION * 0.2, 1.5), "belly slide friction")
+	worldRun(w, Config.LAYOUT_DOWN_TIME + Config.GETUP_TIME)
+	expect(w.s.state ~= "Downed" and w.s.state ~= "Recovering", "up again")
 
-	local n = newWorld(0)
-	n.move = Vector3.zero
-	tap(n, "Jump")
-	n.held.Jump = false
-	worldRun(n, 0.02)
-	worldRun(n, 0.1)
-	local vy = n.s.vel.Y
-	tap(n, "Jump")
-	worldStep(n)
-	expect(n.s.vel.Y > vy + Config.AIR_DODGE_NEUTRAL * 0.8, "neutral dodge goes up")
+	local roll = newWorld(Config.RUN_TOP_SPEED)
+	jumpThen(roll, 0.12, FWD)
+	worldUntil(roll, function(x)
+		return x.s.vel.Y < 0 and x.y < 0.3
+	end, 3)
+	tap(roll, "Jump") -- a hair before the touchdown: buffered into the roll
+	untilLanded(roll)
+	worldStep(roll)
+	local e = events(roll.s, "TechRoll")
+	expect(#e == 1 and e[1].quality == "Perfect", "Perfect tech roll")
+	expect(roll.s.state == "Recovering", "rolling")
+	worldRun(roll, Config.TECH_ROLL_RECOVER + 0.02)
+	expect(roll.s.state ~= "Recovering" and roll.s.state ~= "Downed", "running again fast")
+
+	local late = newWorld(Config.RUN_TOP_SPEED)
+	jumpThen(late, 0.12, FWD)
+	untilLanded(late)
+	worldRun(late, 0.2)
+	tap(late, "Jump")
+	worldStep(late)
+	expect(#events(late.s, "Scramble") == 1, "a late press scrambles")
+	worldRun(late, Config.SCRAMBLE_DOWN + Config.GETUP_TIME + 0.02)
+	expect(late.s.state ~= "Downed" and late.s.state ~= "Recovering", "up sooner than a full down")
 end)
 
-test("disc reset: touching the disc in the air gives the dodge back once", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
+test("sky reach: Space again with no direction hangs with the hands up", function()
+	local w = newWorld(0)
+	jumpThen(w, 0.18, Vector3.zero)
+	expect(#events(w.s, "SkyReach") == 1, "sky reach")
+	expect(TechCore.reachBonus(w.s) == Config.SKY_REACH, "more reach")
+	local y0 = w.y
+	worldRun(w, Config.SKY_REACH_HANG - 0.02)
+	expect(math.abs(w.y - y0) < 0.05, "hangs")
 	tap(w, "Jump")
-	worldRun(w, 0.1)
-	w.move = RIGHT
-	tap(w, "Jump")
+	w.move = FWD
 	worldStep(w)
+	expect(#events(w.s, "Layout") == 0, "it was the air action: no dive after it")
+end)
+
+test("disc reset: touching the disc in the air gives the air action back once", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	jumpThen(w, 0.1, Vector3.zero)
 	expect(not w.s.dodgeAvailable, "spent")
 	expect(TechCore.discContact(w.s), "reset")
-	expect(w.s.dodgeAvailable, "dodge back")
+	expect(w.s.dodgeAvailable, "back")
 	expect(not TechCore.discContact(w.s), "once per airtime")
 end)
 
-test("wavedash: a dodge just before landing is a ground burst", function()
-	local w = newWorld(8)
+test("wavedash: a dive just before landing lands in a fast slide instead", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
 	tap(w, "Jump")
 	worldStep(w)
 	worldUntil(w, function(x)
 		return x.s.vel.Y < 0 and x.y < 0.6
 	end, 2)
 	w.move = RIGHT
-	local before = Vector3.new(w.s.vel.X, 0, w.s.vel.Z)
 	tap(w, "Jump")
-	worldUntil(w, function(x)
-		return x.s.grounded
-	end, 1)
+	untilLanded(w)
 	worldStep(w)
 	local e = events(w.s, "Wavedash")
-	expect(#e == 1, "wavedash")
-	local gained = (Vector3.new(w.s.vel.X, 0, w.s.vel.Z) - before):Dot(RIGHT)
-	expect(gained > Config.WAVEDASH_BURST - 2, "ground burst: " .. gained)
-	expect(w.s.dodgeAvailable, "dodge ready again")
-end)
-
-test("reverse snap: backward dodge + Cut in the window keeps the speed", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	tap(w, "Jump")
-	worldRun(w, 0.1)
-	w.move = -FWD
-	tap(w, "Jump")
-	worldStep(w)
-	worldRun(w, 0.09)
-	tap(w, "Cut")
-	worldStep(w)
-	local e = events(w.s, "ReverseSnap")
-	expect(#e == 1 and e[1].quality == "Perfect", "Perfect reverse snap")
-	expect(w.s.vel.Unit:Dot(-FWD) > 0.9, "now going back")
-
-	local miss = newWorld(Config.RUN_TOP_SPEED)
-	tap(miss, "Jump")
-	worldRun(miss, 0.1)
-	miss.move = -FWD
-	tap(miss, "Jump")
-	worldStep(miss)
-	worldRun(miss, 0.25)
-	tap(miss, "Cut")
-	worldUntil(miss, function(x)
-		return x.s.grounded
+	expect(#e == 1 and #events(w.s, "Layout") == 0, "wavedash, no layout")
+	expect(w.s.state == "Sliding" and w.s.wave, "a fast slide")
+	expect(Vector3.new(w.s.vel.X, 0, w.s.vel.Z).Unit:Dot(RIGHT) > 0.99, "toward the stick")
+	expect(TechCore.flatSpeed(w.s) > Config.RUN_TOP_SPEED + Config.WAVEDASH_BURST - 2, "faster")
+	expect(w.s.dodgeAvailable, "air action ready again")
+	worldRun(w, Config.WAVE_SLIDE_TIME + 0.05)
+	expect(w.s.state ~= "Sliding", "runs out of it")
+	-- and a hop out of it chains
+	local h = newWorld(Config.RUN_TOP_SPEED)
+	tap(h, "Jump")
+	worldStep(h)
+	worldUntil(h, function(x)
+		return x.s.vel.Y < 0 and x.y < 0.6
 	end, 2)
-	worldStep(miss)
-	expect(#events(miss.s, "Stumble") == 1, "late: stumble on landing")
+	h.move = RIGHT
+	tap(h, "Jump")
+	untilLanded(h)
+	worldRun(h, 0.2)
+	tap(h, "Jump")
+	worldStep(h)
+	expect(#events(h.s, "SlideHop") == 1 and not h.s.grounded, "slide hop out of the wavedash")
 end)
 
-test("burst dive: standstill jump, diagonal dodge, Cut: run at 28-32", function()
-	local w = newWorld(0)
-	w.move = Vector3.zero
-	w.aim = FWD
-	w.held.Jump = true
-	tap(w, "Jump")
-	worldRun(w, 0.03)
-	w.held.Jump = false
-	worldStep(w) -- (the jump fired on the press)
-	expect(not w.s.grounded, "jumped")
-	w.move = (FWD + RIGHT).Unit
-	tap(w, "Jump")
-	worldStep(w)
-	worldRun(w, 0.085)
-	tap(w, "Cut")
-	worldStep(w)
-	local e = events(w.s, "BurstDive")
-	expect(#e == 1 and e[1].quality == "Perfect", "Perfect burst dive")
-	expect(near(TechCore.flatSpeed(w.s), Config.BURST_DIVE_SPEED_PERFECT, 1), "32: " .. TechCore.flatSpeed(w.s))
-end)
-
-test("layout: needs 15, +8 toward the aim, Downed 0.9 s; tech roll gets up fast", function()
-	local slow = newWorld(10)
-	tap(slow, "Dive")
-	worldStep(slow)
-	expect(slow.s.state ~= "Diving", "too slow")
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.aim = (FWD + RIGHT * 0.3).Unit
-	tap(w, "Dive")
-	worldStep(w)
-	expect(
-		w.s.state == "Diving" and near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED + Config.LAYOUT_BOOST, 0.5),
-		"launch"
-	)
-	worldUntil(w, function(x)
-		return x.s.grounded
-	end, 2)
-	worldStep(w)
-	expect(w.s.state == "Downed", "downed")
-	worldRun(w, Config.LAYOUT_DOWN_TIME - 0.05)
-	expect(w.s.state == "Downed", "still down")
-
-	local r = newWorld(Config.RUN_TOP_SPEED)
-	tap(r, "Dive")
-	worldStep(r)
-	worldUntil(r, function(x)
-		return x.s.grounded
-	end, 2)
-	worldStep(r)
-	tap(r, "Jump")
-	worldStep(r)
-	local e = events(r.s, "TechRoll")
-	expect(#e == 1 and e[1].quality == "Perfect", "Perfect tech roll")
-	worldRun(r, Config.TECH_ROLL_RECOVER + 0.02)
-	expect(r.s.state == "Grounded", "up in 0.25 s")
-end)
-
-test("air layout spends the dodge", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	tap(w, "Jump")
-	worldRun(w, 0.1)
-	tap(w, "Dive")
-	worldStep(w)
-	expect(w.s.state == "Diving" and not w.s.dodgeAvailable, "air layout")
-end)
-
-test("sky: crouch (hold Slide) while slow, then Jump, for a higher leap; Perfect at 0.35-0.40 s", function()
-	local function peak(crouch: number): (number, any)
-		local w = newWorld(0)
-		w.move = Vector3.zero
-		w.held.Slide = true
-		worldRun(w, crouch)
-		tap(w, "Jump")
-		local top = 0
-		worldStep(w)
-		w.held.Slide = false
-		worldUntil(w, function(x)
-			top = math.max(top, x.y)
-			return x.s.grounded
-		end, 3)
-		return top, events(w.s, "Sky")[1]
-	end
-	local plain = peak(0)
-	local sky, e = peak(0.37)
-	expect(e and e.quality == "Perfect", "Perfect sky")
-	expect(sky > plain * 1.3, string.format("sky %.2f vs jump %.2f", sky, plain))
-	-- no crouch: Jump fires on the press, even standing still
-	local w = newWorld(0)
-	w.move = Vector3.zero
-	tap(w, "Jump")
-	worldStep(w)
-	expect(not w.s.grounded, "jumps at once")
-end)
-
-test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdrive never drains", function()
+test("abilities: The Zone widens Perfect windows, Sky Walk adds air actions, Overdrive never drains", function()
 	-- a cut 120 ms after the crossing is Clean, but Perfect in The Zone
 	local function cutAfter(zone: boolean): string
 		local w = newWorld(Config.RUN_TOP_SPEED)
@@ -775,12 +706,12 @@ test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdriv
 	TechCore.startAbility(sky.s, "SkyWalk", 5, nil, 2)
 	tap(sky, "Jump")
 	worldRun(sky, 0.1)
-	sky.move = RIGHT
+	sky.move = Vector3.zero
 	for _ = 1, 4 do
 		tap(sky, "Jump")
-		worldRun(sky, 0.2)
+		worldRun(sky, 0.15)
 	end
-	expect(#events(sky.s, "AirDodge") == 3, "one dodge + two extra, got " .. #events(sky.s, "AirDodge"))
+	expect(#events(sky.s, "SkyReach") == 3, "one air action + two extra, got " .. #events(sky.s, "SkyReach"))
 
 	local od = newWorld(Config.RUN_TOP_SPEED)
 	TechCore.startAbility(od.s, "Overdrive", 4)
@@ -834,66 +765,28 @@ test("mirror step: an armed cut is Perfect + 2; biting on a juke costs 30 %", fu
 	expect(near(TechCore.flatSpeed(w.s), sp * (1 - Config.JUKED_LOSS), 0.01), "juked")
 end)
 
-test("flip reset: feet on the disc store a dodge with no time limit, kept until landing", function()
+test("flip reset: feet on the disc store an air action, kept until landing", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
 	w.held.Jump = true
-	tap(w, "Jump")
-	worldRun(w, 0.15)
-	w.move = RIGHT
-	tap(w, "Jump")
-	worldRun(w, 0.05) -- the normal dodge is spent
+	jumpThen(w, 0.15, Vector3.zero) -- the normal air action is spent
 	expect(not w.s.dodgeAvailable, "spent")
-	-- well past the 1.25 s window would be impossible to reach here, so
-	-- check the store survives time instead: touch, wait, then dodge
 	expect(TechCore.footContact(w.s), "flip reset")
 	expect(not TechCore.footContact(w.s), "one in store at a time")
 	worldRun(w, 0.1)
+	w.move = FWD
 	tap(w, "Jump")
 	worldStep(w)
-	expect(#events(w.s, "ResetFlip") == 1 and #events(w.s, "AirDodge") == 2, "spent the stored flip")
-	expect(TechCore.footContact(w.s), "a second reset in one airtime")
-	worldUntil(w, function(x)
-		return x.s.grounded
-	end, 3)
+	expect(#events(w.s, "ResetFlip") == 1 and #events(w.s, "Layout") == 1, "spent the stored flip on a dive")
+	untilLanded(w)
 	worldStep(w)
 	expect(w.s.storedFlips == 0, "landing clears the store")
 end)
 
-test("stall: Dive within 30 ms of a dodge cancels it into a hang and gives it back", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	tap(w, "Jump")
-	worldRun(w, 0.15)
-	w.move = RIGHT
-	local before = Vector3.new(w.s.vel.X, 0, w.s.vel.Z)
-	tap(w, "Jump")
-	worldStep(w)
-	tap(w, "Dive")
-	worldStep(w)
-	local e = events(w.s, "Stall")
-	expect(#e == 1, "stalled")
-	expect(w.s.dodgeAvailable and w.s.state ~= "Diving", "dodge back, no layout")
-	expect((Vector3.new(w.s.vel.X, 0, w.s.vel.Z) - before).Magnitude < 1, "the dodge's burst is cancelled")
-	local y0 = w.y
-	worldRun(w, 0.2)
-	expect(math.abs(w.y - y0) < 0.05, "hangs")
-	local late = newWorld(Config.RUN_TOP_SPEED)
-	tap(late, "Jump")
-	worldRun(late, 0.15)
-	late.move = RIGHT
-	tap(late, "Jump")
-	worldRun(late, 0.06)
-	tap(late, "Dive")
-	worldStep(late)
-	expect(#events(late.s, "Stall") == 0, "too late: no stall")
-end)
-
 test("wall kick: jump right after touching a wall kicks off it with the dodge back", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
-	tap(w, "Jump")
-	worldRun(w, 0.1)
+	jumpThen(w, 0.1, Vector3.zero)
+	worldRun(w, 0.15) -- the air action is spent
 	w.move = RIGHT
-	tap(w, "Jump")
-	worldRun(w, 0.2) -- dodge spent
 	local wall = -FWD.Unit -- wall ahead, normal facing back at us
 	local function wallStep()
 		local s = w.s
@@ -906,7 +799,7 @@ test("wall kick: jump right after touching a wall kicks off it with the dodge ba
 	local e = events(w.s, "WallKick")
 	expect(#e == 1 and e[1].quality == "Perfect", "wall kick")
 	expect(w.s.vel:Dot(-FWD) > 0 and w.s.vel.Y > 20, "kicked back and up")
-	expect(w.s.dodgeAvailable, "dodge back")
+	expect(w.s.dodgeAvailable, "air action back")
 end)
 
 test("pinch: a throw within 40 ms of touchdown", function()
@@ -939,13 +832,12 @@ test("tech fuzz: random presses and holds never break the cap or the states", fu
 	local Rng = H.require("Util/Rng")
 	local rng = Rng.new(11)
 	local w = newWorld(0)
-	local actions = { "Cut", "Jump", "Dive", "Slide" }
 	for i = 1, 40000 do
 		if Rng.next(rng) < 0.03 then
-			tap(w, actions[Rng.int(rng, 1, 4)])
+			tap(w, "Jump")
 		end
 		if i % 37 == 0 then
-			for _, a in { "Burst", "Slide", "Jump" } do
+			for _, a in { "Burst", "Jump" } do
 				w.held[a] = Rng.next(rng) < 0.4
 			end
 			local a = Rng.next(rng) * math.pi * 2

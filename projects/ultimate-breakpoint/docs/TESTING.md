@@ -80,7 +80,31 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 1 — Movement and turning (docs/CORE_DESIGN.md) ← test this now
+### STAGE 2 — Jump, dive, landing recovery (docs/CORE_DESIGN.md) ← test this now
+Same place: **TEST FIELD (MOVEMENT)**. The debug panel's **AIR** line shows whether your air action is
+READY or SPENT; **LAST** shows the timing of the last Tech Roll / Wavedash. Tune in `Config/Tuning.luau`
+(sections JUMP, THE AIR ACTION, LANDING OUT OF A DIVE).
+
+- [ ] **Jump:** Space jumps at once (no delay, even sprinting); hold Space for a higher jump. In the air you can steer, but only a little — you commit.
+- [ ] **Dive:** jump, then Space again with W/A/S/D held: you lay out that way (DIVE line: speed + boost). Straight ahead keeps all your speed; sideways or backwards keeps less. Only one per jump.
+- [ ] **No ground dive:** there is no dive key; Space on the ground is always a jump.
+- [ ] **Sky Reach:** jump, then Space again with no direction: you hang a beat with your hands up.
+- [ ] **Belly slide:** a dive lands you chest-down sliding along the grass, then you get up. Feels like a commitment, not a stun.
+- [ ] **Tech Roll:** press Space right as the dive lands (a hair early is fine): you roll up fast and keep a good share of your speed. LAST says PERFECT within ±40 ms.
+- [ ] **Scramble:** miss the roll and press Space while face down: you get up sooner, but slower than a roll.
+- [ ] **Wavedash:** jump, and press Space + a direction just before you land: no layout, you hit the ground in a fast slide that way. Space out of the slide hops; Shift carves it.
+- [ ] **The chain:** cut (let go, snap) → jump → dive → tech roll → cut again, without the body ever stalling or snapping. Also: cut → jump → wavedash → slide hop.
+- [ ] **Sounds (ForgeGUI):** jump, dive launch, chest landing, tech roll, wavedash slide each have their own sound.
+- [ ] **Look:** the dive is flat and stretched, the belly slide stays on the ground, the skid now leans back with the feet dug in.
+
+What to tell me: is the dive too long or too short (DIVE_BOOST, DIVE_UP)? Is the face-down time punishing enough
+but not boring (LAYOUT_DOWN_TIME, GETUP_TIME)? Is the Tech Roll timing findable (TECH_ROLL_WINDOW / _PERFECT)?
+Is the jump too floaty or too heavy (JUMP_TAP, PLAYER_GRAVITY)?
+
+Gone (no keys left for them): the separate air dodge, fast fall, the crouch "Sky" jump, Stall, Reverse Snap,
+Burst Dive, ground layouts.
+
+### STAGE 1 — Movement and turning (docs/CORE_DESIGN.md)
 Start the place (F5), choose **TEST FIELD (MOVEMENT)** on the title screen. The debug panel
 (top right) shows SPEED, STATE, BURST and a **CUT** line for every cut. Tune anything in
 `src/shared/Config/Tuning.luau`.

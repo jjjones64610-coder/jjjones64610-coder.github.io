@@ -121,7 +121,9 @@ local function hit(id: string, t: number): Hit
 end
 
 local function isAirMove(e: Event): boolean
-	return e.tech == "AirRedirect" or (e.tech == "Dive" and e.info == "Air")
+	return e.tech == "AirRedirect"
+		or ((e.tech == "Dive" or e.tech == "Layout") and e.info == "Air")
+		or e.tech == "SkyReach"
 end
 
 local function onTech(tr: Tracker, e: Event, out: { Hit })

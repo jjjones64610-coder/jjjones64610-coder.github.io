@@ -19,7 +19,7 @@
 	    the air). Neither the flat speed nor the fall speed passes
 	    HARD_SPEED_CAP.
 	  * Gravity is the player's own (PLAYER_GRAVITY, x FALL_GRAVITY_MULT while
-	    moving down, x FAST_FALL_MULT while Slide is held in the air).
+	    moving down, x DIVE_GRAVITY_MULT while diving, x the Sky Walk scale).
 	  * Fixed timestep: advance() runs step() at PHYSICS_RATE with an
 	    accumulator. All timing windows are measured in sim time (s.now), so
 	    nothing depends on the frame rate.
@@ -27,54 +27,40 @@
 	    tries the buffered presses again, so a press slightly before its
 	    window opens still fires when it does.
 
-	TECH (each fires an event in s.events; Perfect ones refund Burst)
-	  Burst (hold Burst)   top speed 30, accel 90, drains the meter
-	  Burst Kick (tap)     +6 studs/s now, 15 meter, 0.5 s cooldown
-	  Cut (Cut + new dir)  0.12 s plant, keeps 70 % (Perfect: 100 % + 3) when
-	                       pressed within 80 ms of the stick crossing 45°;
-	                       85 % cap within 0.6 s of the last cut
-	  Juke                 Cut, then the stick back to your line before the
-	                       plant ends: you keep your line at 90 %
-	  Plant Stop (Cut, no stick)  stop in 0.15 s, then 2x accel for 0.3 s
-	                       (2.5x and Perfect if you go within 100 ms)
-	  Slide (hold Slide, 18+)  friction 15, turn 60°/s, 1.2 s max
-	  Landing Slide        a slide within 100 ms of landing (40 ms Perfect;
-	                       holding Slide through the landing counts Perfect)
-	  Slide Carve          Burst held in a slide: turn 220°/s, friction 40
-	  Slide Hop            Jump 0.15-0.30 s into a slide: +6, +4, +2, 0
-	  Jump                 tap 34 up, hold 0.2 s for 46; keeps flat speed
-	  Air Steer            20 studs/s², 90°/s, never above takeoff speed
-	  Air Dodge (Jump in the air)  +12 the held way with a 0.18 s hang, or
-	                       +20 up with no direction; one per airtime, within
-	                       1.25 s of leaving the ground
-	  Fast Fall            hold Slide in the air
-	  Wavedash             a directional dodge 0-80 ms before landing becomes
-	                       +10 along the ground (+14 Perfect, 0-40 ms)
-	  Reverse Snap         backward dodge, then Cut 60-140 ms into it: face
-	                       the dodge and keep 90 % (Perfect 80-110 ms: 100 %)
-	  Burst Dive           jump from a standstill, forward-diagonal dodge
-	                       within 80 ms, Cut 50-120 ms in: run at 28 (32)
-	  Disc Reset           discContact() in the air gives the dodge back
-	  Layout (Dive, 15+)   speed + 8 toward the aim, 10 up; Downed 0.9 s
-	  Tech Roll            Jump within 100 ms of the layout landing: up in
-	                       0.25 s keeping 50 % (Perfect 40 ms: 75 %)
-	  Sky                  standing or jogging, crouch (hold Slide) 0.2 s+ and
-	                       press Jump: a charged leap up to 1.6x (1.7x Perfect
-	                       at 0.35-0.40 s). Jump itself always fires at once.
+	INPUTS (docs/CORE_DESIGN.md): the stick, Space (Jump) and Shift (Burst).
+	Everything below comes out of those plus your state. Each move fires an
+	event in s.events; Perfect ones refund Burst. Numbers: Config/Tuning.
 
-	WORLD-CLASS TECH (not in the spec; the gap between good and great)
-	  Flip Reset           your FEET touch a disc in flight (footContact()):
-	                       a stored dodge with no time limit, kept until you
-	                       land; spending it is a ResetFlip
-	  Stall                Dive within 30 ms of an air dodge cancels it into
-	                       a 0.25 s hang and gives the dodge back (once per
-	                       airtime)
-	  Zap Dash             Cut within 60 ms of a wavedash landing: a second
-	                       burst with no plant (Perfect within 25 ms)
-	  Wall Kick            Jump within 80 ms of touching a wall in the air:
-	                       kick off it with your dodge back (Perfect 30 ms)
-	  Pinch                a throw released within 40 ms of your feet
-	                       touching down (pinch(), ThrowController)
+	GROUND (stage 1)
+	  Burst (hold Shift)   sprint: higher top speed, drains a meter
+	  Burst Kick (tap)     a quick shove forward, costs meter, cooldown
+	  Cut                  let go of the stick at speed (the plant), then a
+	                       new direction 45°+ off your line within
+	                       CUT_RELEASE_MAX: Perfect let-go keeps it all + a
+	                       bonus, Clean keeps CUT_KEEP; sharp ones keep less,
+	                       repeats are capped
+	  Juke                 right after a cut, back to the old line
+	  Skid                 the stick yanked 110°+ at speed with no plant:
+	                       a skid that eats speed
+	  Slide Hop / Carve    Space / Shift during any slide
+
+	AIR (stage 2)
+	  Jump (Space)         at once; hold for a higher jump; keeps flat speed
+	  Air control          limited push and turn rate, never past takeoff speed
+	  The air action       Space again in the air, once per airtime:
+	    Dive               with a direction: lay out that way (speed carried
+	                       into it, plus DIVE_BOOST, a little lift)
+	    Wavedash           ... within WAVEDASH_WINDOW of the ground: no
+	                       layout, you land in a fast slide (+ boost)
+	    Sky Reach          no direction: a short hang with more catch reach
+	  Dive landing         belly slide (Downed), then get up
+	  Tech Roll            Space within TECH_ROLL_WINDOW of the touchdown:
+	                       up fast keeping 50-75 % of the speed
+	  Scramble             Space later while face down: up sooner, no speed
+	  Wall Kick            Space right after touching a wall in the air
+	  Disc Reset           touching the disc in the air: the air action back
+	  Flip Reset           your FEET on a disc in flight: one more stored
+	  Pinch                a throw released as your feet touch down
 ]]
 
 local Config = require(script.Parent.Parent.Config.Tech)
@@ -160,6 +146,9 @@ export type State = {
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
+	wave: boolean, -- the current slide is a wavedash slide
+	reachHangUntil: number, -- the Sky Reach hang
+	scrambled: boolean, -- this dive's scramble is spent
 	cutReport: { quality: string, gapMs: number, angle: number, kept: number }?, -- the last cut (debug HUD)
 	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
@@ -170,7 +159,6 @@ export type State = {
 	landedAt: number, -- when the feet last touched down
 	hopCount: number, -- slide hops in the current chain
 	groundedPlainSince: number?, -- grounded and not sliding, since
-	slidePrimed: boolean, -- Slide was held through the landing (Fast Fall into a slide)
 
 	-- air
 	airborneSince: number,
@@ -179,23 +167,12 @@ export type State = {
 	takeoffSpeed: number,
 	dodgeAvailable: boolean,
 	discResetUsed: boolean,
-	dodge: {
-		startAt: number,
-		dir: Vector3,
-		backward: boolean,
-		burstDive: boolean,
-		speed: number,
-		resolved: boolean,
-		preVel: Vector3, -- velocity before the dodge (a Stall restores it)
-	}?,
 	wavedash: { dir: Vector3, perfect: boolean }?,
-	stumbleOnLand: boolean,
 
 	-- layout / recovery / sky
 	diveAt: number,
 	downedUntil: number,
 	recoverUntil: number,
-	skyChargeAt: number?,
 	skyPerfectUntil: number, -- hands-up reach bonus lasts while this is ahead
 
 	-- abilities (Config/Abilities)
@@ -214,8 +191,6 @@ export type State = {
 	-- world-class tech
 	storedFlips: number, -- Flip Reset dodges in store (kept until landing)
 	flipResetsAir: number, -- Flip Resets this airtime
-	stallUsed: boolean,
-	stallUntil: number,
 	wavedashAt: number, -- landing time of the last wavedash (Zap Dash window)
 	wallTouchAt: number?, -- first contact with the current wall (airborne)
 	wallNormal: Vector3?,
@@ -292,6 +267,9 @@ function TechCore.new(now: number?): State
 		release = nil,
 		lastCut = nil,
 		skid = false,
+		wave = false,
+		reachHangUntil = -math.huge,
+		scrambled = false,
 		cutReport = nil,
 		crossAt = nil,
 		lastCutAt = -math.huge,
@@ -301,7 +279,6 @@ function TechCore.new(now: number?): State
 		landedAt = -math.huge,
 		hopCount = 0,
 		groundedPlainSince = t,
-		slidePrimed = false,
 
 		airborneSince = -math.huge,
 		jumpAt = -math.huge,
@@ -309,14 +286,11 @@ function TechCore.new(now: number?): State
 		takeoffSpeed = 0,
 		dodgeAvailable = true,
 		discResetUsed = false,
-		dodge = nil,
 		wavedash = nil,
-		stumbleOnLand = false,
 
 		diveAt = -math.huge,
 		downedUntil = -math.huge,
 		recoverUntil = -math.huge,
-		skyChargeAt = nil,
 		skyPerfectUntil = -math.huge,
 
 		windowScale = 1,
@@ -332,8 +306,6 @@ function TechCore.new(now: number?): State
 
 		storedFlips = 0,
 		flipResetsAir = 0,
-		stallUsed = false,
-		stallUntil = -math.huge,
 		wavedashAt = -math.huge,
 		wallTouchAt = nil,
 		wallNormal = nil,
@@ -424,7 +396,6 @@ end
 function TechCore.setHolding(s: State, on: boolean)
 	s.holding = on
 	if on then
-		s.skyChargeAt = nil
 		if s.state == "Sliding" or s.state == "Recovering" then
 			s.state = baseState(s)
 			s.stateSince = s.now
@@ -451,10 +422,7 @@ function TechCore.reset(s: State)
 	s.acc = 0
 	s.drifting = false
 	table.clear(s.buffer)
-	s.dodge = nil
 	s.wavedash = nil
-	s.skyChargeAt = nil
-	s.stumbleOnLand = false
 	s.dodgeAvailable = true
 	s.state = baseState(s)
 	s.stateSince = s.now
@@ -642,22 +610,14 @@ local function jumpOff(s: State, vy: number, boost: boolean)
 	s.frame.leftGround = true
 	s.dodgeAvailable = true
 	s.discResetUsed = false
-	s.dodge = nil
 	s.wavedash = nil
 	s.release = nil
-	s.stumbleOnLand = false
 	TechCore.enter(s, "Airborne", true)
-end
-
-local function slideAllowed(s: State, speed: number, landing: boolean): boolean
-	if not RUNNING[s.state] or s.holding then
-		return false
-	end
-	return speed >= (if landing then Config.LANDING_SLIDE_MIN_SPEED else Config.SLIDE_MIN_SPEED)
 end
 
 local function startSlide(s: State, quality: string?, info: string?)
 	s.skid = false
+	s.wave = false
 	s.slideSince = s.now
 	s.groundedPlainSince = nil
 	TechCore.enter(s, "Sliding", true)
@@ -683,138 +643,63 @@ local function slideHop(s: State)
 	emit(s, "SlideHop", if quality == "Clean" then "Perfect" else "Clean", s.heading, tostring(s.hopCount))
 end
 
--- The directional / neutral Air Dodge, or a Wavedash when the ground is
--- 0-80 ms away. Returns whether the press was used.
-local function tryAirDodge(s: State, input: Input, env: Env): boolean
+-- THE DIVE (stage 2): Space again in the air with a direction held. You
+-- lay out that way: your speed is carried into the new direction (all of
+-- it straight ahead, down to DIVE_TURN_KEEP straight back) plus DIVE_BOOST,
+-- with DIVE_UP of lift so it arcs. One air action per airtime.
+local function dive(s: State, dir: Vector3)
+	local flat = flatOf(s.vel)
+	local speed = flat.Magnitude
+	local angle = if speed > 1 then VecMath.flatAngle(flat / speed, dir) else 0
+	local keep = 1 + (Config.DIVE_TURN_KEEP - 1) * (angle / 180)
+	local out = math.min(speed * keep + Config.DIVE_BOOST, Config.DIVE_MAX_SPEED)
+	local nv = dir * out
+	s.vel = Vector3.new(nv.X, math.max(s.vel.Y, 0) * Config.DIVE_VY_KEEP + Config.DIVE_UP, nv.Z)
+	s.heading = dir
+	s.diveAt = s.now
+	s.takeoffSpeed = math.max(s.takeoffSpeed, out)
+	TechCore.enter(s, "Diving", true)
+	emit(s, "Layout", "Clean", dir, "Air")
+end
+
+-- Space in the air (after the jump itself): the one air action.
+--   direction held      -> a dive that way (dive())
+--   ... the ground close -> a Wavedash: no layout, you land in a fast slide
+--   no direction        -> a Sky Reach: a short hang with the hands up (more
+--                          catch reach at the top of a jump)
+-- It is spent until you land; a Flip Reset stores one more, Sky Walk adds
+-- extras. Returns whether the press was used.
+local function tryAirAction(s: State, input: Input, env: Env): boolean
 	if not AIR[s.state] or s.state == "Diving" then
 		return false
 	end
-	local skyWalk = s.now < s.skyWalkUntil and s.extraDodgesLeft > 0
-	if not s.dodgeAvailable or s.now - s.airborneSince > Config.AIR_DODGE_WINDOW then
+	if not s.dodgeAvailable then
 		if s.storedFlips > 0 then
-			-- a Flip Reset: the stored dodge has no time limit
 			s.storedFlips -= 1
-			s.dodgeAvailable = true
 			emit(s, "ResetFlip", "Perfect", stickDir(input) or Vector3.yAxis, tostring(s.flipResetsAir))
-		elseif skyWalk then
-			-- Sky Walk: an extra dodge
+		elseif s.now < s.skyWalkUntil and s.extraDodgesLeft > 0 then
 			s.extraDodgesLeft -= 1
-			s.dodgeAvailable = true
 		else
 			return false
 		end
 	end
+	s.dodgeAvailable = false
 	local dir = stickDir(input)
 	local ttl = env.timeToLand
 	if dir and ttl and ttl * 1000 <= Config.WAVEDASH_WINDOW and s.vel.Y <= 0 then
 		local timing = TechCore.noteTiming(s, "Wavedash", -ttl * 1000, Config.WAVEDASH_WINDOW, Config.WAVEDASH_PERFECT)
 		s.wavedash = { dir = dir, perfect = timing.quality == "Perfect" }
-		s.dodgeAvailable = false
 		return true
 	end
-	s.dodgeAvailable = false
-	if dir == nil then
-		s.vel = Vector3.new(s.vel.X, math.max(s.vel.Y, 0) + Config.AIR_DODGE_NEUTRAL, s.vel.Z)
-		emit(s, "AirDodge", "Clean", Vector3.yAxis, "Up")
+	if dir then
+		dive(s, dir)
 		return true
 	end
-	local flat = flatOf(s.vel)
-	local backward = flat.Magnitude > 2 and VecMath.flatAngle(s.heading, dir) >= Config.REVERSE_SNAP_ANGLE
-	local fwdAngle = VecMath.flatAngle(input.aim or s.heading, dir)
-	local burstDive = s.takeoffSpeed <= Config.BURST_DIVE_START_SPEED
-		and (s.now - s.jumpAt) * 1000 <= Config.BURST_DIVE_DODGE_WINDOW
-		and fwdAngle >= Config.BURST_DIVE_ANGLE[1]
-		and fwdAngle <= Config.BURST_DIVE_ANGLE[2]
-	local preVel = s.vel
-	local nv = flat + dir * Config.AIR_DODGE_BURST
-	s.vel = Vector3.new(nv.X, 0, nv.Z)
-	s.dodge = {
-		startAt = s.now,
-		dir = dir,
-		backward = backward,
-		burstDive = burstDive,
-		speed = nv.Magnitude,
-		resolved = false,
-		preVel = preVel,
-	}
-	TechCore.enter(s, "AirDodging", true)
-	emit(s, "AirDodge", "Clean", dir)
-	return true
-end
-
--- Cut during a dodge: Reverse Snap (backward dodge) or Burst Dive (from a
--- standstill). Returns whether the press was used.
-local function tryDodgeCancel(s: State): boolean
-	local d = s.dodge
-	if not d or d.resolved or not AIR[s.state] then
-		return false
-	end
-	local ms = (s.now - d.startAt) * 1000
-	if d.burstDive then
-		d.resolved = true
-		local w, p = Config.BURST_DIVE_CUT, Config.BURST_DIVE_CUT_PERFECT
-		local quality = noteRange(s, "Burst Dive", ms, w[1], w[2], p[1], p[2])
-		if quality == "Miss" then
-			return true
-		end
-		local speed = if quality == "Perfect" then Config.BURST_DIVE_SPEED_PERFECT else Config.BURST_DIVE_SPEED
-		setFlat(s, d.dir * speed)
-		s.takeoffSpeed = math.max(s.takeoffSpeed, speed)
-		emit(s, "BurstDive", quality, d.dir)
-		return true
-	end
-	if d.backward then
-		d.resolved = true
-		local w, p = Config.REVERSE_SNAP_WINDOW, Config.REVERSE_SNAP_PERFECT
-		local quality = noteRange(s, "Reverse Snap", ms, w[1], w[2], p[1], p[2])
-		if quality == "Miss" then
-			s.stumbleOnLand = true
-			return true
-		end
-		local keep = if quality == "Perfect" then 1 else Config.REVERSE_SNAP_KEEP
-		local speed = flatOf(s.vel).Magnitude * keep
-		setFlat(s, d.dir * speed)
-		s.takeoffSpeed = math.max(s.takeoffSpeed, speed)
-		emit(s, "ReverseSnap", quality, d.dir)
-		return true
-	end
-	return false
-end
-
--- Dive: a ground layout at speed, or an air layout that spends the dodge.
-local function tryLayout(s: State, input: Input): boolean
-	if s.holding then
-		return false
-	end
-	local flat = flatOf(s.vel)
-	local speed = flat.Magnitude
-	local inAir = AIR[s.state] == true
-	if inAir then
-		if s.state == "Diving" or not s.dodgeAvailable then
-			return false
-		end
-	elseif not (RUNNING[s.state] or s.state == "Sliding") or speed < Config.LAYOUT_MIN_SPEED then
-		return false
-	end
-	local line = unitOr(flat, s.heading)
-	local aim = unitOr(input.aim or line, line)
-	local dir = VecMath.rotateToward(line, aim, Config.LAYOUT_CONE)
-	local nv = dir * (speed + Config.LAYOUT_BOOST)
-	local vy = if inAir then math.max(s.vel.Y, 0) + Config.LAYOUT_UP * 0.5 else Config.LAYOUT_UP
-	if inAir then
-		s.dodgeAvailable = false
-	end
-	s.vel = Vector3.new(nv.X, vy, nv.Z)
-	s.heading = dir
-	s.grounded = false
-	s.diveAt = s.now
-	if not inAir then
-		s.airborneSince = s.now
-		s.takeoffSpeed = nv.Magnitude
-	end
-	s.dodge = nil
-	TechCore.enter(s, "Diving", true)
-	emit(s, "Layout", "Clean", dir, if inAir then "Air" else nil)
+	-- Sky Reach: hang a moment, hands up
+	s.skyPerfectUntil = s.now + Config.SKY_REACH_TIME
+	s.reachHangUntil = s.now + Config.SKY_REACH_HANG
+	s.vel = Vector3.new(s.vel.X, math.max(s.vel.Y, 0), s.vel.Z)
+	emit(s, "SkyReach", "Clean", Vector3.yAxis)
 	return true
 end
 
@@ -827,8 +712,15 @@ local function tryTechRoll(s: State, at: number): boolean
 	if ms < -Config.TECH_ROLL_WINDOW or ms > Config.TECH_ROLL_WINDOW then
 		return false
 	end
-	local quality =
-		noteRange(s, "Tech Roll", ms, -Config.TECH_ROLL_WINDOW, Config.TECH_ROLL_WINDOW, 0, Config.TECH_ROLL_PERFECT)
+	local quality = noteRange(
+		s,
+		"Tech Roll",
+		ms,
+		-Config.TECH_ROLL_WINDOW,
+		Config.TECH_ROLL_WINDOW,
+		-Config.TECH_ROLL_PERFECT,
+		Config.TECH_ROLL_PERFECT
+	)
 	if quality == "Miss" then
 		return false
 	end
@@ -840,6 +732,22 @@ local function tryTechRoll(s: State, at: number): boolean
 	s.downedUntil = -math.huge
 	TechCore.enter(s, "Recovering", true)
 	emit(s, "TechRoll", quality, s.heading)
+	return true
+end
+
+-- Space while face down, after the Tech Roll window: a scramble. You get
+-- up sooner (SCRAMBLE_DOWN of the belly slide left at most), once per dive,
+-- but keep no speed. Returns whether the press was used.
+local function scramble(s: State): boolean
+	if s.state ~= "Downed" or s.scrambled then
+		return false
+	end
+	if s.now - s.landedAt < Config.TECH_ROLL_WINDOW / 1000 then
+		return false -- still inside the roll window: keep it for the roll
+	end
+	s.scrambled = true
+	s.downedUntil = math.min(s.downedUntil, s.now + Config.SCRAMBLE_DOWN)
+	emit(s, "Scramble", "Clean", s.heading)
 	return true
 end
 
@@ -865,46 +773,20 @@ local function tryWallKick(s: State): boolean
 	s.wallKickUsed = true
 	s.dodgeAvailable = true
 	s.airborneSince = s.now
-	s.dodge = nil
 	TechCore.enter(s, "Airborne", true)
 	emit(s, "WallKick", quality, n)
 	return true
 end
 
--- Dive right after an air dodge: the Stall cancels the dodge into a hang and
--- gives it back. Returns whether the press was used.
-local function tryStall(s: State): boolean
-	local d = s.dodge
-	if s.state ~= "AirDodging" or not d or s.stallUsed then
-		return false
-	end
-	local ms = (s.now - d.startAt) * 1000
-	if ms > Config.STALL_WINDOW then
-		return false
-	end
-	local quality = noteRange(s, "Stall", ms, 0, Config.STALL_WINDOW, 0, Config.STALL_PERFECT)
-	local pre = flatOf(d.preVel)
-	s.vel = Vector3.new(pre.X, 0, pre.Z)
-	s.stallUsed = true
-	s.stallUntil = s.now + Config.STALL_HANG
-	s.dodgeAvailable = true
-	s.airborneSince = s.now
-	s.dodge = nil
-	TechCore.enter(s, "Airborne", true)
-	emit(s, "Stall", quality, Vector3.yAxis)
-	return true
-end
-
-local skyJump: (State, number) -> ()
-
--- A Jump press on the ground: a Slide Hop from a slide, a Sky out of a
--- crouch, or a jump (always at once).
+-- Space: on the ground a jump (always at once) or a Slide Hop from a slide;
+-- in the air a Wall Kick off a wall you just touched, else the air action;
+-- face down after a dive a Tech Roll (on time) or a scramble (late).
 local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if s.state == "Downed" then
-		return tryTechRoll(s, at)
+		return tryTechRoll(s, at) or scramble(s)
 	end
 	if AIR[s.state] then
-		return tryWallKick(s) or tryAirDodge(s, input, env)
+		return tryWallKick(s) or tryAirAction(s, input, env)
 	end
 	if s.state == "Recovering" then
 		return false
@@ -919,36 +801,9 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if s.holding then
 		return false -- the pivot hop belongs to the throwing step
 	end
-	-- a crouch (Slide held while slow) charges a Sky; otherwise jump at once
-	local crouch = s.skyChargeAt
-	if crouch and s.now - crouch >= Config.SKY_MIN_HOLD then
-		skyJump(s, s.now - crouch)
-		return true
-	end
 	jumpOff(s, Config.JUMP_TAP, true)
 	emit(s, "Jump", "Clean", s.heading)
 	return true
-end
-
--- The Sky: a jump out of a crouch held `held` seconds.
-skyJump = function(s: State, held: number)
-	s.skyChargeAt = nil
-	local c = math.clamp(held / Config.SKY_CHARGE, 0, 1)
-	local quality = noteRange(
-		s,
-		"Sky",
-		held * 1000,
-		Config.SKY_MIN_HOLD * 1000,
-		math.huge,
-		Config.SKY_PERFECT[1] * 1000,
-		Config.SKY_PERFECT[2] * 1000
-	)
-	local mult = if quality == "Perfect" then Config.SKY_HEIGHT_PERFECT else 1 + (Config.SKY_HEIGHT - 1) * c
-	jumpOff(s, Config.JUMP_FULL * math.sqrt(mult), false)
-	if quality == "Perfect" then
-		s.skyPerfectUntil = s.now + 1.5
-	end
-	emit(s, "Sky", quality, Vector3.yAxis)
 end
 
 -- Burst released: a tap (under BURST_KICK_TAP) is a Burst Kick.
@@ -1058,16 +913,8 @@ local function tryPresses(s: State, input: Input, env: Env)
 			s.buffer[action] = nil
 		end
 	end
-	-- on the ground cuts come from the stick (gestureCut); a Cut press is
-	-- only read in the air (stage 2 replaces it)
-	attempt("Cut", function()
-		return AIR[s.state] == true and tryDodgeCancel(s)
-	end)
 	attempt("Jump", function(at)
 		return tryJump(s, input, env, at)
-	end)
-	attempt("Dive", function()
-		return tryStall(s) or tryLayout(s, input)
 	end)
 end
 
@@ -1075,7 +922,7 @@ end
 -- landing and leaving the ground
 ---------------------------------------------------------------------------
 
-local function onLand(s: State, input: Input)
+local function onLand(s: State)
 	s.landedAt = s.now
 	s.frame.landed = true
 	s.frame.landingSpeed = math.max(s.frame.landingSpeed, -s.vel.Y)
@@ -1084,48 +931,44 @@ local function onLand(s: State, input: Input)
 	s.discResetUsed = false
 	s.extraDodgesLeft = s.extraDodges
 	s.skyPerfectUntil = -math.huge
-	s.dodge = nil
 	s.storedFlips = 0
 	s.flipResetsAir = 0
-	s.stallUsed = false
-	s.stallUntil = -math.huge
 	s.wallKickUsed = false
 	s.wallTouchAt = nil
+	s.reachHangUntil = -math.huge
 
 	if s.state == "Diving" then
+		-- FEEL: out of a dive you belly-slide (DIVE_SLIDE_FRICTION) for
+		-- LAYOUT_DOWN_TIME, then get up (GETUP_TIME). Space right at the
+		-- touchdown is a Tech Roll; Space later scrambles up sooner.
 		s.downedUntil = s.now + Config.LAYOUT_DOWN_TIME
+		s.scrambled = false
 		TechCore.enter(s, "Downed", true)
 		return
 	end
 	local wd = s.wavedash
 	s.wavedash = nil
 	if wd then
+		-- FEEL: the Wavedash. A dive pressed just before the ground never
+		-- lays out: you land in a fast slide toward the stick (+boost),
+		-- and can hop (Space) or carve (Shift) out of it.
 		local flat = flatOf(s.vel)
 		local boost = if wd.perfect then Config.WAVEDASH_BURST_PERFECT else Config.WAVEDASH_BURST
+		local speed = flat.Magnitude
 		s.state = baseState(s)
 		s.stateSince = s.now
-		setFlat(s, flat + wd.dir * boost)
+		setFlat(s, wd.dir * (speed + boost))
+		s.heading = wd.dir
 		s.wavedashAt = s.now
+		if not s.holding then
+			startSlide(s, nil)
+			s.wave = true
+		end
 		emit(s, "Wavedash", if wd.perfect then "Perfect" else "Clean", wd.dir)
-		return
-	end
-	if s.stumbleOnLand then
-		s.stumbleOnLand = false
-		s.recoverUntil = s.now + Config.STUMBLE_TIME
-		TechCore.enter(s, "Recovering", true)
-		emit(s, "Stumble", "Miss", s.heading)
 		return
 	end
 	s.state = baseState(s)
 	s.stateSince = s.now
-	-- Slide held through the touchdown (Fast Fall): a Perfect Landing Slide
-	if s.slidePrimed and isHeld(input, "Slide") then
-		local speed = flatOf(s.vel).Magnitude
-		if slideAllowed(s, speed, true) then
-			TechCore.noteTiming(s, "Landing Slide", 0, Config.LANDING_SLIDE_WINDOW, Config.LANDING_SLIDE_PERFECT)
-			startSlide(s, "Perfect", "Held")
-		end
-	end
 end
 
 ---------------------------------------------------------------------------
@@ -1212,9 +1055,6 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	local want = stickDir(input)
 	local mag = math.min(flatOf(input.move).Magnitude, 1)
 	local top = s.topSpeed
-	if s.skyChargeAt then
-		top *= Config.SKY_SLOW
-	end
 	if want == nil then
 		-- FEEL: letting go of the stick at speed plants the feet. For up to
 		-- CUT_RELEASE_MAX you only lose PLANT_HOLD_FRICTION, so the next
@@ -1334,7 +1174,7 @@ end
 local function airFlat(s: State, input: Input, dt: number): Vector3
 	local flat = flatOf(s.vel)
 	local speed = flat.Magnitude
-	if s.state ~= "Diving" and s.state ~= "AirDodging" then
+	if s.state ~= "Diving" then
 		local want = stickDir(input)
 		if want then
 			-- push along the stick, turning at most AIR_TURN °/s and never
@@ -1405,7 +1245,7 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	-- a jump this frame lifts off even if the ray still sees the floor
 	s.grounded = env.grounded and s.vel.Y <= 0.01
 	if s.grounded and not wasGrounded then
-		onLand(s, input)
+		onLand(s)
 	elseif wasGrounded and not s.grounded then
 		-- walked off a ledge (jumps and layouts lift off themselves)
 		s.frame.leftGround = true
@@ -1417,26 +1257,13 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	settleBase(s)
 	if not s.grounded and (RUNNING[s.state] or s.state == "HoldingDisc" or s.state == "Sliding") then
 		TechCore.enter(s, "Airborne", true)
-		s.skyChargeAt = nil
-	elseif s.grounded and (s.state == "Airborne" or s.state == "AirDodging") then
+	elseif s.grounded and s.state == "Airborne" then
 		TechCore.enter(s, baseState(s), true)
 	end
 
 	-- held edges
 	updateBurst(s, input, dt)
 	local jumpHeld = isHeld(input, "Jump")
-	-- the Sky crouch: Slide held on the ground while slow (not a slide)
-	local crouching = s.grounded
-		and RUNNING[s.state] == true
-		and not s.holding
-		and isHeld(input, "Slide")
-		and flatOf(s.vel).Magnitude <= Config.SKY_MAX_SPEED
-	if crouching then
-		s.skyChargeAt = s.skyChargeAt or s.now
-	else
-		s.skyChargeAt = nil
-	end
-	s.slidePrimed = (not s.grounded) and isHeld(input, "Slide")
 
 	-- the wall you're touching in the air (Wall Kick window)
 	if not s.grounded and env.wallNormal then
@@ -1453,12 +1280,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	tryPresses(s, input, env)
 
 	-- timers
-	if s.state == "AirDodging" then
-		local d = s.dodge
-		if d == nil or s.now - d.startAt >= Config.AIR_DODGE_HANG - 1e-9 then
-			TechCore.enter(s, if s.grounded then baseState(s) else "Airborne", true)
-		end
-	end
 	if s.state == "Downed" and s.now >= s.downedUntil then
 		s.recoverUntil = s.now + Config.GETUP_TIME
 		TechCore.enter(s, "Recovering", true)
@@ -1469,9 +1290,11 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		local speed = flatOf(s.vel).Magnitude
 		local stand = if s.skid
 			then s.now - s.slideSince >= Config.SKID_MAX_TIME or speed < Config.SKID_EXIT_SPEED
-			else s.now - s.slideSince >= Config.SLIDE_MAX_TIME or not isHeld(input, "Slide") or speed < 2
+			elseif s.wave then s.now - s.slideSince >= Config.WAVE_SLIDE_TIME or speed < Config.SKID_EXIT_SPEED
+			else s.now - s.slideSince >= Config.SLIDE_MAX_TIME or speed < 2
 		if stand and s.now - s.slideSince > 0.05 then
 			s.skid = false
+			s.wave = false
 			TechCore.enter(s, baseState(s), true)
 		end
 	end
@@ -1498,8 +1321,10 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		flat = brakeFlat(s, Config.CATCH_RUNOUT_FRICTION, dt)
 	elseif RUNNING[s.state] then
 		flat = runFlat(s, input, dt)
+	elseif s.state == "Downed" then
+		flat = brakeFlat(s, Config.DIVE_SLIDE_FRICTION, dt) -- the belly slide
 	else
-		-- Downed, Recovering
+		-- Recovering
 		flat = brakeFlat(s, Config.GROUND_FRICTION, dt)
 	end
 
@@ -1514,12 +1339,12 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 
 	-- vertical
 	local vy = s.vel.Y
-	if s.grounded or s.state == "AirDodging" or s.now < s.stallUntil then
-		vy = 0 -- on the ground, the dodge's hang, or a Stall
+	if s.grounded or s.now < s.reachHangUntil then
+		vy = 0 -- on the ground, or the Sky Reach hang
 	else
 		local g = Config.PLAYER_GRAVITY * (if vy < 0 then Config.FALL_GRAVITY_MULT else 1)
-		if isHeld(input, "Slide") and s.state ~= "Diving" then
-			g = Config.PLAYER_GRAVITY * Config.FAST_FALL_MULT
+		if s.state == "Diving" then
+			g *= Config.DIVE_GRAVITY_MULT
 		end
 		if s.now < s.skyWalkUntil then
 			g *= s.skyWalkGravity

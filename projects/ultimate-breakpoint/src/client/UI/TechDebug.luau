@@ -6,6 +6,7 @@
 	  SPEED  21.4 / 22   fall 0.0      flat speed / current top speed
 	  STATE  Grounded  1.24 s          + DRIFT while a turn is rate-limited
 	  BURST  [##########] 100          the meter
+	  AIR    READY / SPENT  +1 flip     the one air action (dive / sky reach)
 	  CUT    PERFECT  let go 72 ms  90°  kept 110%   the last cut (or PLANTED / SKID)
 	  LAST   Cut: 34 ms early  CLEAN   the last timed press and its grade
 	  BUFFER Jump 42 ms                presses still waiting in the buffer
@@ -75,6 +76,27 @@ local function render(): string
 	end
 	table.insert(lines, st)
 	table.insert(lines, string.format("BURST  %s %3d", bar(s.burst), math.floor(s.burst + 0.5)))
+	-- the air action (stage 2): ready / spent, plus stored flips
+	if s.grounded then
+		table.insert(
+			lines,
+			if s.state == "Downed"
+				then "AIR    face down (Space: roll on the touchdown, scramble after)"
+				else "AIR    -"
+		)
+	else
+		local ready = s.dodgeAvailable or s.storedFlips > 0
+		table.insert(
+			lines,
+			string.format(
+				"AIR    %s%s",
+				if ready
+					then '<font color="#5AE6FF">READY</font> (Space + dir = dive, no dir = reach)'
+					else '<font color="#96A0B4">SPENT</font>',
+				if s.storedFlips > 0 then string.format("  +%d flip", s.storedFlips) else ""
+			)
+		)
+	end
 	-- the cut: the plant in progress, then how the last cut went
 	local r = s.release
 	local cr = s.cutReport
