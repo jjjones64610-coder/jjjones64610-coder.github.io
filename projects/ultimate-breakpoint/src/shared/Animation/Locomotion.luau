@@ -14,7 +14,7 @@
 	  * walk weight 1 up to 7 studs/s, run weight 1 from 12, linear between
 	  * time-warp walk = speed / 6.4, run = speed / 12.8 (the speeds the
 	    default cycles are authored for), divided by the body height scale;
-	    clamped walk 0.5..2.0, run 0.7..2.4 — feet do not skate
+	    clamped walk 0.5..2.0, run 0.7..RUN_MAX_WARP (covers Burst + abilities) — feet do not skate
 	  * idle with hysteresis: in below 0.6 studs/s, out above 1.5
 	Tracks only start / stop on real mode changes (ground, rising, falling,
 	pose). "Pose" (slides, dives, the pivot, the mark shuffle) plays the idle
@@ -52,6 +52,7 @@ local WALK_FULL = 7 -- walk weight 1 up to here
 local RUN_FULL = 12 -- run weight 1 from here
 local WALK_AUTHORED = 6.4 -- the walk cycle matches the ground at this speed
 local RUN_AUTHORED = 12.8
+local RUN_MAX_WARP = 3.6 -- 46 studs/s: top Burst plus surges; past this the feet would skate
 local IDLE_ENTER = 0.6
 local IDLE_LEAVE = 1.5
 local SMALL = 0.0001 -- "off" weight that keeps a track playing (0 is unreliable)
@@ -243,7 +244,7 @@ local function blendGround(c: Controller, dt: number, speed: number)
 	setWeight(c, "walk", math.max(1 - runW, SMALL), 0.1)
 	setWeight(c, "run", math.max(runW, SMALL), 0.1)
 	setSpeed(c, "walk", math.clamp(s / WALK_AUTHORED, 0.5, 2.0))
-	setSpeed(c, "run", math.clamp(s / RUN_AUTHORED, 0.7, 2.4))
+	setSpeed(c, "run", math.clamp(s / RUN_AUTHORED, 0.7, RUN_MAX_WARP))
 end
 
 -- speed: horizontal studs/s. mode: Ground / Rising / Falling / Pose (Pose =

@@ -83,6 +83,9 @@ local function rebuild()
 	for _, s in { "keyboard", "gamepad" } do
 		local b = controllers.SettingsController.bindings(s)
 		for action, keys in b do
+			if not table.find(InputConfig.Actions, action) then
+				continue -- only the core actions can be bound (Config/Input)
+			end
 			for _, k in keys do
 				local list = keyMap[k]
 				if not list then
@@ -139,6 +142,28 @@ function InputController.keyLabel(action: string): string
 	return controllers.SettingsController.keyLabel(action, if scheme == "Gamepad" then "gamepad" else "keyboard")
 end
 
+-- The ability chord (Config/Input AbilityChord): every listed action went
+-- down within the window. The action itself still fires first.
+local chordAt: { [string]: number } = {}
+local CHORD = InputConfig.AbilityChord
+
+local function checkChord(action: string)
+	if not table.find(CHORD.actions, action) then
+		return
+	end
+	local t = os.clock()
+	chordAt[action] = t
+	for _, a in CHORD.actions do
+		local at = chordAt[a]
+		if not held[a] or at == nil or t - at > CHORD.window then
+			return
+		end
+	end
+	table.clear(chordAt)
+	InputController.ActionBegan:Fire("Ability", scheme)
+	InputController.ActionEnded:Fire("Ability")
+end
+
 function InputController.fire(action: string, began: boolean)
 	if began then
 		if held[action] then
@@ -149,6 +174,7 @@ function InputController.fire(action: string, began: boolean)
 			sprintToggle = not sprintToggle
 		end
 		InputController.ActionBegan:Fire(action, scheme)
+		checkChord(action)
 	else
 		if not held[action] then
 			return

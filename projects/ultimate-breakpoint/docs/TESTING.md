@@ -80,6 +80,31 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
+### STAGE 1 — Movement and turning (docs/CORE_DESIGN.md) ← test this now
+Start the place (F5), choose **TEST FIELD (MOVEMENT)** on the title screen. The debug panel
+(top right) shows SPEED, STATE, BURST and a **CUT** line for every cut. Tune anything in
+`src/shared/Config/Tuning.luau`.
+
+Controls are only: WASD, mouse, Space, Shift, LMB, RMB (+ Space+Shift together = ability, M = menu).
+- [ ] **Nothing else is bound.** Q, E, C, F, G, Z, X, T, 1-5, R, B do nothing.
+- [ ] **Momentum:** from a standstill you build up to ~30 (SPEED line), hold Shift to build to ~40. Letting go of WASD slides you to a stop instead of halting instantly.
+- [ ] **Turning by speed:** walking you can turn on the spot; at full sprint, sweeping turns (holding W and adding A) keep your speed, while sharp ones show DRIFT and cost speed.
+- [ ] **The planted cut:** running, *let go of W*, then press D. The CUT line says PERFECT when the let-go was 40-120 ms (kept 100 %+), CLEAN otherwise (kept 80 %). Try it on the cone slalom; a good run keeps the SPEED line high.
+- [ ] **The sloppy cut:** at sprint, swap W for S (or S+D) in the same instant with no gap at all. Yanking the direction round more than 110° with no plant gives **SKID**: you slide on, lose speed, then run again. (Note: holding W and pressing S cancels to "no input", so that counts as letting go — a cut, graded by how long both were down.)
+- [ ] **Juke:** cut right, then within ~0.1 s go straight back to W. CUT stays PERFECT/CLEAN and you're back on your old line at 90 %.
+- [ ] **Spam is capped:** cutting again within 0.6 s keeps at most 85 %.
+- [ ] **Look:** the body leans into turns and acceleration, pitches low at sprint, and the feet match the ground speed (no ice skating), including at full Burst.
+- [ ] **Chord:** Space and Shift pressed together fire the ability (and you still jump). A normal "hold Shift, then jump" never fires it.
+- [ ] **Bots** (play a 3v3) cut the same way: short stops before they change direction.
+
+What to tell me: does running feel heavy or floaty (RUN_ACCEL, GROUND_FRICTION)? Are turns too wide or too
+tight (TURN_RATE)? Is the Perfect let-go window findable (CUT_RELEASE_PERFECT)? Does the skid trigger when
+you don't want it (SKID_ANGLE, SKID_MIN_SPEED)?
+
+Not stage 1 (still on the old design until their stage): jumping/air dodge, dives, the disc, throwing and
+the pivot (throw type is stuck on Backhand), catching and marking (RMB still marks), the Training hall
+tutorial (it still teaches Q/E), and abilities (still FLOW-meter based).
+
 ### 0. Tech engine (the default)
 The debug HUD sits top right (always in Studio): speed, state, Burst, and
 the last timed press in ms ("Cut: 34 ms early").

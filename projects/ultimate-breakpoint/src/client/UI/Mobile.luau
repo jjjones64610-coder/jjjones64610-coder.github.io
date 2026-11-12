@@ -125,11 +125,8 @@ function Mobile.build(parent: ScreenGui, c: any)
 	local defs: { { any } } = {
 		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
 		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "HOP" },
-		{ "Cut", UDim2.fromOffset(160, 160), 66, "CUT", "SWING\nLEFT" },
-		{ "Slide", UDim2.fromOffset(60, 260), 60, "SLIDE", "LOW" },
-		{ "Dive", UDim2.fromOffset(240, 110), 66, "DIVE", "SWING\nRIGHT" },
-		{ "Burst", UDim2.fromOffset(80, 175), 60, "BURST", "" },
-		{ "Secondary", UDim2.fromOffset(310, 120), 58, "MARK", "FAKE" },
+		{ "Burst", UDim2.fromOffset(80, 175), 60, "SPRINT", "" },
+		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "FAKE" },
 	}
 	local labelled: { { any } } = {}
 	for _, def in defs do
@@ -139,10 +136,6 @@ function Mobile.build(parent: ScreenGui, c: any)
 		table.insert(labelled, { b :: any, def[4], def[5], name })
 	end
 	refs.labelled = labelled
-	local sprint = circleButton(right, "Sprint", "SPRINT", UDim2.fromOffset(40, 90), 54)
-	sprint.Activated:Connect(function()
-		controllers.InputController.toggleTouchSprint()
-	end)
 
 	local discRow = make("Frame", {
 		Name = "DiscButtons",

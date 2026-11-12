@@ -50,11 +50,14 @@ local Solver = require(Shared.Disc.Solver)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
 local VecMath = require(Shared.Util.VecMath)
 local TrainingBuilder = require(script.Parent.Parent.Arena.TrainingBuilder)
+local TestFieldBuilder = require(script.Parent.Parent.Arena.TestFieldBuilder)
 
 local TrainingService = {}
 
 local services: any
 local layout: TrainingBuilder.Layout
+local testField: TestFieldBuilder.Layout
+local onTestField: { [number]: boolean } = {} -- actor id -> on the test field
 
 export type Session = {
 	actor: any,
@@ -1774,7 +1777,20 @@ function TrainingService.startDrill(actor: any, drill: string)
 	DRILLS[drill].start(s)
 end
 
+-- The empty test field (Arena/TestFieldBuilder): training role, no drill.
+function TrainingService.enterTestField(actor: any)
+	TrainingService.stopDrill(actor)
+	if actor.role ~= "Training" then
+		services.TeamService.setTraining(actor, true)
+	end
+	onTestField[actor.id] = true
+	services.PlayerService.setFrozen(actor, false)
+	services.PlayerService.setLine(actor, nil, nil)
+	services.PlayerService.teleport(actor, testField.entry, { face = true })
+end
+
 function TrainingService.enter(actor: any)
+	onTestField[actor.id] = nil
 	if actor.role ~= "Training" then
 		services.TeamService.setTraining(actor, true)
 	end
@@ -1784,6 +1800,7 @@ function TrainingService.enter(actor: any)
 end
 
 function TrainingService.leave(actor: any)
+	onTestField[actor.id] = nil
 	TrainingService.stopDrill(actor)
 	if actor.role == "Training" then
 		services.PlayerService.setTeam(actor, "N", "Spectate")
@@ -1793,7 +1810,8 @@ end
 
 function TrainingService.respawned(actor: any)
 	TrainingService.stopDrill(actor)
-	services.PlayerService.teleport(actor, layout.entry, { face = true })
+	local at = if onTestField[actor.id] then testField.entry else layout.entry
+	services.PlayerService.teleport(actor, at, { face = true })
 end
 
 function TrainingService.action(player: Player, kind: string, payload: any)
@@ -1803,6 +1821,8 @@ function TrainingService.action(player: Player, kind: string, payload: any)
 	end
 	if kind == "EnterTraining" then
 		TrainingService.enter(actor)
+	elseif kind == "EnterTestField" then
+		TrainingService.enterTestField(actor)
 	elseif kind == "LeaveTraining" then
 		TrainingService.leave(actor)
 	elseif kind == "CancelDrill" then
@@ -1827,6 +1847,7 @@ end
 function TrainingService.Init(s: any)
 	services = s
 	layout = TrainingBuilder.build(ArenasConfig.TrainingOrigin, workspace)
+	testField = TestFieldBuilder.build(ArenasConfig.TestFieldOrigin, workspace)
 end
 
 function TrainingService.Start()

@@ -192,8 +192,8 @@ export type Bot = {
 	tech: TechCore.State,
 	techOn: boolean, -- TechCore drove the last frame
 	burstUntil: number, -- hold Burst until (server time)
-	slideUntil: number,
 	jumpUntil: number,
+	releaseUntil: number, -- the stick let go until (the cut gesture, like a player)
 	-- intent (brain output)
 	target: Vector3?,
 	targetVel: Vector3?, -- the target moves (a guard's man): match it, no stop radius
@@ -436,8 +436,8 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		tech = TechCore.new(0),
 		techOn = false,
 		burstUntil = 0,
-		slideUntil = 0,
 		jumpUntil = 0,
+		releaseUntil = 0,
 		target = nil,
 		targetVel = nil,
 		speed = JOG,
@@ -521,19 +521,27 @@ local function usesTech(b: Bot): boolean
 	return TechConfig.BOTS_USE_TECH and not b.sim.holding
 end
 
--- A press on the tech engine. The classic vocabulary maps onto it: Burst is
--- a short hold (a run), a Cut in the air is an air dodge, Slide and Jump are
--- held a moment (a slow bot's long Jump hold is a Sky).
+-- A press on the tech engine. Bots only get the inputs players have
+-- (docs/CORE_DESIGN.md): Burst is a short hold, a Cut on the ground is the
+-- player's gesture (let go of the stick, then the brain's new direction;
+-- better bots time the let-go closer to Perfect), a Cut in the air is an air
+-- dodge, and there is no Slide (skids come from hard turns).
 local function techPress(b: Bot, action: string)
 	local tech = b.tech
 	local t = now()
 	if action == "Burst" then
 		b.burstUntil = t + 0.7
 		return
-	elseif action == "Cut" and not tech.grounded then
+	elseif action == "Cut" and tech.grounded then
+		local lo, hi = TechConfig.CUT_RELEASE_PERFECT[1], TechConfig.CUT_RELEASE_PERFECT[2]
+		local mid = (lo + hi) / 2
+		local miss = (1 - b.skill) * 0.12 * (b.rng:next() * 2 - 1)
+		b.releaseUntil = t + math.clamp(mid + miss, 0.02, TechConfig.CUT_RELEASE_MAX)
+		return
+	elseif action == "Cut" then
 		action = "Jump" -- air redirect -> air dodge
 	elseif action == "Slide" then
-		b.slideUntil = t + 0.6
+		return
 	elseif action == "Jump" then
 		local slow = TechCore.flatSpeed(tech) <= TechConfig.SKY_MAX_SPEED
 		b.jumpUntil = t + (if slow and b.rng:next() < b.skill then TechConfig.SKY_PERFECT[1] + 0.02 else 0.15)
@@ -1003,14 +1011,13 @@ techMotor = function(b: Bot, input: MovementSim.Input, env: MovementSim.Env, ste
 	-- turn it back into the speed it wants, as a share of the core's top
 	local wantSpeed = input.move.Magnitude * (if input.sprint then SPRINT else JOG)
 	local top = if sprint then TechConfig.BURST_TOP_SPEED else TechConfig.RUN_TOP_SPEED
-	local move = if input.move.Magnitude > 0.01
+	local move = if input.move.Magnitude > 0.01 and t >= b.releaseUntil
 		then input.move.Unit * math.clamp(wantSpeed / top, 0, 1)
 		else Vector3.zero
 	TechCore.advance(tech, {
 		move = move,
 		held = {
 			Burst = t < b.burstUntil or sprint,
-			Slide = t < b.slideUntil,
 			Jump = t < b.jumpUntil,
 		},
 		aim = b.face or b.facing,

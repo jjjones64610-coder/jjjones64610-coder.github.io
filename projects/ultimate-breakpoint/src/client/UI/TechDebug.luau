@@ -5,7 +5,8 @@
 
 	  SPEED  21.4 / 22   fall 0.0      flat speed / current top speed
 	  STATE  Grounded  1.24 s          + DRIFT while a turn is rate-limited
-	  BURST  [##########] 100          the meter (spent from step 3)
+	  BURST  [##########] 100          the meter
+	  CUT    PERFECT  let go 72 ms  90°  kept 110%   the last cut (or PLANTED / SKID)
 	  LAST   Cut: 34 ms early  CLEAN   the last timed press and its grade
 	  BUFFER Jump 42 ms                presses still waiting in the buffer
 	  CORE   120 Hz · 2 steps · 60 fps
@@ -74,6 +75,34 @@ local function render(): string
 	end
 	table.insert(lines, st)
 	table.insert(lines, string.format("BURST  %s %3d", bar(s.burst), math.floor(s.burst + 0.5)))
+	-- the cut: the plant in progress, then how the last cut went
+	local r = s.release
+	local cr = s.cutReport
+	if r and s.now - r.at <= TechConfig.CUT_RELEASE_MAX then
+		table.insert(
+			lines,
+			string.format('CUT    <font color="#5AE6FF">PLANTED %d ms</font>', math.floor((s.now - r.at) * 1000))
+		)
+	elseif cr and cr.quality == "Skid" then
+		table.insert(
+			lines,
+			string.format('CUT    <font color="#FF5A64">SKID</font> (no plant, %d°)', math.floor(cr.angle))
+		)
+	elseif cr then
+		table.insert(
+			lines,
+			string.format(
+				'CUT    <font color="%s">%s</font>  let go %d ms  %d°  kept %d%%',
+				GRADE_COLOR[cr.quality] or "#FFFFFF",
+				string.upper(cr.quality),
+				math.floor(cr.gapMs),
+				math.floor(cr.angle),
+				math.floor(cr.kept * 100 + 0.5)
+			)
+		)
+	else
+		table.insert(lines, "CUT    - (let go of WASD, then snap a new way)")
+	end
 	local timing = s.lastTiming
 	if timing then
 		table.insert(

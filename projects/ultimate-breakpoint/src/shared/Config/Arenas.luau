@@ -316,5 +316,6 @@ Arenas.Default = "Championship"
 -- z 760..1140; the furthest +Z arena geometry on the Normal field (the
 -- scaled Rooftop skyline) ends near z 660, so the hall stays clear.
 Arenas.TrainingOrigin = Vector3.new(0, 0, 900)
+Arenas.TestFieldOrigin = Vector3.new(1400, 0, 0) -- the empty movement test field (stage 1)
 
 return Arenas

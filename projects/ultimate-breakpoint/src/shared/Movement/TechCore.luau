@@ -160,6 +160,7 @@ export type State = {
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
+	cutReport: { quality: string, gapMs: number, angle: number, kept: number }?, -- the last cut (debug HUD)
 	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
 	cutReadyAt: number,
@@ -291,6 +292,7 @@ function TechCore.new(now: number?): State
 		release = nil,
 		lastCut = nil,
 		skid = false,
+		cutReport = nil,
 		crossAt = nil,
 		lastCutAt = -math.huge,
 		cutReadyAt = -math.huge,
@@ -1190,8 +1192,15 @@ local function gestureCut(s: State, want: Vector3): Vector3?
 	s.lastCutAt = s.now
 	s.lastCut = { at = s.now, origDir = r.dir, speed = r.speed }
 	s.heading = want
+	local out = r.speed * keep + bonus
+	s.cutReport = {
+		quality = if perfect then "Perfect" else "Clean",
+		gapMs = gap * 1000,
+		angle = angle,
+		kept = if r.speed > 1e-3 then out / r.speed else 1,
+	}
 	emit(s, "Cut", if perfect then "Perfect" else "Clean", want, if mirror then "Mirror" else nil)
-	return want * (r.speed * keep + bonus)
+	return want * out
 end
 
 local function runFlat(s: State, input: Input, dt: number): Vector3
@@ -1255,6 +1264,7 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	if speed >= Config.SKID_MIN_SPEED and not s.holding and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE then
 		startSlide(s, nil)
 		s.skid = true
+		s.cutReport = { quality = "Skid", gapMs = 0, angle = VecMath.flatAngle(s.heading, want), kept = 0 }
 		emit(s, "Skid", "Miss", s.heading)
 		return flat
 	end

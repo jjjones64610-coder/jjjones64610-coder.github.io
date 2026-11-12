@@ -42,8 +42,7 @@
 	If the per-frame step ever errors, the body is stopped (no runaway
 	character) and the error is reported once.
 
-	TWO ENGINES. Setting TechEngine (default on) runs the new tech core
-	instead (Movement/TechCore, docs/tech-spec.md build steps 1-2): the
+	ONE ENGINE. The tech core (Movement/TechCore) drives the body: the
 	Humanoid is for animation only (EvaluateStateMachine = false, no
 	WalkSpeed, no jumping); TechCore steps at 120 Hz and its velocity is
 	written straight to the root every frame, with a VectorForce cancelling
@@ -53,7 +52,8 @@
 	Presses go into the core's input buffer; the tech that uses them comes
 	in later build steps. The character attribute UB_Air tells the Animate
 	script when you are airborne (the Humanoid state no longer says).
-	Turning the setting off switches back to MovementSim at once.
+	MovementSim is still used for the holding / pivot state (stage 3 moves
+	it into the throwing module); it no longer moves the body.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -337,13 +337,6 @@ local function buildEnv(): MovementSim.Env
 	return env
 end
 
-local function currentInput(): MovementSim.Input
-	return {
-		move = controllers.InputController.moveVector(),
-		sprint = controllers.InputController.sprinting(),
-	}
-end
-
 -- Feeds the local signature tracker; a completed move pays into the local
 -- chain and is announced at once (the server pays the real points).
 local function feedSignatures(ev: Signatures.Event)
@@ -427,10 +420,11 @@ end
 -- character setup
 ---------------------------------------------------------------------------
 
--- Puts the current character on the engine the TechEngine setting picks.
+-- Puts the current character on the tech engine (the only engine; the
+-- classic Humanoid-style sim no longer drives players).
 local function applyEngine()
 	local h, r, c = humanoid, root, character
-	local want = controllers.SettingsController.get("TechEngine") ~= false
+	local want = true
 	if not h or not r or not c then
 		engineOn = false
 		return
@@ -647,66 +641,6 @@ local function applyLine(c: Model, pos: Vector3, v: Vector3): Vector3
 		return Vector3.new(-side * allowed, 0, v.Z)
 	end
 	return v
-end
-
--- Where the body should face. Aiming (pivoting, charging, marking) faces
--- the camera, but never while the body is still sliding: during the catch
--- slow-down the body keeps facing its travel and turns toward the camera as
--- it stops, so a deep catch never runs backwards. A reach at speed twists
--- the body at most REACH_TWIST from travel (PoseController turns the waist
--- and arm the rest of the way).
-local REACH_TWIST = 75
-
-local function faceTarget(v: Vector3): (Vector3?, boolean)
-	local catch = controllers.CatchController
-	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
-	local speed = v.Magnitude
-	local aiming = sim.holding
-		or controllers.ThrowController.isCharging()
-		or MovementSim.isMarking(sim)
-		or catch.isMarking()
-	if aiming then
-		local cam = controllers.CameraController.forward()
-		local settling = sim.holding and sim.holdPhase ~= "Pivot"
-		if travel and (settling or sim.mode == "DiveSlide" or sim.mode == "Recover") then
-			-- blend toward the camera as the slide runs out of speed
-			local k = math.clamp(1 - speed / 10, 0, 1)
-			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
-			return if blend.Magnitude > 0.5 then blend else travel, true
-		end
-		return cam, true
-	end
-	if sim.mode == "Dive" or sim.mode == "DiveSlide" then
-		return sim.diveDir, false
-	end
-	if catch.reachActive() then
-		local _, reachDir = catch.reachState()
-		local r = VecMath.flatUnit(reachDir)
-		if r.Magnitude > 0.5 then
-			if travel and speed > MovementConfig.JogSpeed then
-				return VecMath.rotateToward(travel, r, REACH_TWIST), true
-			end
-			local blend = if travel then VecMath.flatUnit(r + travel) else r
-			return if blend.Magnitude > 0.5 then blend else r, true
-		end
-	end
-	return travel, false
-end
-
-local function drive(h: Humanoid, r: BasePart, out: MovementSim.Output, v: Vector3)
-	local sp = v.Magnitude
-	h.WalkSpeed = sp
-	h:Move(if sp > 0.05 then v / sp else Vector3.zero, false)
-	local vy = out.setVertical
-	if out.jump and vy then
-		h.JumpPower = vy
-		h:ChangeState(Enum.HumanoidStateType.Jumping)
-		jumpPowerArmed = true
-	end
-	if out.impulse or vy then
-		local cur = r.AssemblyLinearVelocity
-		r.AssemblyLinearVelocity = Vector3.new(v.X, vy or cur.Y, v.Z)
-	end
 end
 
 local function flushTech(mode: string)
@@ -1090,69 +1024,6 @@ local function frame(dtRaw: number)
 	end
 	if engineOn then
 		techFrame(c, h, r, dt)
-		return
-	end
-
-	refreshFilter()
-	local env = buildEnv()
-	updateHolding(env.grounded)
-	if sim.holding then
-		syncPivot(c)
-	end
-
-	local out = MovementSim.step(sim, currentInput(), env, dt)
-	lastStep = out.step
-
-	local v = applyLine(c, r.Position, VecMath.flat(out.vel))
-	if v ~= out.vel then
-		sim.vel = v
-		sim.lastOutVel = v
-	end
-	drive(h, r, out, v)
-
-	-- facing
-	local face, aiming = faceTarget(v)
-	if face and face.Magnitude > 0.5 then
-		lastFacing = face
-	end
-	local align = ao
-	if align then
-		if aiming ~= aoAiming then
-			aoAiming = aiming
-			align.Responsiveness = if aiming then 45 else 30
-			align.MaxAngularVelocity = if aiming then 40 else 20
-		end
-		align.CFrame = CFrame.lookAt(Vector3.zero, lastFacing)
-	end
-
-	for _, e in out.events do
-		queueEvent(e)
-	end
-	for _, fb in out.feedback do
-		MovementController.Feedback:Fire(fb)
-	end
-	local pp = out.pivotPos
-	local remote = pivotRemote
-	if pp and remote then
-		remote:FireServer(pp)
-		pivotResent = confirmedHold
-	end
-	if out.landed then
-		MovementController.Landed:Fire(sim.landedFromDive, sim.landingVel.Magnitude)
-		feedSignatures({ kind = "Land", t = now() })
-	end
-
-	local mode = MovementSim.poseMode(sim)
-	if mode ~= lastMode then
-		lastMode = mode
-		modeDirty = true
-		c:SetAttribute("UB_LocalMode", mode)
-	end
-	flushTech(mode)
-
-	local ended = ComboEvaluator.expire(combo, now())
-	if ended then
-		MovementController.ChainEnded:Fire(ended)
 	end
 end
 
@@ -1253,7 +1124,7 @@ checkMirror = function()
 	end)
 end
 
-local function onAction(action: string, scheme: string?)
+local function onAction(action: string)
 	if not MOVEMENT_ACTIONS[action] or not root or not character then
 		return
 	end
@@ -1265,26 +1136,6 @@ local function onAction(action: string, scheme: string?)
 			checkMirror()
 		end
 		TechCore.press(tech, action)
-		return
-	end
-	if sim.holding then
-		-- with the disc: Q / E swing, Space hops, C is the low release (ThrowController)
-		if action == "Cut" then
-			local pad = (scheme or controllers.InputController.scheme()) == "Gamepad"
-			MovementController.swing(if pad then 0 else -1)
-		elseif action == "Dive" then
-			MovementController.swing(1)
-		elseif action == "Jump" then
-			local env = freshEnv()
-			if env then
-				MovementSim.press(sim, "Jump", currentInput(), env)
-			end
-		end
-		return
-	end
-	local env = freshEnv()
-	if env then
-		MovementSim.press(sim, action :: any, currentInput(), env)
 	end
 end
 
@@ -1304,9 +1155,9 @@ function MovementController.Start()
 		pivotRemote = Net.event("Pivot")
 	end)
 
-	controllers.InputController.ActionBegan:Connect(function(action, scheme)
+	controllers.InputController.ActionBegan:Connect(function(action)
 		local ok, err = pcall(function()
-			onAction(action, scheme)
+			onAction(action)
 		end)
 		if not ok then
 			warn("[MovementController] press failed: " .. tostring(err))
@@ -1364,7 +1215,7 @@ function MovementController.Start()
 	end)
 
 	controllers.SettingsController.Changed:Connect(function(key)
-		if key == "TechEngine" or key == "All" then
+		if key == "All" then
 			applyEngine()
 		end
 	end)

@@ -180,7 +180,7 @@ return Actors
 	  * walk weight 1 up to 7 studs/s, run weight 1 from 12, linear between
 	  * time-warp walk = speed / 6.4, run = speed / 12.8 (the speeds the
 	    default cycles are authored for), divided by the body height scale;
-	    clamped walk 0.5..2.0, run 0.7..2.4 — feet do not skate
+	    clamped walk 0.5..2.0, run 0.7..RUN_MAX_WARP (covers Burst + abilities) — feet do not skate
 	  * idle with hysteresis: in below 0.6 studs/s, out above 1.5
 	Tracks only start / stop on real mode changes (ground, rising, falling,
 	pose). "Pose" (slides, dives, the pivot, the mark shuffle) plays the idle
@@ -218,6 +218,7 @@ local WALK_FULL = 7 -- walk weight 1 up to here
 local RUN_FULL = 12 -- run weight 1 from here
 local WALK_AUTHORED = 6.4 -- the walk cycle matches the ground at this speed
 local RUN_AUTHORED = 12.8
+local RUN_MAX_WARP = 3.6 -- 46 studs/s: top Burst plus surges; past this the feet would skate
 local IDLE_ENTER = 0.6
 local IDLE_LEAVE = 1.5
 local SMALL = 0.0001 -- "off" weight that keeps a track playing (0 is unreliable)
@@ -409,7 +410,7 @@ local function blendGround(c: Controller, dt: number, speed: number)
 	setWeight(c, "walk", math.max(1 - runW, SMALL), 0.1)
 	setWeight(c, "run", math.max(runW, SMALL), 0.1)
 	setSpeed(c, "walk", math.clamp(s / WALK_AUTHORED, 0.5, 2.0))
-	setSpeed(c, "run", math.clamp(s / RUN_AUTHORED, 0.7, 2.4))
+	setSpeed(c, "run", math.clamp(s / RUN_AUTHORED, 0.7, RUN_MAX_WARP))
 end
 
 -- speed: horizontal studs/s. mode: Ground / Rising / Falling / Pose (Pose =
@@ -883,6 +884,7 @@ Arenas.Default = "Championship"
 -- z 760..1140; the furthest +Z arena geometry on the Normal field (the
 -- scaled Rooftop skyline) ends near z 660, so the hall stays clear.
 Arenas.TrainingOrigin = Vector3.new(0, 0, 900)
+Arenas.TestFieldOrigin = Vector3.new(1400, 0, 0) -- the empty movement test field (stage 1)
 
 return Arenas
 ]]></string>
@@ -1383,125 +1385,67 @@ return Hitbox
           <Properties>
             <string name="Name">Input</string>
             <string name="Source"><![CDATA[--!strict
--- DEFAULT BINDINGS
--- The tech-spec layout (docs/tech-spec.md, Controls): everything sits under
--- the left hand around WASD — Space jump / air dodge, Shift Burst, Q cut,
--- E dive, C slide, F overhead — with throws on the mouse. Advanced
--- techniques come from pressing these in context and on time (TechCore), not
--- from extra keys. What chains off what is for players to find.
--- (The classic engine's notes follow.)
---   Movement actions: Sprint, Jump, Cut, Slide, Dive, Burst
---   Disc actions:     Primary (throw / reach), Secondary (fake / mark; in the air: tip)
---   With the disc:    Q / E quick swing left / right (the Cut / Dive keys),
---                     Space hop (high release), C low release, Z / X bank,
---                     mouse wheel or 1-5 throw type (T cycles too), R lead
---                     pass assist
---   Gamepad:          A jump, X cut (holding: swing to the other side),
---                     R1 burst, B slide, Y dive, L1 or L3 sprint
---   Marking:          hold Secondary near the holder; C toggles High / Low
--- Sprinting is automatic by default (AutoSprint: a full push held in one
--- direction for 0.3 s); Shift sprints at once and ToggleSprint still works.
--- Players can rebind everything in Settings > Controls; choices are saved.
+-- CONTROLS (docs/CORE_DESIGN.md: "keep this list small and fixed")
+--   WASD    move (let go and snap a new direction to cut)
+--   Mouse   camera and aim
+--   Space   jump
+--   Shift   sprint / burst (hold)
+--   LMB     throw (hold to charge, release to throw)
+--   RMB     aim / fake (with the disc)
+--   Ability Space + Shift pressed together (AbilityChord below)
+-- M opens the menu (not a gameplay action). Nothing else is bound, and the
+-- rebind menu only offers these actions. Every move other games give its
+-- own button comes out of these inputs plus your state (grounded, airborne,
+-- sprinting, holding the disc, diving, landing) — see TechCore.
+-- Gamepad and touch map onto the same actions here, so adding them later
+-- only means filling in the tables below.
 
 local Input = {}
 
+-- The only actions a key can trigger (the rebind menu lists these).
 Input.Actions = {
-	"Sprint",
 	"Jump",
-	"Cut",
-	"Slide",
-	"Dive",
 	"Burst",
-	"Overhead",
-	"Ability",
 	"Primary",
 	"Secondary",
-	"BankLeft",
-	"BankRight",
-	"TypeNext",
-	"TypePrev",
-	"Type1",
-	"Type2",
-	"Type3",
-	"Type4",
-	"Type5",
-	"LeadLock",
-	"Celebrate",
 	"Menu",
-	"CameraLock",
 }
 
 Input.Display = {
-	Sprint = "Sprint (hold; automatic when AutoSprint is on)",
-	Jump = "Jump / Pop-up / Wall Rebound / Hop (with disc)",
-	Cut = "Cut (Snap / Plant / Air Redirect) · Swing Left (with disc)",
-	Slide = "Slide / Precision Landing · Low Release · Mark Stance",
-	Dive = "Layout Dive · Swing Right (with disc)",
-	Burst = "Burst (hold) / Burst Kick (tap)",
-	Overhead = "Overhead modifier (hold while throwing)",
-	Ability = "Ability (when FLOW is full)",
-	Primary = "Throw (hold) / Reach",
-	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
-	BankLeft = "Bank Left (with disc)",
-	BankRight = "Bank Right (with disc)",
-	TypeNext = "Next Throw Type",
-	TypePrev = "Previous Throw Type",
-	Type1 = "Backhand",
-	Type2 = "Forehand",
-	Type3 = "Hammer",
-	Type4 = "Scoober",
-	Type5 = "Blade",
-	LeadLock = "Lead Pass Assist",
-	Celebrate = "Celebrate",
+	Jump = "Jump",
+	Burst = "Sprint / Burst (hold)",
+	Primary = "Throw (hold to charge, release to throw)",
+	Secondary = "Aim / Fake (with the disc)",
 	Menu = "Menu",
-	CameraLock = "Free / Lock Mouse",
+	Ability = "Ability (Jump + Sprint together)",
+}
+
+-- THE ABILITY CHORD (the one place to change it). The ability fires when
+-- every action listed goes down within `window` seconds of each other. The
+-- actions still do their own thing (the jump is never delayed); a normal
+-- sprint-then-jump presses Shift long before Space, so it never fires by
+-- accident. Listed as actions, so it follows rebinds and works on any device.
+Input.AbilityChord = {
+	actions = { "Jump", "Burst" },
+	window = 0.04, -- s
 }
 
 -- Values are Enum.KeyCode / Enum.UserInputType names so they can be saved.
 -- The first key of each list is the one shown in HUD key pips.
 Input.Keyboard = {
-	Sprint = {}, -- classic engine only (auto-sprint); Shift is Burst
 	Jump = { "Space" },
-	Cut = { "Q" },
-	Slide = { "C", "LeftControl" },
-	Dive = { "E" },
 	Burst = { "LeftShift" },
-	Overhead = { "F" },
-	Ability = { "G" },
 	Primary = { "MouseButton1" },
 	Secondary = { "MouseButton2" },
-	BankLeft = { "Z" },
-	BankRight = { "X" },
-	TypeNext = { "T" },
-	TypePrev = {},
-	Type1 = { "One" },
-	Type2 = { "Two" },
-	Type3 = { "Three" },
-	Type4 = { "Four" },
-	Type5 = { "Five" },
-	LeadLock = { "R" },
-	Celebrate = { "B" },
 	Menu = { "M" },
-	CameraLock = { "LeftAlt" },
 } :: { [string]: { string } }
 
+-- (later) the same actions on a pad
 Input.Gamepad = {
-	Sprint = {},
 	Jump = { "ButtonA" },
-	Cut = { "ButtonR1" },
-	Slide = { "ButtonB" },
-	Dive = { "ButtonX" },
 	Burst = { "ButtonL1" },
-	Overhead = { "ButtonY" },
-	Ability = { "ButtonL3" },
 	Primary = { "ButtonR2" },
 	Secondary = { "ButtonL2" },
-	BankLeft = { "DPadLeft" },
-	BankRight = { "DPadRight" },
-	TypeNext = { "DPadUp" },
-	TypePrev = { "DPadDown" },
-	LeadLock = { "ButtonR3" },
-	Celebrate = { "DPadDown" },
 	Menu = { "ButtonSelect" },
 } :: { [string]: { string } }
 
@@ -1584,10 +1528,11 @@ end
 -- Bump SettingsVersion when a default changes on purpose; keys listed under
 -- the new version in Migrations are reset to their default for profiles saved
 -- by an older version (everything else a player saved is kept).
-Input.SettingsVersion = 3
+Input.SettingsVersion = 4
 Input.Migrations = {
 	[2] = { "ShowTechLabels" }, -- technique labels are now off by default (less HUD noise)
 	[3] = { "Bindings" }, -- the tech-spec key layout replaces saved rebinds once
+	[4] = { "Bindings" }, -- the six-input core design replaces saved rebinds once
 } :: { [number]: { string } }
 
 Input.DefaultSettings = {
@@ -1601,7 +1546,6 @@ Input.DefaultSettings = {
 	ShowComboFeed = true,
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
-	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
 	Ability = "FlashStep", -- Config/Abilities id
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
@@ -6736,6 +6680,7 @@ export type State = {
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
+	cutReport: { quality: string, gapMs: number, angle: number, kept: number }?, -- the last cut (debug HUD)
 	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
 	cutReadyAt: number,
@@ -6867,6 +6812,7 @@ function TechCore.new(now: number?): State
 		release = nil,
 		lastCut = nil,
 		skid = false,
+		cutReport = nil,
 		crossAt = nil,
 		lastCutAt = -math.huge,
 		cutReadyAt = -math.huge,
@@ -7766,8 +7712,15 @@ local function gestureCut(s: State, want: Vector3): Vector3?
 	s.lastCutAt = s.now
 	s.lastCut = { at = s.now, origDir = r.dir, speed = r.speed }
 	s.heading = want
+	local out = r.speed * keep + bonus
+	s.cutReport = {
+		quality = if perfect then "Perfect" else "Clean",
+		gapMs = gap * 1000,
+		angle = angle,
+		kept = if r.speed > 1e-3 then out / r.speed else 1,
+	}
 	emit(s, "Cut", if perfect then "Perfect" else "Clean", want, if mirror then "Mirror" else nil)
-	return want * (r.speed * keep + bonus)
+	return want * out
 end
 
 local function runFlat(s: State, input: Input, dt: number): Vector3
@@ -7831,6 +7784,7 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	if speed >= Config.SKID_MIN_SPEED and not s.holding and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE then
 		startSlide(s, nil)
 		s.skid = true
+		s.cutReport = { quality = "Skid", gapMs = 0, angle = VecMath.flatAngle(s.heading, want), kept = 0 }
 		emit(s, "Skid", "Miss", s.heading)
 		return flat
 	end
@@ -12392,6 +12346,112 @@ return Build
         </Item>
         <Item class="ModuleScript" referent="49">
           <Properties>
+            <string name="Name">TestFieldBuilder</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	TestFieldBuilder — the empty test field for tuning movement (stage 1 of
+	docs/CORE_DESIGN.md). A flat, bright grass field with nothing on it but
+	reference marks, so speed, turn width and cut quality are easy to read:
+
+	  * a 10-stud grid (faint) and 50-stud lines (bright), so you can see how
+	    wide a turn is and how far a skid carries
+	  * a row of cones every 10 studs down the middle: run the slalom with
+	    planted cuts, then with sloppy yanks, and compare speed in the HUD
+	  * a run-up lane: 60 studs to reach full speed before the first cone
+
+	Built once at startup at Arenas.TestFieldOrigin, away from the arena and
+	the training hall. Entered from the main menu (TEST FIELD).
+]]
+
+local Build = require(script.Parent.Build)
+
+local TestFieldBuilder = {}
+
+export type Layout = {
+	model: Model,
+	entry: CFrame,
+}
+
+local GRASS = Color3.fromRGB(70, 200, 95) -- anime-bright turf
+local GRID = Color3.fromRGB(110, 225, 130)
+local LINE = Color3.fromRGB(245, 250, 255)
+local CONE = Color3.fromRGB(255, 120, 30)
+
+local HALF_W = 150 -- studs either side of the middle (x)
+local HALF_L = 200 -- studs either side of the middle (z)
+
+function TestFieldBuilder.build(origin: Vector3, parent: Instance): Layout
+	local old = parent:FindFirstChild("TestField")
+	if old then
+		old:Destroy()
+	end
+	local model = Instance.new("Model")
+	model.Name = "TestField"
+	local function at(x: number, z: number, y: number?): Vector3
+		return origin + Vector3.new(x, y or 0, z)
+	end
+
+	Build.part(model, {
+		Name = "Turf",
+		Size = Vector3.new(2 * HALF_W, 1, 2 * HALF_L),
+		CFrame = CFrame.new(at(0, 0, -0.5)),
+		Color = GRASS,
+		Material = Enum.Material.SmoothPlastic,
+		solid = true,
+	})
+	-- a wide apron so running off the edge never drops you
+	Build.part(model, {
+		Name = "Apron",
+		Size = Vector3.new(2 * HALF_W + 200, 1, 2 * HALF_L + 200),
+		CFrame = CFrame.new(at(0, 0, -0.52)),
+		Color = Color3.fromRGB(55, 165, 80),
+		Material = Enum.Material.SmoothPlastic,
+		solid = true,
+	})
+	for x = -HALF_W, HALF_W, 10 do
+		local major = x % 50 == 0
+		Build.part(model, {
+			Name = "Grid",
+			Size = Vector3.new(if major then 0.4 else 0.15, 0.04, 2 * HALF_L),
+			CFrame = CFrame.new(at(x, 0, 0.02)),
+			Color = if major then LINE else GRID,
+		})
+	end
+	for z = -HALF_L, HALF_L, 10 do
+		local major = z % 50 == 0
+		Build.part(model, {
+			Name = "Grid",
+			Size = Vector3.new(2 * HALF_W, 0.04, if major then 0.4 else 0.15),
+			CFrame = CFrame.new(at(0, z, 0.02)),
+			Color = if major then LINE else GRID,
+		})
+	end
+	-- the slalom: cones every 10 studs down the middle, after a 60-stud run-up
+	for i = 0, 12 do
+		local z = -HALF_L + 80 + i * 10
+		Build.part(model, {
+			Name = "Cone",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(1.6, 1.4, 1.4),
+			CFrame = CFrame.new(at(if i % 2 == 0 then -3 else 3, z, 0.8)) * CFrame.Angles(0, 0, math.rad(90)),
+			Color = CONE,
+			Material = Enum.Material.Neon,
+		})
+	end
+	model.Parent = parent
+	local spawnAt = at(0, -HALF_L + 15, 4)
+	return {
+		model = model,
+		entry = CFrame.lookAt(spawnAt, spawnAt + Vector3.new(0, 0, 1)),
+	}
+end
+
+return TestFieldBuilder
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="50">
+          <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
 --[[
@@ -12888,7 +12948,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="50">
+      <Item class="Script" referent="51">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -12956,11 +13016,11 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="51">
+      <Item class="Folder" referent="52">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">AbilityService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13109,7 +13169,7 @@ return AbilityService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13237,7 +13297,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13434,8 +13494,8 @@ export type Bot = {
 	tech: TechCore.State,
 	techOn: boolean, -- TechCore drove the last frame
 	burstUntil: number, -- hold Burst until (server time)
-	slideUntil: number,
 	jumpUntil: number,
+	releaseUntil: number, -- the stick let go until (the cut gesture, like a player)
 	-- intent (brain output)
 	target: Vector3?,
 	targetVel: Vector3?, -- the target moves (a guard's man): match it, no stop radius
@@ -13678,8 +13738,8 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		tech = TechCore.new(0),
 		techOn = false,
 		burstUntil = 0,
-		slideUntil = 0,
 		jumpUntil = 0,
+		releaseUntil = 0,
 		target = nil,
 		targetVel = nil,
 		speed = JOG,
@@ -13763,19 +13823,27 @@ local function usesTech(b: Bot): boolean
 	return TechConfig.BOTS_USE_TECH and not b.sim.holding
 end
 
--- A press on the tech engine. The classic vocabulary maps onto it: Burst is
--- a short hold (a run), a Cut in the air is an air dodge, Slide and Jump are
--- held a moment (a slow bot's long Jump hold is a Sky).
+-- A press on the tech engine. Bots only get the inputs players have
+-- (docs/CORE_DESIGN.md): Burst is a short hold, a Cut on the ground is the
+-- player's gesture (let go of the stick, then the brain's new direction;
+-- better bots time the let-go closer to Perfect), a Cut in the air is an air
+-- dodge, and there is no Slide (skids come from hard turns).
 local function techPress(b: Bot, action: string)
 	local tech = b.tech
 	local t = now()
 	if action == "Burst" then
 		b.burstUntil = t + 0.7
 		return
-	elseif action == "Cut" and not tech.grounded then
+	elseif action == "Cut" and tech.grounded then
+		local lo, hi = TechConfig.CUT_RELEASE_PERFECT[1], TechConfig.CUT_RELEASE_PERFECT[2]
+		local mid = (lo + hi) / 2
+		local miss = (1 - b.skill) * 0.12 * (b.rng:next() * 2 - 1)
+		b.releaseUntil = t + math.clamp(mid + miss, 0.02, TechConfig.CUT_RELEASE_MAX)
+		return
+	elseif action == "Cut" then
 		action = "Jump" -- air redirect -> air dodge
 	elseif action == "Slide" then
-		b.slideUntil = t + 0.6
+		return
 	elseif action == "Jump" then
 		local slow = TechCore.flatSpeed(tech) <= TechConfig.SKY_MAX_SPEED
 		b.jumpUntil = t + (if slow and b.rng:next() < b.skill then TechConfig.SKY_PERFECT[1] + 0.02 else 0.15)
@@ -14245,14 +14313,13 @@ techMotor = function(b: Bot, input: MovementSim.Input, env: MovementSim.Env, ste
 	-- turn it back into the speed it wants, as a share of the core's top
 	local wantSpeed = input.move.Magnitude * (if input.sprint then SPRINT else JOG)
 	local top = if sprint then TechConfig.BURST_TOP_SPEED else TechConfig.RUN_TOP_SPEED
-	local move = if input.move.Magnitude > 0.01
+	local move = if input.move.Magnitude > 0.01 and t >= b.releaseUntil
 		then input.move.Unit * math.clamp(wantSpeed / top, 0, 1)
 		else Vector3.zero
 	TechCore.advance(tech, {
 		move = move,
 		held = {
 			Burst = t < b.burstUntil or sprint,
-			Slide = t < b.slideUntil,
 			Jump = t < b.jumpUntil,
 		},
 		aim = b.face or b.facing,
@@ -15911,7 +15978,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16597,7 +16664,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16928,7 +16995,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17346,7 +17413,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17882,7 +17949,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18115,7 +18182,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">JerseyService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18321,7 +18388,7 @@ return JerseyService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18420,7 +18487,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -20213,7 +20280,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="63">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21572,7 +21639,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="64">
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22064,7 +22131,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="65">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22659,7 +22726,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="66">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">ShopService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22770,7 +22837,7 @@ return ShopService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="67">
+        <Item class="ModuleScript" referent="68">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23090,7 +23157,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="68">
+        <Item class="ModuleScript" referent="69">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23597,7 +23664,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="69">
+        <Item class="ModuleScript" referent="70">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23652,11 +23719,14 @@ local Solver = require(Shared.Disc.Solver)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
 local VecMath = require(Shared.Util.VecMath)
 local TrainingBuilder = require(script.Parent.Parent.Arena.TrainingBuilder)
+local TestFieldBuilder = require(script.Parent.Parent.Arena.TestFieldBuilder)
 
 local TrainingService = {}
 
 local services: any
 local layout: TrainingBuilder.Layout
+local testField: TestFieldBuilder.Layout
+local onTestField: { [number]: boolean } = {} -- actor id -> on the test field
 
 export type Session = {
 	actor: any,
@@ -25376,7 +25446,20 @@ function TrainingService.startDrill(actor: any, drill: string)
 	DRILLS[drill].start(s)
 end
 
+-- The empty test field (Arena/TestFieldBuilder): training role, no drill.
+function TrainingService.enterTestField(actor: any)
+	TrainingService.stopDrill(actor)
+	if actor.role ~= "Training" then
+		services.TeamService.setTraining(actor, true)
+	end
+	onTestField[actor.id] = true
+	services.PlayerService.setFrozen(actor, false)
+	services.PlayerService.setLine(actor, nil, nil)
+	services.PlayerService.teleport(actor, testField.entry, { face = true })
+end
+
 function TrainingService.enter(actor: any)
+	onTestField[actor.id] = nil
 	if actor.role ~= "Training" then
 		services.TeamService.setTraining(actor, true)
 	end
@@ -25386,6 +25469,7 @@ function TrainingService.enter(actor: any)
 end
 
 function TrainingService.leave(actor: any)
+	onTestField[actor.id] = nil
 	TrainingService.stopDrill(actor)
 	if actor.role == "Training" then
 		services.PlayerService.setTeam(actor, "N", "Spectate")
@@ -25395,7 +25479,8 @@ end
 
 function TrainingService.respawned(actor: any)
 	TrainingService.stopDrill(actor)
-	services.PlayerService.teleport(actor, layout.entry, { face = true })
+	local at = if onTestField[actor.id] then testField.entry else layout.entry
+	services.PlayerService.teleport(actor, at, { face = true })
 end
 
 function TrainingService.action(player: Player, kind: string, payload: any)
@@ -25405,6 +25490,8 @@ function TrainingService.action(player: Player, kind: string, payload: any)
 	end
 	if kind == "EnterTraining" then
 		TrainingService.enter(actor)
+	elseif kind == "EnterTestField" then
+		TrainingService.enterTestField(actor)
 	elseif kind == "LeaveTraining" then
 		TrainingService.leave(actor)
 	elseif kind == "CancelDrill" then
@@ -25429,6 +25516,7 @@ end
 function TrainingService.Init(s: any)
 	services = s
 	layout = TrainingBuilder.build(ArenasConfig.TrainingOrigin, workspace)
+	testField = TestFieldBuilder.build(ArenasConfig.TestFieldOrigin, workspace)
 end
 
 function TrainingService.Start()
@@ -25488,13 +25576,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="70">
+  <Item class="SoundService" referent="71">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="71">
+  <Item class="StarterPlayer" referent="72">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -25507,11 +25595,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="72">
+    <Item class="StarterCharacterScripts" referent="73">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="73">
+      <Item class="LocalScript" referent="74">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -25594,19 +25682,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="74">
+    <Item class="StarterPlayerScripts" referent="75">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="75">
+      <Item class="Folder" referent="76">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="76">
+        <Item class="Folder" referent="77">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">AbilityController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25922,7 +26010,7 @@ return AbilityController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">AnimeFX</string>
               <string name="Source"><![CDATA[--!strict
@@ -26447,7 +26535,7 @@ return AnimeFX
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26587,7 +26675,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26896,7 +26984,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27827,7 +27915,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">CursorController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27948,7 +28036,7 @@ return CursorController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -28814,7 +28902,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29775,7 +29863,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29863,6 +29951,9 @@ local function rebuild()
 	for _, s in { "keyboard", "gamepad" } do
 		local b = controllers.SettingsController.bindings(s)
 		for action, keys in b do
+			if not table.find(InputConfig.Actions, action) then
+				continue -- only the core actions can be bound (Config/Input)
+			end
 			for _, k in keys do
 				local list = keyMap[k]
 				if not list then
@@ -29919,6 +30010,28 @@ function InputController.keyLabel(action: string): string
 	return controllers.SettingsController.keyLabel(action, if scheme == "Gamepad" then "gamepad" else "keyboard")
 end
 
+-- The ability chord (Config/Input AbilityChord): every listed action went
+-- down within the window. The action itself still fires first.
+local chordAt: { [string]: number } = {}
+local CHORD = InputConfig.AbilityChord
+
+local function checkChord(action: string)
+	if not table.find(CHORD.actions, action) then
+		return
+	end
+	local t = os.clock()
+	chordAt[action] = t
+	for _, a in CHORD.actions do
+		local at = chordAt[a]
+		if not held[a] or at == nil or t - at > CHORD.window then
+			return
+		end
+	end
+	table.clear(chordAt)
+	InputController.ActionBegan:Fire("Ability", scheme)
+	InputController.ActionEnded:Fire("Ability")
+end
+
 function InputController.fire(action: string, began: boolean)
 	if began then
 		if held[action] then
@@ -29929,6 +30042,7 @@ function InputController.fire(action: string, began: boolean)
 			sprintToggle = not sprintToggle
 		end
 		InputController.ActionBegan:Fire(action, scheme)
+		checkChord(action)
 	else
 		if not held[action] then
 			return
@@ -30189,7 +30303,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30236,8 +30350,7 @@ return InputController
 	If the per-frame step ever errors, the body is stopped (no runaway
 	character) and the error is reported once.
 
-	TWO ENGINES. Setting TechEngine (default on) runs the new tech core
-	instead (Movement/TechCore, docs/tech-spec.md build steps 1-2): the
+	ONE ENGINE. The tech core (Movement/TechCore) drives the body: the
 	Humanoid is for animation only (EvaluateStateMachine = false, no
 	WalkSpeed, no jumping); TechCore steps at 120 Hz and its velocity is
 	written straight to the root every frame, with a VectorForce cancelling
@@ -30247,7 +30360,8 @@ return InputController
 	Presses go into the core's input buffer; the tech that uses them comes
 	in later build steps. The character attribute UB_Air tells the Animate
 	script when you are airborne (the Humanoid state no longer says).
-	Turning the setting off switches back to MovementSim at once.
+	MovementSim is still used for the holding / pivot state (stage 3 moves
+	it into the throwing module); it no longer moves the body.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -30531,13 +30645,6 @@ local function buildEnv(): MovementSim.Env
 	return env
 end
 
-local function currentInput(): MovementSim.Input
-	return {
-		move = controllers.InputController.moveVector(),
-		sprint = controllers.InputController.sprinting(),
-	}
-end
-
 -- Feeds the local signature tracker; a completed move pays into the local
 -- chain and is announced at once (the server pays the real points).
 local function feedSignatures(ev: Signatures.Event)
@@ -30621,10 +30728,11 @@ end
 -- character setup
 ---------------------------------------------------------------------------
 
--- Puts the current character on the engine the TechEngine setting picks.
+-- Puts the current character on the tech engine (the only engine; the
+-- classic Humanoid-style sim no longer drives players).
 local function applyEngine()
 	local h, r, c = humanoid, root, character
-	local want = controllers.SettingsController.get("TechEngine") ~= false
+	local want = true
 	if not h or not r or not c then
 		engineOn = false
 		return
@@ -30841,66 +30949,6 @@ local function applyLine(c: Model, pos: Vector3, v: Vector3): Vector3
 		return Vector3.new(-side * allowed, 0, v.Z)
 	end
 	return v
-end
-
--- Where the body should face. Aiming (pivoting, charging, marking) faces
--- the camera, but never while the body is still sliding: during the catch
--- slow-down the body keeps facing its travel and turns toward the camera as
--- it stops, so a deep catch never runs backwards. A reach at speed twists
--- the body at most REACH_TWIST from travel (PoseController turns the waist
--- and arm the rest of the way).
-local REACH_TWIST = 75
-
-local function faceTarget(v: Vector3): (Vector3?, boolean)
-	local catch = controllers.CatchController
-	local travel = if v.Magnitude > 2 then VecMath.flatUnit(v) else nil
-	local speed = v.Magnitude
-	local aiming = sim.holding
-		or controllers.ThrowController.isCharging()
-		or MovementSim.isMarking(sim)
-		or catch.isMarking()
-	if aiming then
-		local cam = controllers.CameraController.forward()
-		local settling = sim.holding and sim.holdPhase ~= "Pivot"
-		if travel and (settling or sim.mode == "DiveSlide" or sim.mode == "Recover") then
-			-- blend toward the camera as the slide runs out of speed
-			local k = math.clamp(1 - speed / 10, 0, 1)
-			local blend = VecMath.flatUnit(travel * (1 - k) + cam * k)
-			return if blend.Magnitude > 0.5 then blend else travel, true
-		end
-		return cam, true
-	end
-	if sim.mode == "Dive" or sim.mode == "DiveSlide" then
-		return sim.diveDir, false
-	end
-	if catch.reachActive() then
-		local _, reachDir = catch.reachState()
-		local r = VecMath.flatUnit(reachDir)
-		if r.Magnitude > 0.5 then
-			if travel and speed > MovementConfig.JogSpeed then
-				return VecMath.rotateToward(travel, r, REACH_TWIST), true
-			end
-			local blend = if travel then VecMath.flatUnit(r + travel) else r
-			return if blend.Magnitude > 0.5 then blend else r, true
-		end
-	end
-	return travel, false
-end
-
-local function drive(h: Humanoid, r: BasePart, out: MovementSim.Output, v: Vector3)
-	local sp = v.Magnitude
-	h.WalkSpeed = sp
-	h:Move(if sp > 0.05 then v / sp else Vector3.zero, false)
-	local vy = out.setVertical
-	if out.jump and vy then
-		h.JumpPower = vy
-		h:ChangeState(Enum.HumanoidStateType.Jumping)
-		jumpPowerArmed = true
-	end
-	if out.impulse or vy then
-		local cur = r.AssemblyLinearVelocity
-		r.AssemblyLinearVelocity = Vector3.new(v.X, vy or cur.Y, v.Z)
-	end
 end
 
 local function flushTech(mode: string)
@@ -31284,69 +31332,6 @@ local function frame(dtRaw: number)
 	end
 	if engineOn then
 		techFrame(c, h, r, dt)
-		return
-	end
-
-	refreshFilter()
-	local env = buildEnv()
-	updateHolding(env.grounded)
-	if sim.holding then
-		syncPivot(c)
-	end
-
-	local out = MovementSim.step(sim, currentInput(), env, dt)
-	lastStep = out.step
-
-	local v = applyLine(c, r.Position, VecMath.flat(out.vel))
-	if v ~= out.vel then
-		sim.vel = v
-		sim.lastOutVel = v
-	end
-	drive(h, r, out, v)
-
-	-- facing
-	local face, aiming = faceTarget(v)
-	if face and face.Magnitude > 0.5 then
-		lastFacing = face
-	end
-	local align = ao
-	if align then
-		if aiming ~= aoAiming then
-			aoAiming = aiming
-			align.Responsiveness = if aiming then 45 else 30
-			align.MaxAngularVelocity = if aiming then 40 else 20
-		end
-		align.CFrame = CFrame.lookAt(Vector3.zero, lastFacing)
-	end
-
-	for _, e in out.events do
-		queueEvent(e)
-	end
-	for _, fb in out.feedback do
-		MovementController.Feedback:Fire(fb)
-	end
-	local pp = out.pivotPos
-	local remote = pivotRemote
-	if pp and remote then
-		remote:FireServer(pp)
-		pivotResent = confirmedHold
-	end
-	if out.landed then
-		MovementController.Landed:Fire(sim.landedFromDive, sim.landingVel.Magnitude)
-		feedSignatures({ kind = "Land", t = now() })
-	end
-
-	local mode = MovementSim.poseMode(sim)
-	if mode ~= lastMode then
-		lastMode = mode
-		modeDirty = true
-		c:SetAttribute("UB_LocalMode", mode)
-	end
-	flushTech(mode)
-
-	local ended = ComboEvaluator.expire(combo, now())
-	if ended then
-		MovementController.ChainEnded:Fire(ended)
 	end
 end
 
@@ -31447,7 +31432,7 @@ checkMirror = function()
 	end)
 end
 
-local function onAction(action: string, scheme: string?)
+local function onAction(action: string)
 	if not MOVEMENT_ACTIONS[action] or not root or not character then
 		return
 	end
@@ -31459,26 +31444,6 @@ local function onAction(action: string, scheme: string?)
 			checkMirror()
 		end
 		TechCore.press(tech, action)
-		return
-	end
-	if sim.holding then
-		-- with the disc: Q / E swing, Space hops, C is the low release (ThrowController)
-		if action == "Cut" then
-			local pad = (scheme or controllers.InputController.scheme()) == "Gamepad"
-			MovementController.swing(if pad then 0 else -1)
-		elseif action == "Dive" then
-			MovementController.swing(1)
-		elseif action == "Jump" then
-			local env = freshEnv()
-			if env then
-				MovementSim.press(sim, "Jump", currentInput(), env)
-			end
-		end
-		return
-	end
-	local env = freshEnv()
-	if env then
-		MovementSim.press(sim, action :: any, currentInput(), env)
 	end
 end
 
@@ -31498,9 +31463,9 @@ function MovementController.Start()
 		pivotRemote = Net.event("Pivot")
 	end)
 
-	controllers.InputController.ActionBegan:Connect(function(action, scheme)
+	controllers.InputController.ActionBegan:Connect(function(action)
 		local ok, err = pcall(function()
-			onAction(action, scheme)
+			onAction(action)
 		end)
 		if not ok then
 			warn("[MovementController] press failed: " .. tostring(err))
@@ -31558,7 +31523,7 @@ function MovementController.Start()
 	end)
 
 	controllers.SettingsController.Changed:Connect(function(key)
-		if key == "TechEngine" or key == "All" then
+		if key == "All" then
 			applyEngine()
 		end
 	end)
@@ -31574,7 +31539,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31714,7 +31679,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33008,7 +32973,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33171,7 +33136,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -33343,7 +33308,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -33491,7 +33456,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="92">
+          <Item class="ModuleScript" referent="93">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34444,7 +34409,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="93">
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34905,7 +34870,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="94">
+        <Item class="LocalScript" referent="95">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -34960,11 +34925,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="95">
+        <Item class="Folder" referent="96">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -36008,7 +35973,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">MainMenu</string>
               <string name="Source"><![CDATA[--!strict
@@ -36191,22 +36156,27 @@ function MainMenu.build(parent: ScreenGui, c: any)
 	bigButton(col, 4, "PLAY 7v7 (FULL FIELD)", true, function()
 		play("Normal")
 	end)
-	bigButton(col, 5, "TRAINING", false, function()
+	bigButton(col, 5, "TEST FIELD (MOVEMENT)", false, function()
+		hide(function()
+			Net.event("Action"):FireServer("EnterTestField", nil)
+		end)
+	end)
+	bigButton(col, 6, "TRAINING", false, function()
 		hide(function()
 			Net.event("Action"):FireServer("EnterTraining", nil)
 		end)
 	end)
-	bigButton(col, 6, "SHOP", false, function()
+	bigButton(col, 7, "SHOP", false, function()
 		hide(function()
 			Menu.openTab("Shop")
 		end)
 	end)
-	bigButton(col, 7, "LOCKER", false, function()
+	bigButton(col, 8, "LOCKER", false, function()
 		hide(function()
 			Menu.openTab("Locker")
 		end)
 	end)
-	bigButton(col, 8, "SETTINGS", false, function()
+	bigButton(col, 9, "SETTINGS", false, function()
 		hide(function()
 			Menu.openTab("Settings")
 		end)
@@ -36224,7 +36194,7 @@ return MainMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -37430,7 +37400,6 @@ function render.Settings(content: Instance)
 		{ key = "ShowTechLabels", label = "Technique labels" },
 		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
 		{ key = "AnimeEffects", label = "Anime effects (speed lines, afterimages, impact frames)" },
-		{ key = "TechEngine", label = "New movement core (tech spec; off = classic movement)" },
 		{ key = "TechDebug", label = "Tech debug HUD (speed, state, timing in ms)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
@@ -37728,7 +37697,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -37858,11 +37827,8 @@ function Mobile.build(parent: ScreenGui, c: any)
 	local defs: { { any } } = {
 		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
 		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "HOP" },
-		{ "Cut", UDim2.fromOffset(160, 160), 66, "CUT", "SWING\nLEFT" },
-		{ "Slide", UDim2.fromOffset(60, 260), 60, "SLIDE", "LOW" },
-		{ "Dive", UDim2.fromOffset(240, 110), 66, "DIVE", "SWING\nRIGHT" },
-		{ "Burst", UDim2.fromOffset(80, 175), 60, "BURST", "" },
-		{ "Secondary", UDim2.fromOffset(310, 120), 58, "MARK", "FAKE" },
+		{ "Burst", UDim2.fromOffset(80, 175), 60, "SPRINT", "" },
+		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "FAKE" },
 	}
 	local labelled: { { any } } = {}
 	for _, def in defs do
@@ -37872,10 +37838,6 @@ function Mobile.build(parent: ScreenGui, c: any)
 		table.insert(labelled, { b :: any, def[4], def[5], name })
 	end
 	refs.labelled = labelled
-	local sprint = circleButton(right, "Sprint", "SPRINT", UDim2.fromOffset(40, 90), 54)
-	sprint.Activated:Connect(function()
-		controllers.InputController.toggleTouchSprint()
-	end)
 
 	local discRow = make("Frame", {
 		Name = "DiscButtons",
@@ -38014,7 +37976,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -38393,7 +38355,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -38403,7 +38365,8 @@ return Panels
 
 	  SPEED  21.4 / 22   fall 0.0      flat speed / current top speed
 	  STATE  Grounded  1.24 s          + DRIFT while a turn is rate-limited
-	  BURST  [##########] 100          the meter (spent from step 3)
+	  BURST  [##########] 100          the meter
+	  CUT    PERFECT  let go 72 ms  90°  kept 110%   the last cut (or PLANTED / SKID)
 	  LAST   Cut: 34 ms early  CLEAN   the last timed press and its grade
 	  BUFFER Jump 42 ms                presses still waiting in the buffer
 	  CORE   120 Hz · 2 steps · 60 fps
@@ -38472,6 +38435,34 @@ local function render(): string
 	end
 	table.insert(lines, st)
 	table.insert(lines, string.format("BURST  %s %3d", bar(s.burst), math.floor(s.burst + 0.5)))
+	-- the cut: the plant in progress, then how the last cut went
+	local r = s.release
+	local cr = s.cutReport
+	if r and s.now - r.at <= TechConfig.CUT_RELEASE_MAX then
+		table.insert(
+			lines,
+			string.format('CUT    <font color="#5AE6FF">PLANTED %d ms</font>', math.floor((s.now - r.at) * 1000))
+		)
+	elseif cr and cr.quality == "Skid" then
+		table.insert(
+			lines,
+			string.format('CUT    <font color="#FF5A64">SKID</font> (no plant, %d°)', math.floor(cr.angle))
+		)
+	elseif cr then
+		table.insert(
+			lines,
+			string.format(
+				'CUT    <font color="%s">%s</font>  let go %d ms  %d°  kept %d%%',
+				GRADE_COLOR[cr.quality] or "#FFFFFF",
+				string.upper(cr.quality),
+				math.floor(cr.gapMs),
+				math.floor(cr.angle),
+				math.floor(cr.kept * 100 + 0.5)
+			)
+		)
+	else
+		table.insert(lines, "CUT    - (let go of WASD, then snap a new way)")
+	end
 	local timing = s.lastTiming
 	if timing then
 		table.insert(
@@ -38607,7 +38598,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="102">
+          <Item class="ModuleScript" referent="103">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -38928,7 +38919,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="103">
+          <Item class="ModuleScript" referent="104">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -39409,12 +39400,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="104">
+  <Item class="Teams" referent="105">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="105">
+  <Item class="Workspace" referent="106">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

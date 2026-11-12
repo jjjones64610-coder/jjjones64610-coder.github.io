@@ -1,123 +1,65 @@
 --!strict
--- DEFAULT BINDINGS
--- The tech-spec layout (docs/tech-spec.md, Controls): everything sits under
--- the left hand around WASD — Space jump / air dodge, Shift Burst, Q cut,
--- E dive, C slide, F overhead — with throws on the mouse. Advanced
--- techniques come from pressing these in context and on time (TechCore), not
--- from extra keys. What chains off what is for players to find.
--- (The classic engine's notes follow.)
---   Movement actions: Sprint, Jump, Cut, Slide, Dive, Burst
---   Disc actions:     Primary (throw / reach), Secondary (fake / mark; in the air: tip)
---   With the disc:    Q / E quick swing left / right (the Cut / Dive keys),
---                     Space hop (high release), C low release, Z / X bank,
---                     mouse wheel or 1-5 throw type (T cycles too), R lead
---                     pass assist
---   Gamepad:          A jump, X cut (holding: swing to the other side),
---                     R1 burst, B slide, Y dive, L1 or L3 sprint
---   Marking:          hold Secondary near the holder; C toggles High / Low
--- Sprinting is automatic by default (AutoSprint: a full push held in one
--- direction for 0.3 s); Shift sprints at once and ToggleSprint still works.
--- Players can rebind everything in Settings > Controls; choices are saved.
+-- CONTROLS (docs/CORE_DESIGN.md: "keep this list small and fixed")
+--   WASD    move (let go and snap a new direction to cut)
+--   Mouse   camera and aim
+--   Space   jump
+--   Shift   sprint / burst (hold)
+--   LMB     throw (hold to charge, release to throw)
+--   RMB     aim / fake (with the disc)
+--   Ability Space + Shift pressed together (AbilityChord below)
+-- M opens the menu (not a gameplay action). Nothing else is bound, and the
+-- rebind menu only offers these actions. Every move other games give its
+-- own button comes out of these inputs plus your state (grounded, airborne,
+-- sprinting, holding the disc, diving, landing) — see TechCore.
+-- Gamepad and touch map onto the same actions here, so adding them later
+-- only means filling in the tables below.
 
 local Input = {}
 
+-- The only actions a key can trigger (the rebind menu lists these).
 Input.Actions = {
-	"Sprint",
 	"Jump",
-	"Cut",
-	"Slide",
-	"Dive",
 	"Burst",
-	"Overhead",
-	"Ability",
 	"Primary",
 	"Secondary",
-	"BankLeft",
-	"BankRight",
-	"TypeNext",
-	"TypePrev",
-	"Type1",
-	"Type2",
-	"Type3",
-	"Type4",
-	"Type5",
-	"LeadLock",
-	"Celebrate",
 	"Menu",
-	"CameraLock",
 }
 
 Input.Display = {
-	Sprint = "Sprint (hold; automatic when AutoSprint is on)",
-	Jump = "Jump / Pop-up / Wall Rebound / Hop (with disc)",
-	Cut = "Cut (Snap / Plant / Air Redirect) · Swing Left (with disc)",
-	Slide = "Slide / Precision Landing · Low Release · Mark Stance",
-	Dive = "Layout Dive · Swing Right (with disc)",
-	Burst = "Burst (hold) / Burst Kick (tap)",
-	Overhead = "Overhead modifier (hold while throwing)",
-	Ability = "Ability (when FLOW is full)",
-	Primary = "Throw (hold) / Reach",
-	Secondary = "Fake Throw / Mark (hold near the holder) / Tip (in the air)",
-	BankLeft = "Bank Left (with disc)",
-	BankRight = "Bank Right (with disc)",
-	TypeNext = "Next Throw Type",
-	TypePrev = "Previous Throw Type",
-	Type1 = "Backhand",
-	Type2 = "Forehand",
-	Type3 = "Hammer",
-	Type4 = "Scoober",
-	Type5 = "Blade",
-	LeadLock = "Lead Pass Assist",
-	Celebrate = "Celebrate",
+	Jump = "Jump",
+	Burst = "Sprint / Burst (hold)",
+	Primary = "Throw (hold to charge, release to throw)",
+	Secondary = "Aim / Fake (with the disc)",
 	Menu = "Menu",
-	CameraLock = "Free / Lock Mouse",
+	Ability = "Ability (Jump + Sprint together)",
+}
+
+-- THE ABILITY CHORD (the one place to change it). The ability fires when
+-- every action listed goes down within `window` seconds of each other. The
+-- actions still do their own thing (the jump is never delayed); a normal
+-- sprint-then-jump presses Shift long before Space, so it never fires by
+-- accident. Listed as actions, so it follows rebinds and works on any device.
+Input.AbilityChord = {
+	actions = { "Jump", "Burst" },
+	window = 0.04, -- s
 }
 
 -- Values are Enum.KeyCode / Enum.UserInputType names so they can be saved.
 -- The first key of each list is the one shown in HUD key pips.
 Input.Keyboard = {
-	Sprint = {}, -- classic engine only (auto-sprint); Shift is Burst
 	Jump = { "Space" },
-	Cut = { "Q" },
-	Slide = { "C", "LeftControl" },
-	Dive = { "E" },
 	Burst = { "LeftShift" },
-	Overhead = { "F" },
-	Ability = { "G" },
 	Primary = { "MouseButton1" },
 	Secondary = { "MouseButton2" },
-	BankLeft = { "Z" },
-	BankRight = { "X" },
-	TypeNext = { "T" },
-	TypePrev = {},
-	Type1 = { "One" },
-	Type2 = { "Two" },
-	Type3 = { "Three" },
-	Type4 = { "Four" },
-	Type5 = { "Five" },
-	LeadLock = { "R" },
-	Celebrate = { "B" },
 	Menu = { "M" },
-	CameraLock = { "LeftAlt" },
 } :: { [string]: { string } }
 
+-- (later) the same actions on a pad
 Input.Gamepad = {
-	Sprint = {},
 	Jump = { "ButtonA" },
-	Cut = { "ButtonR1" },
-	Slide = { "ButtonB" },
-	Dive = { "ButtonX" },
 	Burst = { "ButtonL1" },
-	Overhead = { "ButtonY" },
-	Ability = { "ButtonL3" },
 	Primary = { "ButtonR2" },
 	Secondary = { "ButtonL2" },
-	BankLeft = { "DPadLeft" },
-	BankRight = { "DPadRight" },
-	TypeNext = { "DPadUp" },
-	TypePrev = { "DPadDown" },
-	LeadLock = { "ButtonR3" },
-	Celebrate = { "DPadDown" },
 	Menu = { "ButtonSelect" },
 } :: { [string]: { string } }
 
@@ -200,10 +142,11 @@ end
 -- Bump SettingsVersion when a default changes on purpose; keys listed under
 -- the new version in Migrations are reset to their default for profiles saved
 -- by an older version (everything else a player saved is kept).
-Input.SettingsVersion = 3
+Input.SettingsVersion = 4
 Input.Migrations = {
 	[2] = { "ShowTechLabels" }, -- technique labels are now off by default (less HUD noise)
 	[3] = { "Bindings" }, -- the tech-spec key layout replaces saved rebinds once
+	[4] = { "Bindings" }, -- the six-input core design replaces saved rebinds once
 } :: { [number]: { string } }
 
 Input.DefaultSettings = {
@@ -217,7 +160,6 @@ Input.DefaultSettings = {
 	ShowComboFeed = true,
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
-	TechEngine = true, -- the tech core (docs/tech-spec.md) drives movement; off = the classic sim
 	Ability = "FlashStep", -- Config/Abilities id
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
