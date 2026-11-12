@@ -3021,14 +3021,29 @@ return Teams
           <Properties>
             <string name="Name">Tech</string>
             <string name="Source"><![CDATA[--!strict
+-- Alias: every movement number lives in Config/Tuning.
+return require(script.Parent.Tuning)
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="23">
+          <Properties>
+            <string name="Name">Tuning</string>
+            <string name="Source"><![CDATA[--!strict
 --[[
-	TechConfig — every number of the movement tech (docs/tech-spec.md,
-	"Tuning constants"). Logic never hard-codes these; tune here and re-run
-	`lune run tests/run.luau tech`.
+	Tuning — THE ONE PLACE TO TWEAK FEEL (docs/CORE_DESIGN.md).
 
-	Units: studs, seconds, studs/s, studs/s². Timing windows are in ms, as in
-	the spec. Values marked "later step" are listed now so the whole table
-	lives in one place; nothing reads them until that build step exists.
+	Every number that decides how the game feels lives here: speeds,
+	acceleration, turn rates, cuts, skids, jumps, gravity, timing windows.
+	Logic never hard-codes these. Change a value, press Play, feel it.
+	`lune run tests/run.luau tech` re-checks the movement rules offline.
+
+	Units: studs, seconds, studs/s, studs/s². Timing windows are in ms
+	unless the name or comment says s. Sections marked (stage N) belong to a
+	build stage that hasn't been reworked to the core design yet.
+
+	Config/Tech is an alias of this module (older code requires it by that
+	name).
 ]]
 
 local Tech = {}
@@ -3042,23 +3057,24 @@ Tech.INPUT_BUFFER = 100 -- ms a press stays buffered
 Tech.BOTS_USE_TECH = true
 
 -- running
-Tech.RUN_TOP_SPEED = 30 -- (spec 22; faster after playtests)
-Tech.RUN_ACCEL = 105
-Tech.GROUND_FRICTION = 85 -- no input (and HoldingDisc / Downed)
+Tech.RUN_TOP_SPEED = 30 -- FEEL: full jogging speed (no Shift)
+Tech.RUN_ACCEL = 105 -- FEEL: how fast you reach it (studs/s²); lower = heavier
+Tech.GROUND_FRICTION = 85 -- FEEL: stopping when you let go (after the plant window)
 Tech.OVERSPEED_DECAY_GROUND = 15
 Tech.OVERSPEED_DECAY_AIR = 4
 Tech.HARD_SPEED_CAP = 60 -- total speed, nothing exceeds it
 
--- turning: instant below TURN_FREE_SPEED, then this many °/s at each speed
--- (linear between points, flat past the last one)
+-- TURNING (the heart of the feel): instant below TURN_FREE_SPEED, then at
+-- most this many °/s at each speed (linear between points, flat past the
+-- last one). Faster = wider turns.
 Tech.TURN_FREE_SPEED = 12
 Tech.TURN_RATE = {
 	{ speed = 12, rate = 380 },
 	{ speed = 30, rate = 250 },
 	{ speed = 50, rate = 140 },
 }
--- Steering harder than the turn rate drifts: every 90° turned while the
--- stick asks for more than you can turn costs this fraction of your speed.
+-- FEEL: steering harder than the turn rate drifts: every 90° turned while
+-- the stick asks for more than you can turn costs this share of your speed.
 Tech.TURN_DRIFT_LOSS = 0.12
 Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
 
@@ -3072,8 +3088,8 @@ Tech.GROUND_SNAP_AIR = 0.15 -- ... while airborne, so a fall lands on touchdown
 Tech.GROUND_SPRING = 30 -- 1/s, how fast the body settles to its stand height
 Tech.GROUND_SPRING_MAX = 40 -- studs/s, the fastest step-up / step-down
 
--- burst
-Tech.BURST_TOP_SPEED = 40
+-- burst (hold Shift: the sprint; it drains a meter and refills when released)
+Tech.BURST_TOP_SPEED = 40 -- FEEL: sprint top speed
 Tech.BURST_ACCEL = 135
 Tech.BURST_DRAIN = 30
 Tech.BURST_REFILL = 20
@@ -3084,20 +3100,35 @@ Tech.BURST_KICK_COST = 15
 Tech.BURST_KICK_TAP = 120 -- ms
 Tech.BURST_KICK_COOLDOWN = 0.5
 
--- ground tech
-Tech.CUT_MIN_SPEED = 12
-Tech.CUT_ANGLE = 45 -- ° the stick must turn from your line
-Tech.CUT_RESET_ANGLE = 30 -- ° below which the crossing is forgotten
-Tech.CUT_PLANT_TIME = 0.12
-Tech.CUT_COOLDOWN = 0.35
-Tech.PERFECT_CUT_BONUS = 3
-Tech.JUKE_KEEP = 0.90
+-- CUTS (from the stick, no button): let go of WASD while running, then snap
+-- a new direction. The length of the let-go is the timing.
+Tech.CUT_MIN_SPEED = 12 -- below this there is nothing to cut (turns are free)
+Tech.CUT_ANGLE = 45 -- ° the new direction must be off your line to count as a cut
+Tech.CUT_RELEASE_MAX = 0.22 -- s: the longest let-go that is still a plant (longer = you stop)
+Tech.CUT_RELEASE_PERFECT = { 0.04, 0.12 } -- s: a let-go this long is a Perfect cut
+Tech.PLANT_HOLD_FRICTION = 20 -- studs/s² lost while planted (vs GROUND_FRICTION when stopping)
+Tech.PERFECT_KEEP = 1.00 -- FEEL: share of speed a Perfect cut keeps ...
+Tech.PERFECT_CUT_BONUS = 3 -- ... plus this, out of the cut
+Tech.CUT_KEEP = 0.80 -- FEEL: share a Clean (mistimed) cut keeps
+Tech.CUT_SHARP_FROM = 90 -- ° past which a cut keeps less ...
+Tech.CUT_REVERSE_KEEP = 0.65 -- ... down to this share of the keep at a full 180° reversal
+Tech.CUT_COOLDOWN = 0.35 -- s before the next plant can start
+Tech.CUT_REPEAT_TIME = 0.6 -- s: a cut this soon after the last ...
+Tech.CUT_REPEAT_CAP = 0.85 -- ... keeps at most this (no free zigzags)
+Tech.CUT_RESET_ANGLE = 30 -- (internal) ° under which the stick counts as on your line
+Tech.JUKE_WINDOW = 120 -- ms after a cut: the stick back to the old line is a Juke ...
+Tech.JUKE_KEEP = 0.90 -- ... which puts you back on it at this share of the speed
 Tech.JUKE_RETURN_ANGLE = 30 -- ° from the old line that counts as "back"
-Tech.PLANT_STOP_TIME = 0.15
-Tech.PLANT_BOOST_TIME = 0.3
-Tech.PLANT_BOOST = 2.0
-Tech.PLANT_BOOST_PERFECT = 2.5
-Tech.PLANT_PERFECT = 100 -- ms
+
+-- SKID (the sloppy cut): yank the stick hard round at speed with no plant
+Tech.SKID_MIN_SPEED = 20 -- only this fast or faster
+Tech.SKID_ANGLE = 110 -- ° between your line and the stick
+Tech.SKID_FRICTION = 45 -- FEEL: speed lost per second while skidding
+Tech.SKID_TURN = 120 -- °/s you can steer the skid
+Tech.SKID_MAX_TIME = 0.5 -- s at most, then you run again
+Tech.SKID_EXIT_SPEED = 8 -- ... or as soon as you are this slow
+
+-- slides (stage 2: from dive landings; Shift in a slide carves, Space hops)
 Tech.SLIDE_TURN = 60 -- °/s
 Tech.CARVE_TURN = 220
 Tech.CARVE_FRICTION = 40
@@ -3105,13 +3136,7 @@ Tech.LANDING_SLIDE_MIN_SPEED = 12
 Tech.SLIDE_HOP_HEIGHT = 0.6 -- of a tap jump's height
 Tech.SLIDE_HOP_OFF_WINDOW = 2 -- studs/s outside the window
 Tech.HOP_CHAIN_RESET = 1.0 -- s on the ground (not sliding)
-Tech.CATCH_RUNOUT_FRICTION = 50
-Tech.CUT_KEEP = 0.70
-Tech.PERFECT_KEEP = 1.00
-Tech.CUT_PERFECT_WINDOW = 80 -- ms
-Tech.CUT_REPEAT_CAP = 0.85
-Tech.CUT_REPEAT_TIME = 0.6
-Tech.JUKE_WINDOW = 120 -- ms
+Tech.CATCH_RUNOUT_FRICTION = 50 -- FEEL: the skid to a stop after a catch (stage 3/4)
 Tech.SLIDE_MIN_SPEED = 18
 Tech.SLIDE_FRICTION = 15
 Tech.SLIDE_MAX_TIME = 1.2
@@ -3120,8 +3145,8 @@ Tech.LANDING_SLIDE_PERFECT = 40 -- ms
 Tech.SLIDE_HOP_WINDOW = { 0.15, 0.30 } -- s
 Tech.SLIDE_HOP_BONUS = { 6, 4, 2, 0 }
 
--- air tech
-Tech.JUMP_TAP = 40
+-- jumping and air (stage 2)
+Tech.JUMP_TAP = 40 -- FEEL: jump speed of a tap; hold Space up to JUMP_HOLD for JUMP_FULL
 Tech.JUMP_FULL = 54
 Tech.JUMP_HOLD = 0.2 -- s of hold that adds up to a full jump
 Tech.AIR_ACCEL = 26
@@ -3244,11 +3269,11 @@ return Tech
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="23">
+      <Item class="Folder" referent="24">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -3581,7 +3606,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -3806,7 +3831,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -4203,11 +4228,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="27">
+      <Item class="Folder" referent="28">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -6546,7 +6571,7 @@ return MovementSim
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">TechCore</string>
             <string name="Source"><![CDATA[--!strict
@@ -6707,24 +6732,13 @@ export type State = {
 	burstDrained: number, -- meter spent by the current hold (refunded on a tap)
 	kickReadyAt: number,
 
-	-- cuts
+	-- cuts (from the stick: let go to plant, then snap a new direction)
+	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
+	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
+	skid: boolean, -- the current slide is a skid from a hard turn with no plant
 	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
 	cutReadyAt: number,
-	plant: {
-		startAt: number,
-		origDir: Vector3,
-		speed: number,
-		quality: string, -- of the cut it becomes
-		keep: number,
-		bonus: number,
-		mirror: boolean,
-	}?,
-	plantStop: { startAt: number, fromSpeed: number }?,
-	boostUntil: number,
-	boostMult: number,
-	boostOpenAt: number, -- when the plant stop finished (Perfect window start)
-	boostJudged: boolean,
 
 	-- slides and hops
 	slideSince: number,
@@ -6850,15 +6864,12 @@ function TechCore.new(now: number?): State
 		burstDrained = 0,
 		kickReadyAt = -math.huge,
 
+		release = nil,
+		lastCut = nil,
+		skid = false,
 		crossAt = nil,
 		lastCutAt = -math.huge,
 		cutReadyAt = -math.huge,
-		plant = nil,
-		plantStop = nil,
-		boostUntil = -math.huge,
-		boostMult = 1,
-		boostOpenAt = -math.huge,
-		boostJudged = true,
 
 		slideSince = -math.huge,
 		landedAt = -math.huge,
@@ -6987,8 +6998,6 @@ end
 function TechCore.setHolding(s: State, on: boolean)
 	s.holding = on
 	if on then
-		s.plant = nil
-		s.plantStop = nil
 		s.skyChargeAt = nil
 		if s.state == "Sliding" or s.state == "Recovering" then
 			s.state = baseState(s)
@@ -7007,8 +7016,6 @@ function TechCore.setFrozen(s: State, on: boolean)
 	s.frozen = on
 	if on then
 		s.vel = Vector3.new(0, s.vel.Y, 0)
-		s.plant = nil
-		s.plantStop = nil
 	end
 end
 
@@ -7018,8 +7025,6 @@ function TechCore.reset(s: State)
 	s.acc = 0
 	s.drifting = false
 	table.clear(s.buffer)
-	s.plant = nil
-	s.plantStop = nil
 	s.dodge = nil
 	s.wavedash = nil
 	s.skyChargeAt = nil
@@ -7213,139 +7218,26 @@ local function jumpOff(s: State, vy: number, boost: boolean)
 	s.discResetUsed = false
 	s.dodge = nil
 	s.wavedash = nil
+	s.release = nil
 	s.stumbleOnLand = false
-	s.plant = nil
-	s.plantStop = nil
 	TechCore.enter(s, "Airborne", true)
 end
 
--- Cut on the ground: a plant (the redirect lands when it ends), or a Plant
--- Stop with no stick. Returns whether the press was used.
-local function tryCut(s: State, input: Input, at: number): boolean
-	if not RUNNING[s.state] or s.plant or s.plantStop or s.holding then
-		return false
-	end
-	-- Zap Dash: a Cut right out of a wavedash bursts again, no plant
-	local zapMs = (at - s.wavedashAt) * 1000
-	local zapDir = stickDir(input)
-	if zapDir and zapMs >= -Config.INPUT_BUFFER and zapMs <= Config.ZAP_WINDOW then
-		local quality = noteRange(s, "Zap Dash", math.max(zapMs, 0), 0, Config.ZAP_WINDOW, 0, Config.ZAP_PERFECT)
-		local boost = if quality == "Perfect" then Config.ZAP_BURST_PERFECT else Config.ZAP_BURST
-		setFlat(s, flatOf(s.vel) + zapDir * boost)
-		s.wavedashAt = -math.huge
-		s.cutReadyAt = s.now + Config.CUT_COOLDOWN
-		emit(s, "ZapDash", quality, zapDir)
-		return true
-	end
-	if s.now < s.cutReadyAt then
-		return false
-	end
-	local speed = flatOf(s.vel).Magnitude
-	local want = stickDir(input)
-	if want == nil then
-		if speed < Config.CUT_MIN_SPEED then
-			return false
-		end
-		s.plantStop = { startAt = s.now, fromSpeed = speed }
-		s.cutReadyAt = s.now + Config.CUT_COOLDOWN
-		return true
-	end
-	if speed < Config.CUT_MIN_SPEED then
-		return false
-	end
-	local cross = s.crossAt
-	if cross == nil then
-		return false -- the stick hasn't turned 45° yet: the press stays buffered
-	end
-	-- judged on the press against the crossing (an early press is buffered)
-	local ms = (at - cross) * 1000
-	local timing = TechCore.noteTiming(s, "Cut", ms, Config.CUT_PERFECT_WINDOW, Config.CUT_PERFECT_WINDOW)
-	local mirror = s.mirrorArmed
-	s.mirrorArmed = false
-	local perfect = timing.quality == "Perfect" or mirror
-	local keep = if perfect then Config.PERFECT_KEEP else Config.CUT_KEEP
-	local bonus = (if perfect then Config.PERFECT_CUT_BONUS else 0) + (if mirror then Config.MIRROR_BONUS else 0)
-	if s.now - s.lastCutAt < Config.CUT_REPEAT_TIME then
-		-- zigzag cap: at most 85 % of the speed, no bonus, even if Perfect
-		if keep > Config.CUT_REPEAT_CAP then
-			bonus = 0
-		end
-		keep = math.min(keep, Config.CUT_REPEAT_CAP)
-	end
-	s.plant = {
-		startAt = s.now,
-		origDir = s.heading,
-		speed = speed,
-		quality = if perfect then "Perfect" else "Clean",
-		keep = keep,
-		bonus = bonus,
-		mirror = mirror,
-	}
-	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
-	s.lastCutAt = s.now
-	-- the plant everyone sees (identical for a cut and a juke)
-	emit(s, "Plant", "Clean", want)
-	return true
-end
-
--- The plant ends: a real cut, or a Juke if the stick came back to the line.
-local function finishPlant(s: State, input: Input)
-	local p = s.plant
-	if not p then
-		return
-	end
-	s.plant = nil
-	local want = stickDir(input)
-	if want == nil or VecMath.flatAngle(p.origDir, want) <= Config.JUKE_RETURN_ANGLE then
-		setFlat(s, p.origDir * (p.speed * Config.JUKE_KEEP))
-		emit(s, "Juke", "Clean", p.origDir)
-		return
-	end
-	setFlat(s, want * (p.speed * p.keep + p.bonus))
-	s.crossAt = nil
-	emit(s, "Cut", p.quality, want, if p.mirror then "Mirror" else nil)
-end
-
 local function slideAllowed(s: State, speed: number, landing: boolean): boolean
-	if not RUNNING[s.state] or s.holding or s.plant or s.plantStop then
+	if not RUNNING[s.state] or s.holding then
 		return false
 	end
 	return speed >= (if landing then Config.LANDING_SLIDE_MIN_SPEED else Config.SLIDE_MIN_SPEED)
 end
 
 local function startSlide(s: State, quality: string?, info: string?)
+	s.skid = false
 	s.slideSince = s.now
 	s.groundedPlainSince = nil
 	TechCore.enter(s, "Sliding", true)
 	if quality then
 		emit(s, "LandingSlide", quality, s.heading, info)
 	end
-end
-
--- Slide pressed or held: a Landing Slide within the window of the touchdown,
--- otherwise a plain slide at speed.
-local function trySlide(s: State, at: number): boolean
-	local speed = flatOf(s.vel).Magnitude
-	local sinceLand = (at - s.landedAt) * 1000
-	if sinceLand >= -Config.LANDING_SLIDE_WINDOW and sinceLand <= Config.LANDING_SLIDE_WINDOW then
-		if not slideAllowed(s, speed, true) then
-			return false
-		end
-		local timing = TechCore.noteTiming(
-			s,
-			"Landing Slide",
-			sinceLand,
-			Config.LANDING_SLIDE_WINDOW,
-			Config.LANDING_SLIDE_PERFECT
-		)
-		startSlide(s, timing.quality)
-		return true
-	end
-	if not slideAllowed(s, speed, false) then
-		return false
-	end
-	startSlide(s, nil)
-	return true
 end
 
 -- Jump from a slide: the Slide Hop.
@@ -7465,7 +7357,7 @@ end
 
 -- Dive: a ground layout at speed, or an air layout that spends the dodge.
 local function tryLayout(s: State, input: Input): boolean
-	if s.holding or s.plant or s.plantStop then
+	if s.holding then
 		return false
 	end
 	local flat = flatOf(s.vel)
@@ -7588,7 +7480,7 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if AIR[s.state] then
 		return tryWallKick(s) or tryAirDodge(s, input, env)
 	end
-	if s.plant or s.plantStop or s.state == "Recovering" then
+	if s.state == "Recovering" then
 		return false
 	end
 	if s.state == "Sliding" then
@@ -7646,9 +7538,6 @@ local function releaseBurst(s: State, input: Input)
 	refund(s, s.burstDrained)
 	s.burstDrained = 0
 	if not RUNNING[s.state] or s.now < s.kickReadyAt or s.burstLocked or s.burst < Config.BURST_KICK_COST then
-		return
-	end
-	if s.plant or s.plantStop then
 		return
 	end
 	local dir = stickDir(input) or s.heading
@@ -7743,23 +7632,16 @@ local function tryPresses(s: State, input: Input, env: Env)
 			s.buffer[action] = nil
 		end
 	end
-	attempt("Cut", function(at)
-		if AIR[s.state] then
-			return tryDodgeCancel(s)
-		end
-		return tryCut(s, input, at)
+	-- on the ground cuts come from the stick (gestureCut); a Cut press is
+	-- only read in the air (stage 2 replaces it)
+	attempt("Cut", function()
+		return AIR[s.state] == true and tryDodgeCancel(s)
 	end)
 	attempt("Jump", function(at)
 		return tryJump(s, input, env, at)
 	end)
 	attempt("Dive", function()
 		return tryStall(s) or tryLayout(s, input)
-	end)
-	attempt("Slide", function(at)
-		if AIR[s.state] then
-			return false -- held in the air it is a Fast Fall
-		end
-		return trySlide(s, at)
 	end)
 end
 
@@ -7835,6 +7717,59 @@ local function steer(s: State, flat: Vector3, want: Vector3, rate: number, dt: n
 	return dir * speed
 end
 
+-- FEEL: the cut. The stick was let go at speed (s.release) and now points
+-- `want`. Within CUT_RELEASE_MAX and at least CUT_ANGLE off your old line it
+-- is a cut: a release of CUT_RELEASE_PERFECT is Perfect (keeps PERFECT_KEEP
+-- + PERFECT_CUT_BONUS), anything else in the window is Clean (CUT_KEEP).
+-- Past CUT_SHARP_FROM degrees the keep fades to CUT_REVERSE_KEEP at a full
+-- reversal, and cuts within CUT_REPEAT_TIME of the last are capped at
+-- CUT_REPEAT_CAP (no free zigzags). Returns the new flat velocity, or nil.
+local function gestureCut(s: State, want: Vector3): Vector3?
+	local r = s.release
+	if r == nil then
+		return nil
+	end
+	s.release = nil
+	local gap = s.now - r.at
+	if gap > Config.CUT_RELEASE_MAX + 1e-9 then
+		return nil
+	end
+	local angle = VecMath.flatAngle(r.dir, want)
+	if angle < Config.CUT_ANGLE then
+		return nil -- a stutter step: you just run on
+	end
+	local quality = noteRange(
+		s,
+		"Cut",
+		gap * 1000,
+		0,
+		Config.CUT_RELEASE_MAX * 1000,
+		Config.CUT_RELEASE_PERFECT[1] * 1000,
+		Config.CUT_RELEASE_PERFECT[2] * 1000
+	)
+	local mirror = s.mirrorArmed
+	s.mirrorArmed = false
+	local perfect = quality == "Perfect" or mirror
+	local keep = if perfect then Config.PERFECT_KEEP else Config.CUT_KEEP
+	local bonus = (if perfect then Config.PERFECT_CUT_BONUS else 0) + (if mirror then Config.MIRROR_BONUS else 0)
+	if angle > Config.CUT_SHARP_FROM then
+		local k = math.clamp((angle - Config.CUT_SHARP_FROM) / (180 - Config.CUT_SHARP_FROM), 0, 1)
+		keep *= 1 + (Config.CUT_REVERSE_KEEP - 1) * k
+	end
+	if s.now - s.lastCutAt < Config.CUT_REPEAT_TIME then
+		if keep > Config.CUT_REPEAT_CAP then
+			bonus = 0
+		end
+		keep = math.min(keep, Config.CUT_REPEAT_CAP)
+	end
+	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
+	s.lastCutAt = s.now
+	s.lastCut = { at = s.now, origDir = r.dir, speed = r.speed }
+	s.heading = want
+	emit(s, "Cut", if perfect then "Perfect" else "Clean", want, if mirror then "Mirror" else nil)
+	return want * (r.speed * keep + bonus)
+end
+
 local function runFlat(s: State, input: Input, dt: number): Vector3
 	local flat = flatOf(s.vel)
 	local speed = flat.Magnitude
@@ -7848,10 +7783,21 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		top *= Config.SKY_SLOW
 	end
 	if want == nil then
-		-- no stick: friction (overspeed bleeds the same way)
-		return s.heading * math.max(0, speed - Config.GROUND_FRICTION * dt)
+		-- FEEL: letting go of the stick at speed plants the feet. For up to
+		-- CUT_RELEASE_MAX you only lose PLANT_HOLD_FRICTION, so the next
+		-- direction can be a cut that keeps your speed; let go longer and
+		-- you simply stop (GROUND_FRICTION).
+		if s.release == nil and s.state ~= "Marking" and speed >= Config.CUT_MIN_SPEED and s.now >= s.cutReadyAt then
+			s.release = { at = s.now, speed = speed, dir = s.heading }
+			emit(s, "Plant", "Clean", s.heading)
+		end
+		local r = s.release
+		local planted = r ~= nil and s.now - r.at <= Config.CUT_RELEASE_MAX
+		local friction = if planted then Config.PLANT_HOLD_FRICTION else Config.GROUND_FRICTION
+		return s.heading * math.max(0, speed - friction * dt)
 	end
 	if s.state == "Marking" then
+		s.release = nil
 		-- the mark shuffle: quick, instant turns, capped at MARK_SPEED
 		top = math.min(top, Config.MARK_SPEED)
 		s.heading = want
@@ -7859,6 +7805,34 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		local target = top * mag
 		speed = moveToward(math.min(speed, top), target, Config.MARK_ACCEL * dt)
 		return want * speed
+	end
+
+	-- the stick came back after a plant: a cut (or nothing, if it points
+	-- along the old line again)
+	local cut = gestureCut(s, want)
+	if cut then
+		return cut
+	end
+	-- Juke: within JUKE_WINDOW of a cut, the stick back to the old line puts
+	-- you back on it at JUKE_KEEP of the speed (the defender bit on the cut)
+	local lc = s.lastCut
+	if lc then
+		if s.now - lc.at > Config.JUKE_WINDOW / 1000 then
+			s.lastCut = nil
+		elseif VecMath.flatAngle(lc.origDir, want) <= Config.JUKE_RETURN_ANGLE then
+			s.lastCut = nil
+			s.heading = lc.origDir
+			emit(s, "Juke", "Clean", lc.origDir)
+			return lc.origDir * (lc.speed * Config.JUKE_KEEP)
+		end
+	end
+	-- Skid: yanking the stick hard round at speed with no plant throws you
+	-- into a skid that eats your speed (the sloppy version of a cut)
+	if speed >= Config.SKID_MIN_SPEED and not s.holding and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE then
+		startSlide(s, nil)
+		s.skid = true
+		emit(s, "Skid", "Miss", s.heading)
+		return flat
 	end
 
 	-- the stick crossing 45° from the line (the Perfect Cut reference)
@@ -7892,21 +7866,6 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 
 	-- accelerate / decay
 	local accel = s.accel
-	if s.now < s.boostUntil then
-		accel *= s.boostMult
-		if not s.boostJudged then
-			-- the Plant Stop's Perfect: go within 100 ms of the stop finishing
-			s.boostJudged = true
-			local ms = (s.now - s.boostOpenAt) * 1000
-			local timing =
-				TechCore.noteTiming(s, "Plant Stop", ms, Config.PLANT_BOOST_TIME * 1000, Config.PLANT_PERFECT)
-			if timing.quality == "Perfect" then
-				s.boostMult = Config.PLANT_BOOST_PERFECT
-				accel = s.accel * s.boostMult
-			end
-			emit(s, "PlantStop", timing.quality == "Perfect" and "Perfect" or "Clean", want)
-		end
-	end
 	local target = top * mag
 	if speed > top then
 		speed = math.max(top, speed - Config.OVERSPEED_DECAY_GROUND * dt)
@@ -7924,8 +7883,11 @@ end
 local function slideFlat(s: State, input: Input, dt: number): Vector3
 	local flat = flatOf(s.vel)
 	local carving = isHeld(input, "Burst") and not s.burstLocked and s.burst > 0
-	local friction = if carving then Config.CARVE_FRICTION else Config.SLIDE_FRICTION
-	local rate = if carving then Config.CARVE_TURN else Config.SLIDE_TURN
+	local friction = if s.skid
+		then Config.SKID_FRICTION
+		elseif carving then Config.CARVE_FRICTION
+		else Config.SLIDE_FRICTION
+	local rate = if s.skid then Config.SKID_TURN elseif carving then Config.CARVE_TURN else Config.SLIDE_TURN
 	local want = stickDir(input)
 	if want then
 		flat = steer(s, flat, want, rate, dt)
@@ -8021,8 +7983,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	settleBase(s)
 	if not s.grounded and (RUNNING[s.state] or s.state == "HoldingDisc" or s.state == "Sliding") then
 		TechCore.enter(s, "Airborne", true)
-		s.plant = nil
-		s.plantStop = nil
 		s.skyChargeAt = nil
 	elseif s.grounded and (s.state == "Airborne" or s.state == "AirDodging") then
 		TechCore.enter(s, baseState(s), true)
@@ -8059,10 +8019,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	tryPresses(s, input, env)
 
 	-- timers
-	local p = s.plant
-	if p and s.now - p.startAt >= Config.CUT_PLANT_TIME - 1e-9 then
-		finishPlant(s, input)
-	end
 	if s.state == "AirDodging" then
 		local d = s.dodge
 		if d == nil or s.now - d.startAt >= Config.AIR_DODGE_HANG - 1e-9 then
@@ -8077,8 +8033,11 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	end
 	if s.state == "Sliding" then
 		local speed = flatOf(s.vel).Magnitude
-		local stand = s.now - s.slideSince >= Config.SLIDE_MAX_TIME or not isHeld(input, "Slide") or speed < 2
+		local stand = if s.skid
+			then s.now - s.slideSince >= Config.SKID_MAX_TIME or speed < Config.SKID_EXIT_SPEED
+			else s.now - s.slideSince >= Config.SLIDE_MAX_TIME or not isHeld(input, "Slide") or speed < 2
 		if stand and s.now - s.slideSince > 0.05 then
+			s.skid = false
 			TechCore.enter(s, baseState(s), true)
 		end
 	end
@@ -8097,20 +8056,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	local flat: Vector3
 	if s.frozen then
 		flat = Vector3.zero
-	elseif s.plantStop then
-		local ps = s.plantStop :: { startAt: number, fromSpeed: number }
-		local k = math.clamp((s.now - ps.startAt) / Config.PLANT_STOP_TIME, 0, 1)
-		flat = s.heading * (ps.fromSpeed * (1 - k))
-		if k >= 1 then
-			s.plantStop = nil
-			s.boostOpenAt = s.now
-			s.boostUntil = s.now + Config.PLANT_BOOST_TIME
-			s.boostMult = Config.PLANT_BOOST
-			s.boostJudged = false
-		end
-	elseif s.plant then
-		-- the plant: you keep your line until it ends (a juke looks the same)
-		flat = flatOf(s.vel)
 	elseif not s.grounded then
 		flat = airFlat(s, input, dt)
 	elseif s.state == "Sliding" then
@@ -8246,7 +8191,7 @@ return TechCore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="30">
+      <Item class="ModuleScript" referent="31">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -8384,11 +8329,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="31">
+      <Item class="Folder" referent="32">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -8848,7 +8793,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -9224,7 +9169,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -9497,7 +9442,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -10040,7 +9985,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -10258,7 +10203,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -10742,7 +10687,7 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -11069,11 +11014,11 @@ return Signatures
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="39">
+      <Item class="Folder" referent="40">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -11120,7 +11065,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -11168,7 +11113,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -11282,19 +11227,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="43">
+  <Item class="ServerScriptService" referent="44">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="44">
+    <Item class="Folder" referent="45">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="45">
+      <Item class="Folder" referent="46">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12321,7 +12266,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -12445,7 +12390,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12943,7 +12888,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="49">
+      <Item class="Script" referent="50">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -13011,11 +12956,11 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="50">
+      <Item class="Folder" referent="51">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">AbilityService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13164,7 +13109,7 @@ return AbilityService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13292,7 +13237,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15966,7 +15911,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16652,7 +16597,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16983,7 +16928,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17401,7 +17346,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17937,7 +17882,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18170,7 +18115,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">JerseyService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18376,7 +18321,7 @@ return JerseyService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18475,7 +18420,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -20268,7 +20213,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -21627,7 +21572,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="63">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22119,7 +22064,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="64">
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22714,7 +22659,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="65">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">ShopService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22825,7 +22770,7 @@ return ShopService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="66">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23145,7 +23090,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="67">
+        <Item class="ModuleScript" referent="68">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23652,7 +23597,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="68">
+        <Item class="ModuleScript" referent="69">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -25543,13 +25488,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="69">
+  <Item class="SoundService" referent="70">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="70">
+  <Item class="StarterPlayer" referent="71">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -25562,11 +25507,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="71">
+    <Item class="StarterCharacterScripts" referent="72">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="72">
+      <Item class="LocalScript" referent="73">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -25649,19 +25594,19 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="73">
+    <Item class="StarterPlayerScripts" referent="74">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="74">
+      <Item class="Folder" referent="75">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="75">
+        <Item class="Folder" referent="76">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">AbilityController</string>
               <string name="Source"><![CDATA[--!strict
@@ -25977,7 +25922,7 @@ return AbilityController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">AnimeFX</string>
               <string name="Source"><![CDATA[--!strict
@@ -26502,7 +26447,7 @@ return AnimeFX
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26642,7 +26587,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26951,7 +26896,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27882,7 +27827,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">CursorController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28003,7 +27948,7 @@ return CursorController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -28869,7 +28814,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29830,7 +29775,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30244,7 +30189,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31495,7 +31440,7 @@ checkMirror = function()
 	end
 	TechCore.armMirror(tech)
 	-- their plant resolves after it ends: a Juke means you bit
-	task.delay(TechConfig.CUT_PLANT_TIME + lag + 0.05, function()
+	task.delay(TechConfig.CUT_RELEASE_MAX + TechConfig.JUKE_WINDOW / 1000 + lag + 0.05, function()
 		if opp.Parent and opp:GetAttribute("Tech") == "Juke" and engineOn then
 			TechCore.juked(tech)
 		end
@@ -31629,7 +31574,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31769,7 +31714,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33063,7 +33008,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33226,7 +33171,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -33398,7 +33343,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -33546,7 +33491,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34499,7 +34444,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="92">
+          <Item class="ModuleScript" referent="93">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34960,7 +34905,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="93">
+        <Item class="LocalScript" referent="94">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -35015,11 +34960,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="94">
+        <Item class="Folder" referent="95">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -36063,7 +36008,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">MainMenu</string>
               <string name="Source"><![CDATA[--!strict
@@ -36279,7 +36224,7 @@ return MainMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -37783,7 +37728,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -38069,7 +38014,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -38448,7 +38393,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -38662,7 +38607,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -38983,7 +38928,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="102">
+          <Item class="ModuleScript" referent="103">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -39464,12 +39409,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="103">
+  <Item class="Teams" referent="104">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="104">
+  <Item class="Workspace" referent="105">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

@@ -156,24 +156,13 @@ export type State = {
 	burstDrained: number, -- meter spent by the current hold (refunded on a tap)
 	kickReadyAt: number,
 
-	-- cuts
+	-- cuts (from the stick: let go to plant, then snap a new direction)
+	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
+	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
+	skid: boolean, -- the current slide is a skid from a hard turn with no plant
 	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
 	cutReadyAt: number,
-	plant: {
-		startAt: number,
-		origDir: Vector3,
-		speed: number,
-		quality: string, -- of the cut it becomes
-		keep: number,
-		bonus: number,
-		mirror: boolean,
-	}?,
-	plantStop: { startAt: number, fromSpeed: number }?,
-	boostUntil: number,
-	boostMult: number,
-	boostOpenAt: number, -- when the plant stop finished (Perfect window start)
-	boostJudged: boolean,
 
 	-- slides and hops
 	slideSince: number,
@@ -299,15 +288,12 @@ function TechCore.new(now: number?): State
 		burstDrained = 0,
 		kickReadyAt = -math.huge,
 
+		release = nil,
+		lastCut = nil,
+		skid = false,
 		crossAt = nil,
 		lastCutAt = -math.huge,
 		cutReadyAt = -math.huge,
-		plant = nil,
-		plantStop = nil,
-		boostUntil = -math.huge,
-		boostMult = 1,
-		boostOpenAt = -math.huge,
-		boostJudged = true,
 
 		slideSince = -math.huge,
 		landedAt = -math.huge,
@@ -436,8 +422,6 @@ end
 function TechCore.setHolding(s: State, on: boolean)
 	s.holding = on
 	if on then
-		s.plant = nil
-		s.plantStop = nil
 		s.skyChargeAt = nil
 		if s.state == "Sliding" or s.state == "Recovering" then
 			s.state = baseState(s)
@@ -456,8 +440,6 @@ function TechCore.setFrozen(s: State, on: boolean)
 	s.frozen = on
 	if on then
 		s.vel = Vector3.new(0, s.vel.Y, 0)
-		s.plant = nil
-		s.plantStop = nil
 	end
 end
 
@@ -467,8 +449,6 @@ function TechCore.reset(s: State)
 	s.acc = 0
 	s.drifting = false
 	table.clear(s.buffer)
-	s.plant = nil
-	s.plantStop = nil
 	s.dodge = nil
 	s.wavedash = nil
 	s.skyChargeAt = nil
@@ -662,139 +642,26 @@ local function jumpOff(s: State, vy: number, boost: boolean)
 	s.discResetUsed = false
 	s.dodge = nil
 	s.wavedash = nil
+	s.release = nil
 	s.stumbleOnLand = false
-	s.plant = nil
-	s.plantStop = nil
 	TechCore.enter(s, "Airborne", true)
 end
 
--- Cut on the ground: a plant (the redirect lands when it ends), or a Plant
--- Stop with no stick. Returns whether the press was used.
-local function tryCut(s: State, input: Input, at: number): boolean
-	if not RUNNING[s.state] or s.plant or s.plantStop or s.holding then
-		return false
-	end
-	-- Zap Dash: a Cut right out of a wavedash bursts again, no plant
-	local zapMs = (at - s.wavedashAt) * 1000
-	local zapDir = stickDir(input)
-	if zapDir and zapMs >= -Config.INPUT_BUFFER and zapMs <= Config.ZAP_WINDOW then
-		local quality = noteRange(s, "Zap Dash", math.max(zapMs, 0), 0, Config.ZAP_WINDOW, 0, Config.ZAP_PERFECT)
-		local boost = if quality == "Perfect" then Config.ZAP_BURST_PERFECT else Config.ZAP_BURST
-		setFlat(s, flatOf(s.vel) + zapDir * boost)
-		s.wavedashAt = -math.huge
-		s.cutReadyAt = s.now + Config.CUT_COOLDOWN
-		emit(s, "ZapDash", quality, zapDir)
-		return true
-	end
-	if s.now < s.cutReadyAt then
-		return false
-	end
-	local speed = flatOf(s.vel).Magnitude
-	local want = stickDir(input)
-	if want == nil then
-		if speed < Config.CUT_MIN_SPEED then
-			return false
-		end
-		s.plantStop = { startAt = s.now, fromSpeed = speed }
-		s.cutReadyAt = s.now + Config.CUT_COOLDOWN
-		return true
-	end
-	if speed < Config.CUT_MIN_SPEED then
-		return false
-	end
-	local cross = s.crossAt
-	if cross == nil then
-		return false -- the stick hasn't turned 45° yet: the press stays buffered
-	end
-	-- judged on the press against the crossing (an early press is buffered)
-	local ms = (at - cross) * 1000
-	local timing = TechCore.noteTiming(s, "Cut", ms, Config.CUT_PERFECT_WINDOW, Config.CUT_PERFECT_WINDOW)
-	local mirror = s.mirrorArmed
-	s.mirrorArmed = false
-	local perfect = timing.quality == "Perfect" or mirror
-	local keep = if perfect then Config.PERFECT_KEEP else Config.CUT_KEEP
-	local bonus = (if perfect then Config.PERFECT_CUT_BONUS else 0) + (if mirror then Config.MIRROR_BONUS else 0)
-	if s.now - s.lastCutAt < Config.CUT_REPEAT_TIME then
-		-- zigzag cap: at most 85 % of the speed, no bonus, even if Perfect
-		if keep > Config.CUT_REPEAT_CAP then
-			bonus = 0
-		end
-		keep = math.min(keep, Config.CUT_REPEAT_CAP)
-	end
-	s.plant = {
-		startAt = s.now,
-		origDir = s.heading,
-		speed = speed,
-		quality = if perfect then "Perfect" else "Clean",
-		keep = keep,
-		bonus = bonus,
-		mirror = mirror,
-	}
-	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
-	s.lastCutAt = s.now
-	-- the plant everyone sees (identical for a cut and a juke)
-	emit(s, "Plant", "Clean", want)
-	return true
-end
-
--- The plant ends: a real cut, or a Juke if the stick came back to the line.
-local function finishPlant(s: State, input: Input)
-	local p = s.plant
-	if not p then
-		return
-	end
-	s.plant = nil
-	local want = stickDir(input)
-	if want == nil or VecMath.flatAngle(p.origDir, want) <= Config.JUKE_RETURN_ANGLE then
-		setFlat(s, p.origDir * (p.speed * Config.JUKE_KEEP))
-		emit(s, "Juke", "Clean", p.origDir)
-		return
-	end
-	setFlat(s, want * (p.speed * p.keep + p.bonus))
-	s.crossAt = nil
-	emit(s, "Cut", p.quality, want, if p.mirror then "Mirror" else nil)
-end
-
 local function slideAllowed(s: State, speed: number, landing: boolean): boolean
-	if not RUNNING[s.state] or s.holding or s.plant or s.plantStop then
+	if not RUNNING[s.state] or s.holding then
 		return false
 	end
 	return speed >= (if landing then Config.LANDING_SLIDE_MIN_SPEED else Config.SLIDE_MIN_SPEED)
 end
 
 local function startSlide(s: State, quality: string?, info: string?)
+	s.skid = false
 	s.slideSince = s.now
 	s.groundedPlainSince = nil
 	TechCore.enter(s, "Sliding", true)
 	if quality then
 		emit(s, "LandingSlide", quality, s.heading, info)
 	end
-end
-
--- Slide pressed or held: a Landing Slide within the window of the touchdown,
--- otherwise a plain slide at speed.
-local function trySlide(s: State, at: number): boolean
-	local speed = flatOf(s.vel).Magnitude
-	local sinceLand = (at - s.landedAt) * 1000
-	if sinceLand >= -Config.LANDING_SLIDE_WINDOW and sinceLand <= Config.LANDING_SLIDE_WINDOW then
-		if not slideAllowed(s, speed, true) then
-			return false
-		end
-		local timing = TechCore.noteTiming(
-			s,
-			"Landing Slide",
-			sinceLand,
-			Config.LANDING_SLIDE_WINDOW,
-			Config.LANDING_SLIDE_PERFECT
-		)
-		startSlide(s, timing.quality)
-		return true
-	end
-	if not slideAllowed(s, speed, false) then
-		return false
-	end
-	startSlide(s, nil)
-	return true
 end
 
 -- Jump from a slide: the Slide Hop.
@@ -914,7 +781,7 @@ end
 
 -- Dive: a ground layout at speed, or an air layout that spends the dodge.
 local function tryLayout(s: State, input: Input): boolean
-	if s.holding or s.plant or s.plantStop then
+	if s.holding then
 		return false
 	end
 	local flat = flatOf(s.vel)
@@ -1037,7 +904,7 @@ local function tryJump(s: State, input: Input, env: Env, at: number): boolean
 	if AIR[s.state] then
 		return tryWallKick(s) or tryAirDodge(s, input, env)
 	end
-	if s.plant or s.plantStop or s.state == "Recovering" then
+	if s.state == "Recovering" then
 		return false
 	end
 	if s.state == "Sliding" then
@@ -1095,9 +962,6 @@ local function releaseBurst(s: State, input: Input)
 	refund(s, s.burstDrained)
 	s.burstDrained = 0
 	if not RUNNING[s.state] or s.now < s.kickReadyAt or s.burstLocked or s.burst < Config.BURST_KICK_COST then
-		return
-	end
-	if s.plant or s.plantStop then
 		return
 	end
 	local dir = stickDir(input) or s.heading
@@ -1192,23 +1056,16 @@ local function tryPresses(s: State, input: Input, env: Env)
 			s.buffer[action] = nil
 		end
 	end
-	attempt("Cut", function(at)
-		if AIR[s.state] then
-			return tryDodgeCancel(s)
-		end
-		return tryCut(s, input, at)
+	-- on the ground cuts come from the stick (gestureCut); a Cut press is
+	-- only read in the air (stage 2 replaces it)
+	attempt("Cut", function()
+		return AIR[s.state] == true and tryDodgeCancel(s)
 	end)
 	attempt("Jump", function(at)
 		return tryJump(s, input, env, at)
 	end)
 	attempt("Dive", function()
 		return tryStall(s) or tryLayout(s, input)
-	end)
-	attempt("Slide", function(at)
-		if AIR[s.state] then
-			return false -- held in the air it is a Fast Fall
-		end
-		return trySlide(s, at)
 	end)
 end
 
@@ -1284,6 +1141,59 @@ local function steer(s: State, flat: Vector3, want: Vector3, rate: number, dt: n
 	return dir * speed
 end
 
+-- FEEL: the cut. The stick was let go at speed (s.release) and now points
+-- `want`. Within CUT_RELEASE_MAX and at least CUT_ANGLE off your old line it
+-- is a cut: a release of CUT_RELEASE_PERFECT is Perfect (keeps PERFECT_KEEP
+-- + PERFECT_CUT_BONUS), anything else in the window is Clean (CUT_KEEP).
+-- Past CUT_SHARP_FROM degrees the keep fades to CUT_REVERSE_KEEP at a full
+-- reversal, and cuts within CUT_REPEAT_TIME of the last are capped at
+-- CUT_REPEAT_CAP (no free zigzags). Returns the new flat velocity, or nil.
+local function gestureCut(s: State, want: Vector3): Vector3?
+	local r = s.release
+	if r == nil then
+		return nil
+	end
+	s.release = nil
+	local gap = s.now - r.at
+	if gap > Config.CUT_RELEASE_MAX + 1e-9 then
+		return nil
+	end
+	local angle = VecMath.flatAngle(r.dir, want)
+	if angle < Config.CUT_ANGLE then
+		return nil -- a stutter step: you just run on
+	end
+	local quality = noteRange(
+		s,
+		"Cut",
+		gap * 1000,
+		0,
+		Config.CUT_RELEASE_MAX * 1000,
+		Config.CUT_RELEASE_PERFECT[1] * 1000,
+		Config.CUT_RELEASE_PERFECT[2] * 1000
+	)
+	local mirror = s.mirrorArmed
+	s.mirrorArmed = false
+	local perfect = quality == "Perfect" or mirror
+	local keep = if perfect then Config.PERFECT_KEEP else Config.CUT_KEEP
+	local bonus = (if perfect then Config.PERFECT_CUT_BONUS else 0) + (if mirror then Config.MIRROR_BONUS else 0)
+	if angle > Config.CUT_SHARP_FROM then
+		local k = math.clamp((angle - Config.CUT_SHARP_FROM) / (180 - Config.CUT_SHARP_FROM), 0, 1)
+		keep *= 1 + (Config.CUT_REVERSE_KEEP - 1) * k
+	end
+	if s.now - s.lastCutAt < Config.CUT_REPEAT_TIME then
+		if keep > Config.CUT_REPEAT_CAP then
+			bonus = 0
+		end
+		keep = math.min(keep, Config.CUT_REPEAT_CAP)
+	end
+	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
+	s.lastCutAt = s.now
+	s.lastCut = { at = s.now, origDir = r.dir, speed = r.speed }
+	s.heading = want
+	emit(s, "Cut", if perfect then "Perfect" else "Clean", want, if mirror then "Mirror" else nil)
+	return want * (r.speed * keep + bonus)
+end
+
 local function runFlat(s: State, input: Input, dt: number): Vector3
 	local flat = flatOf(s.vel)
 	local speed = flat.Magnitude
@@ -1297,10 +1207,21 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		top *= Config.SKY_SLOW
 	end
 	if want == nil then
-		-- no stick: friction (overspeed bleeds the same way)
-		return s.heading * math.max(0, speed - Config.GROUND_FRICTION * dt)
+		-- FEEL: letting go of the stick at speed plants the feet. For up to
+		-- CUT_RELEASE_MAX you only lose PLANT_HOLD_FRICTION, so the next
+		-- direction can be a cut that keeps your speed; let go longer and
+		-- you simply stop (GROUND_FRICTION).
+		if s.release == nil and s.state ~= "Marking" and speed >= Config.CUT_MIN_SPEED and s.now >= s.cutReadyAt then
+			s.release = { at = s.now, speed = speed, dir = s.heading }
+			emit(s, "Plant", "Clean", s.heading)
+		end
+		local r = s.release
+		local planted = r ~= nil and s.now - r.at <= Config.CUT_RELEASE_MAX
+		local friction = if planted then Config.PLANT_HOLD_FRICTION else Config.GROUND_FRICTION
+		return s.heading * math.max(0, speed - friction * dt)
 	end
 	if s.state == "Marking" then
+		s.release = nil
 		-- the mark shuffle: quick, instant turns, capped at MARK_SPEED
 		top = math.min(top, Config.MARK_SPEED)
 		s.heading = want
@@ -1308,6 +1229,34 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		local target = top * mag
 		speed = moveToward(math.min(speed, top), target, Config.MARK_ACCEL * dt)
 		return want * speed
+	end
+
+	-- the stick came back after a plant: a cut (or nothing, if it points
+	-- along the old line again)
+	local cut = gestureCut(s, want)
+	if cut then
+		return cut
+	end
+	-- Juke: within JUKE_WINDOW of a cut, the stick back to the old line puts
+	-- you back on it at JUKE_KEEP of the speed (the defender bit on the cut)
+	local lc = s.lastCut
+	if lc then
+		if s.now - lc.at > Config.JUKE_WINDOW / 1000 then
+			s.lastCut = nil
+		elseif VecMath.flatAngle(lc.origDir, want) <= Config.JUKE_RETURN_ANGLE then
+			s.lastCut = nil
+			s.heading = lc.origDir
+			emit(s, "Juke", "Clean", lc.origDir)
+			return lc.origDir * (lc.speed * Config.JUKE_KEEP)
+		end
+	end
+	-- Skid: yanking the stick hard round at speed with no plant throws you
+	-- into a skid that eats your speed (the sloppy version of a cut)
+	if speed >= Config.SKID_MIN_SPEED and not s.holding and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE then
+		startSlide(s, nil)
+		s.skid = true
+		emit(s, "Skid", "Miss", s.heading)
+		return flat
 	end
 
 	-- the stick crossing 45° from the line (the Perfect Cut reference)
@@ -1341,21 +1290,6 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 
 	-- accelerate / decay
 	local accel = s.accel
-	if s.now < s.boostUntil then
-		accel *= s.boostMult
-		if not s.boostJudged then
-			-- the Plant Stop's Perfect: go within 100 ms of the stop finishing
-			s.boostJudged = true
-			local ms = (s.now - s.boostOpenAt) * 1000
-			local timing =
-				TechCore.noteTiming(s, "Plant Stop", ms, Config.PLANT_BOOST_TIME * 1000, Config.PLANT_PERFECT)
-			if timing.quality == "Perfect" then
-				s.boostMult = Config.PLANT_BOOST_PERFECT
-				accel = s.accel * s.boostMult
-			end
-			emit(s, "PlantStop", timing.quality == "Perfect" and "Perfect" or "Clean", want)
-		end
-	end
 	local target = top * mag
 	if speed > top then
 		speed = math.max(top, speed - Config.OVERSPEED_DECAY_GROUND * dt)
@@ -1373,8 +1307,11 @@ end
 local function slideFlat(s: State, input: Input, dt: number): Vector3
 	local flat = flatOf(s.vel)
 	local carving = isHeld(input, "Burst") and not s.burstLocked and s.burst > 0
-	local friction = if carving then Config.CARVE_FRICTION else Config.SLIDE_FRICTION
-	local rate = if carving then Config.CARVE_TURN else Config.SLIDE_TURN
+	local friction = if s.skid
+		then Config.SKID_FRICTION
+		elseif carving then Config.CARVE_FRICTION
+		else Config.SLIDE_FRICTION
+	local rate = if s.skid then Config.SKID_TURN elseif carving then Config.CARVE_TURN else Config.SLIDE_TURN
 	local want = stickDir(input)
 	if want then
 		flat = steer(s, flat, want, rate, dt)
@@ -1470,8 +1407,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	settleBase(s)
 	if not s.grounded and (RUNNING[s.state] or s.state == "HoldingDisc" or s.state == "Sliding") then
 		TechCore.enter(s, "Airborne", true)
-		s.plant = nil
-		s.plantStop = nil
 		s.skyChargeAt = nil
 	elseif s.grounded and (s.state == "Airborne" or s.state == "AirDodging") then
 		TechCore.enter(s, baseState(s), true)
@@ -1508,10 +1443,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	tryPresses(s, input, env)
 
 	-- timers
-	local p = s.plant
-	if p and s.now - p.startAt >= Config.CUT_PLANT_TIME - 1e-9 then
-		finishPlant(s, input)
-	end
 	if s.state == "AirDodging" then
 		local d = s.dodge
 		if d == nil or s.now - d.startAt >= Config.AIR_DODGE_HANG - 1e-9 then
@@ -1526,8 +1457,11 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	end
 	if s.state == "Sliding" then
 		local speed = flatOf(s.vel).Magnitude
-		local stand = s.now - s.slideSince >= Config.SLIDE_MAX_TIME or not isHeld(input, "Slide") or speed < 2
+		local stand = if s.skid
+			then s.now - s.slideSince >= Config.SKID_MAX_TIME or speed < Config.SKID_EXIT_SPEED
+			else s.now - s.slideSince >= Config.SLIDE_MAX_TIME or not isHeld(input, "Slide") or speed < 2
 		if stand and s.now - s.slideSince > 0.05 then
+			s.skid = false
 			TechCore.enter(s, baseState(s), true)
 		end
 	end
@@ -1546,20 +1480,6 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	local flat: Vector3
 	if s.frozen then
 		flat = Vector3.zero
-	elseif s.plantStop then
-		local ps = s.plantStop :: { startAt: number, fromSpeed: number }
-		local k = math.clamp((s.now - ps.startAt) / Config.PLANT_STOP_TIME, 0, 1)
-		flat = s.heading * (ps.fromSpeed * (1 - k))
-		if k >= 1 then
-			s.plantStop = nil
-			s.boostOpenAt = s.now
-			s.boostUntil = s.now + Config.PLANT_BOOST_TIME
-			s.boostMult = Config.PLANT_BOOST
-			s.boostJudged = false
-		end
-	elseif s.plant then
-		-- the plant: you keep your line until it ends (a juke looks the same)
-		flat = flatOf(s.vel)
 	elseif not s.grounded then
 		flat = airFlat(s, input, dt)
 	elseif s.state == "Sliding" then

@@ -56,13 +56,14 @@ test("acceleration: rest to run speed at RUN_ACCEL, never past it", function()
 	expect(near(TechCore.flatSpeed(s), Config.RUN_TOP_SPEED, 1e-6), "holds run speed")
 end)
 
-test("friction: no input stops you at GROUND_FRICTION", function()
+test("friction: no input holds the plant, then stops you at GROUND_FRICTION", function()
 	local s = moving(Config.RUN_TOP_SPEED)
 	local t = timeUntil(s, Vector3.zero, GROUND, function(st)
 		return TechCore.flatSpeed(st) <= 1e-6
 	end, 2)
-	local ideal = Config.RUN_TOP_SPEED / Config.GROUND_FRICTION
-	expect(t ~= nil and near(t, ideal, 0.02), string.format("stopped in %s s, want %.3f", tostring(t), ideal))
+	local held = Config.CUT_RELEASE_MAX
+	local ideal = held + (Config.RUN_TOP_SPEED - Config.PLANT_HOLD_FRICTION * held) / Config.GROUND_FRICTION
+	expect(t ~= nil and near(t, ideal, 0.03), string.format("stopped in %s s, want %.3f", tostring(t), ideal))
 end)
 
 test("a part-pushed stick runs slower", function()
@@ -426,121 +427,107 @@ test("burst kick: a tap adds 6 now, costs 15, has a cooldown", function()
 	expect(#events(hold.s, "BurstKick") == 0, "a long hold is no kick")
 end)
 
-test("cut: Perfect keeps 100 % + 3, a late one keeps 70 %", function()
+-- The cut gesture: let go of the stick for `gap` s, then push `dir`.
+local function letGoThen(w, gap: number, dir: Vector3)
+	w.move = Vector3.zero
+	worldRun(w, gap)
+	w.move = dir
+	worldStep(w)
+end
+
+test("cut: a Perfect let-go keeps 100 % + 3, a mistimed one keeps CUT_KEEP", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.move = RIGHT
-	worldStep(w) -- the stick crosses 45° here
-	tap(w, "Cut")
-	worldRun(w, Config.CUT_PLANT_TIME + 0.02)
+	letGoThen(w, 0.08, RIGHT)
 	local cuts = events(w.s, "Cut")
 	expect(#cuts == 1 and cuts[1].quality == "Perfect", "a Perfect cut")
-	expect(w.s.vel.Unit:Dot(RIGHT) > 0.99, "goes the new way")
+	expect(w.s.vel.Unit:Dot(RIGHT) > 0.99, "goes the new way at once")
 	expect(
 		near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED + Config.PERFECT_CUT_BONUS, 0.6),
 		"keeps it all + 3: " .. TechCore.flatSpeed(w.s)
 	)
 
 	local late = newWorld(Config.RUN_TOP_SPEED)
-	late.move = RIGHT
-	worldRun(late, 0.12) -- the stick turned 120 ms before the press
-	tap(late, "Cut")
-	local before = TechCore.flatSpeed(late.s)
-	worldRun(late, Config.CUT_PLANT_TIME + 0.01)
+	letGoThen(late, 0.18, RIGHT)
 	local c = events(late.s, "Cut")
-	expect(#c == 1 and c[1].quality == "Clean", "a late cut is a normal one")
-	expect(near(TechCore.flatSpeed(late.s), before * Config.CUT_KEEP, 1), "keeps 70 %")
-	expect(late.s.lastTiming and late.s.lastTiming.offsetMs > Config.CUT_PERFECT_WINDOW, "timing says late")
+	expect(#c == 1 and c[1].quality == "Clean", "a late let-go is a Clean cut")
+	expect(near(TechCore.flatSpeed(late.s), Config.RUN_TOP_SPEED * Config.CUT_KEEP, 1), "keeps CUT_KEEP")
+	expect(late.s.lastTiming and late.s.lastTiming.offsetMs > 0, "timing says late")
+
+	local rushed = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(rushed, 0.016, RIGHT)
+	local r = events(rushed.s, "Cut")
+	expect(#r == 1 and r[1].quality == "Clean", "a rushed let-go is Clean")
+	expect(rushed.s.lastTiming and rushed.s.lastTiming.offsetMs < 0, "timing says early")
 end)
 
-test("cut: an early press is buffered to the crossing; repeats are capped", function()
+test("cut: sharp cuts keep less, repeats are capped, a long let-go is just a stop", function()
+	local rev = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(rev, 0.08, -FWD)
+	expect(#events(rev.s, "Cut") == 1, "a reversal is a cut")
+	local want = (Config.RUN_TOP_SPEED * Config.PERFECT_KEEP * Config.CUT_REVERSE_KEEP) + Config.PERFECT_CUT_BONUS
+	expect(near(TechCore.flatSpeed(rev.s), want, 0.6), "a reversal keeps less: " .. TechCore.flatSpeed(rev.s))
+
 	local w = newWorld(Config.RUN_TOP_SPEED)
-	tap(w, "Cut") -- before the stick moves
-	worldRun(w, 0.05)
-	w.move = RIGHT
-	worldRun(w, Config.CUT_PLANT_TIME + 0.05)
-	local cuts = events(w.s, "Cut")
-	expect(#cuts == 1 and cuts[1].quality == "Perfect", "buffered press is Perfect")
-	-- a second cut back inside 0.6 s keeps at most 85 %
+	letGoThen(w, 0.08, RIGHT)
 	worldRun(w, Config.CUT_COOLDOWN)
+	local before = TechCore.flatSpeed(w.s)
+	letGoThen(w, 0.08, FWD)
+	expect(#events(w.s, "Cut") == 2, "second cut")
+	expect(TechCore.flatSpeed(w.s) <= before * Config.CUT_REPEAT_CAP + 0.05, "capped at 85 %")
+
+	local stop = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(stop, Config.CUT_RELEASE_MAX + 0.1, RIGHT)
+	expect(#events(stop.s, "Cut") == 0, "no cut after a long let-go")
+	expect(TechCore.flatSpeed(stop.s) < Config.RUN_TOP_SPEED * 0.7, "you slowed down")
+
+	local stutter = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(stutter, 0.08, FWD)
+	expect(#events(stutter.s, "Cut") == 0, "the same way again is a stutter, not a cut")
+end)
+
+test("juke: right after a cut, the stick back to the old line puts you on it at 90 %", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(w, 0.08, RIGHT)
+	worldRun(w, 0.05)
 	w.move = FWD
 	worldStep(w)
-	tap(w, "Cut")
-	local before = TechCore.flatSpeed(w.s)
-	worldUntil(w, function(x)
-		return #events(x.s, "Cut") >= 2
-	end, 0.3)
-	expect(#events(w.s, "Cut") == 2, "second cut")
+	expect(#events(w.s, "Juke") == 1, "a juke")
+	expect(w.s.vel.Unit:Dot(FWD) > 0.99, "back on the old line")
+	expect(near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED * Config.JUKE_KEEP, 0.05), "90 %")
+	local late = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(late, 0.08, RIGHT)
+	worldRun(late, Config.JUKE_WINDOW / 1000 + 0.05)
+	late.move = FWD
+	worldStep(late)
+	expect(#events(late.s, "Juke") == 0, "too late to juke")
+end)
+
+test("skid: a hard yank at speed with no plant skids and costs speed", function()
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	w.move = -FWD
+	worldStep(w)
+	expect(w.s.state == "Sliding" and w.s.skid and #events(w.s, "Skid") == 1, "skidding")
+	worldRun(w, 0.2)
 	expect(
-		TechCore.flatSpeed(w.s) <= before * Config.CUT_REPEAT_CAP + Config.RUN_ACCEL * TechCore.STEP + 0.05,
-		"capped at 85 %"
+		near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED - Config.SKID_FRICTION * 0.2, 1),
+		"skid friction: " .. TechCore.flatSpeed(w.s)
+	)
+	worldRun(w, Config.SKID_MAX_TIME)
+	expect(w.s.state ~= "Sliding", "runs again after the skid")
+	local slow = newWorld(Config.SKID_MIN_SPEED - 4)
+	slow.move = -FWD
+	worldStep(slow)
+	expect(slow.s.state ~= "Sliding", "too slow to skid")
+	-- the same turn with a Perfect plant keeps the speed instead
+	local good = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(good, 0.08, (-FWD + RIGHT).Unit)
+	expect(
+		good.s.state ~= "Sliding" and TechCore.flatSpeed(good.s) > Config.RUN_TOP_SPEED * 0.85,
+		"the plant beats the skid"
 	)
 end)
 
-test("juke: the stick back to the line in the plant keeps it at 90 %", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.move = RIGHT
-	worldStep(w)
-	tap(w, "Cut")
-	worldRun(w, 0.05)
-	w.move = FWD
-	local before = TechCore.flatSpeed(w.s)
-	worldUntil(w, function(x)
-		return #events(x.s, "Juke") > 0
-	end, 0.3)
-	expect(#events(w.s, "Juke") == 1 and #events(w.s, "Cut") == 0, "a juke, no cut")
-	expect(near(before, Config.RUN_TOP_SPEED, 0.5), "the plant keeps the line")
-	expect(w.s.vel.Unit:Dot(FWD) > 0.99, "same line")
-	expect(near(TechCore.flatSpeed(w.s), before * Config.JUKE_KEEP, Config.RUN_ACCEL * TechCore.STEP + 0.05), "90 %")
-end)
-
-test("plant stop: stop in 0.15 s, then a 2x (Perfect 2.5x) start", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.move = Vector3.zero
-	tap(w, "Cut")
-	worldRun(w, Config.PLANT_STOP_TIME + 0.01)
-	expect(TechCore.flatSpeed(w.s) < 0.5, "stopped dead")
-	w.move = -FWD
-	worldRun(w, 0.1)
-	local e = events(w.s, "PlantStop")
-	expect(#e == 1 and e[1].quality == "Perfect", "went at once: Perfect")
-	expect(TechCore.flatSpeed(w.s) > Config.RUN_ACCEL * 0.1 * 2.2, "explosive: " .. TechCore.flatSpeed(w.s))
-end)
-
-test("slide: needs 18, holds speed, 60°/s turns, stands after 1.2 s", function()
-	local slow = newWorld(15)
-	slow.held.Slide = true
-	tap(slow, "Slide")
-	worldStep(slow)
-	expect(slow.s.state ~= "Sliding", "too slow")
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.held.Slide = true
-	tap(w, "Slide")
-	worldStep(w)
-	expect(w.s.state == "Sliding", "sliding")
-	worldRun(w, 0.5)
-	expect(near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED - Config.SLIDE_FRICTION * 0.5, 0.5), "low friction")
-	w.move = RIGHT
-	worldRun(w, 0.5)
-	local turned = math.deg(math.acos(math.clamp(w.s.vel.Unit:Dot(FWD), -1, 1)))
-	expect(near(turned, Config.SLIDE_TURN * 0.5, 2), "60°/s: " .. turned)
-	worldRun(w, 0.3)
-	expect(w.s.state ~= "Sliding", "stood up after 1.2 s")
-end)
-
-test("slide carve: Burst in a slide turns at 220°/s for more friction", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.held.Slide = true
-	tap(w, "Slide")
-	worldStep(w)
-	w.held.Burst = true
-	w.move = RIGHT
-	worldRun(w, 0.3)
-	local turned = math.deg(math.acos(math.clamp(w.s.vel.Unit:Dot(FWD), -1, 1)))
-	expect(turned > 60, "tight turn: " .. turned)
-	expect(w.s.burst < 100, "drains burst")
-end)
-
-test("jump: tap is 34 up, hold is 46; landing slide keeps the air speed", function()
+test("jump: a tap is JUMP_TAP up, a hold reaches JUMP_FULL", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
 	tap(w, "Jump")
 	worldStep(w)
@@ -563,19 +550,6 @@ test("jump: tap is 34 up, hold is 46; landing slide keeps the air speed", functi
 		return x.s.grounded
 	end, 2)
 	expect(peakFull > peakTap * 1.5, string.format("full %.2f vs tap %.2f", peakFull, peakTap))
-
-	-- landing slide: Slide pressed right at touchdown
-	local l = newWorld(Config.RUN_TOP_SPEED)
-	tap(l, "Jump")
-	worldStep(l)
-	worldUntil(l, function(x)
-		return x.s.grounded
-	end, 2)
-	l.held.Slide = true
-	tap(l, "Slide")
-	worldStep(l)
-	local e = events(l.s, "LandingSlide")
-	expect(#e == 1 and e[1].quality == "Perfect" and l.s.state == "Sliding", "Perfect landing slide")
 end)
 
 test("fast fall: Slide held in the air falls faster and lands in a Perfect slide", function()
@@ -595,32 +569,6 @@ test("fast fall: Slide held in the air falls faster and lands in a Perfect slide
 	worldStep(w)
 	local e = events(w.s, "LandingSlide")
 	expect(#e == 1 and e[1].quality == "Perfect" and e[1].info == "Held", "held through the landing")
-end)
-
-test("slide hop: in the window +6, then +4, +2, 0", function()
-	local w = newWorld(Config.RUN_TOP_SPEED)
-	local gains = {}
-	for i = 1, 4 do
-		w.held.Slide = true
-		if i == 1 then
-			tap(w, "Slide")
-			worldStep(w)
-		end
-		expect(w.s.state == "Sliding", "sliding before hop " .. i)
-		worldRun(w, 0.2)
-		local before = TechCore.flatSpeed(w.s)
-		tap(w, "Jump")
-		worldStep(w)
-		table.insert(gains, TechCore.flatSpeed(w.s) - before)
-		worldUntil(w, function(x)
-			return x.s.grounded
-		end, 2)
-		worldStep(w) -- held Slide lands into the next slide
-	end
-	expect(
-		gains[1] > 5 and gains[2] > 3 and gains[2] < 5 and gains[3] > 1 and gains[3] < 3 and gains[4] < 0.6,
-		string.format("gains %.1f %.1f %.1f %.1f", gains[1], gains[2], gains[3], gains[4])
-	)
 end)
 
 test("air dodge: +12 the held way with a hang; one per airtime; neutral goes up", function()
@@ -816,10 +764,7 @@ test("abilities: The Zone widens Perfect windows, Sky Walk adds dodges, Overdriv
 		if zone then
 			TechCore.startAbility(w.s, "Zone", 5, 2)
 		end
-		w.move = RIGHT
-		worldRun(w, 0.12)
-		tap(w, "Cut")
-		worldRun(w, Config.CUT_PLANT_TIME + 0.02)
+		letGoThen(w, 0.15, RIGHT)
 		local c = events(w.s, "Cut")
 		return if c[1] then c[1].quality else "none"
 	end
@@ -878,14 +823,9 @@ end)
 
 test("mirror step: an armed cut is Perfect + 2; biting on a juke costs 30 %", function()
 	local w = newWorld(Config.RUN_TOP_SPEED)
-	w.move = RIGHT
-	worldRun(w, 0.15) -- late: a plain cut would be Clean
 	TechCore.armMirror(w.s)
-	tap(w, "Cut")
 	local before = TechCore.flatSpeed(w.s)
-	worldUntil(w, function(x)
-		return #events(x.s, "Cut") > 0
-	end, 0.3)
+	letGoThen(w, 0.18, RIGHT) -- late: a plain cut would be Clean
 	local c = events(w.s, "Cut")[1]
 	expect(c and c.quality == "Perfect" and c.info == "Mirror", "mirrored cut")
 	expect(TechCore.flatSpeed(w.s) > before + Config.PERFECT_CUT_BONUS + Config.MIRROR_BONUS - 0.5, "+3 +2")
@@ -945,26 +885,6 @@ test("stall: Dive within 30 ms of a dodge cancels it into a hang and gives it ba
 	tap(late, "Dive")
 	worldStep(late)
 	expect(#events(late.s, "Stall") == 0, "too late: no stall")
-end)
-
-test("zap dash: a Cut right out of a wavedash bursts again", function()
-	local w = newWorld(8)
-	tap(w, "Jump")
-	worldStep(w)
-	worldUntil(w, function(x)
-		return x.s.vel.Y < 0 and x.y < 0.6
-	end, 2)
-	w.move = RIGHT
-	tap(w, "Jump")
-	worldUntil(w, function(x)
-		return #events(x.s, "Wavedash") > 0
-	end, 1)
-	local before = TechCore.flatSpeed(w.s)
-	tap(w, "Cut")
-	worldStep(w)
-	local e = events(w.s, "ZapDash")
-	expect(#e == 1 and e[1].quality == "Perfect", "zap dash")
-	expect(TechCore.flatSpeed(w.s) > before + Config.ZAP_BURST, "second burst")
 end)
 
 test("wall kick: jump right after touching a wall kicks off it with the dodge back", function()

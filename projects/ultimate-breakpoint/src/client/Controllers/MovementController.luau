@@ -1246,7 +1246,7 @@ checkMirror = function()
 	end
 	TechCore.armMirror(tech)
 	-- their plant resolves after it ends: a Juke means you bit
-	task.delay(TechConfig.CUT_PLANT_TIME + lag + 0.05, function()
+	task.delay(TechConfig.CUT_RELEASE_MAX + TechConfig.JUKE_WINDOW / 1000 + lag + 0.05, function()
 		if opp.Parent and opp:GetAttribute("Tech") == "Juke" and engineOn then
 			TechCore.juked(tech)
 		end
