@@ -712,6 +712,14 @@ local function techEvent(e: TechCore.TechEvent)
 		local label = if e.quality == "Perfect" then "Perfect " .. name else name
 		controllers.TechFeedback.play(label, e.quality)
 	end
+	-- the cut's own sound: you can hear a Perfect plant from a Clean one
+	if e.tech == "Cut" then
+		controllers.AudioController.play(if e.quality == "Perfect" then "CutPerfect" else "CutClean", 0.08)
+	elseif e.tech == "Juke" then
+		controllers.AudioController.play("CutClean", 0.08, 1.15)
+	elseif e.tech == "Skid" then
+		controllers.AudioController.play("Skid", 0.06)
+	end
 	if e.quality == "Miss" then
 		return
 	end

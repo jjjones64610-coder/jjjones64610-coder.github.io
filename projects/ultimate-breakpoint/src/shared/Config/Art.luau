@@ -14,6 +14,7 @@ local Art = {}
 Art.Images = {
 	Scoreboard = "115503255890906", -- the top scoreboard bar (team slots left and right)
 	Button = "72548992304180", -- every menu / panel button
+	Turf = "", -- tiling grass on the test field (ForgeGUI)
 }
 
 -- Anime effect textures (ForgeGUI, transparent sprites) for AnimeFX and

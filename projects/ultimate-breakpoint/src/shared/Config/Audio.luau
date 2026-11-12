@@ -31,6 +31,10 @@ Audio.Cues = {
 	Burst = { id = "rbxassetid://97962321370622", volume = 0.5, pitch = 1.0 }, -- ForgeGUI anime dash
 	Land = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.35, pitch = 1.0 },
 	PrecisionLand = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.5, pitch = 1.4 },
+	-- stage 1 movement (ForgeGUI): the cut you hear tells you how it went
+	CutPerfect = { id = "", volume = 0.7, pitch = 1.0 }, -- squeak + sparkle
+	CutClean = { id = "", volume = 0.5, pitch = 1.0 }, -- cleat plant
+	Skid = { id = "", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
 	UiClick = { id = "rbxassetid://136877996742041", volume = 0.5, pitch = 1.0 }, -- ForgeGUI
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },

@@ -14,7 +14,10 @@
 	the training hall. Entered from the main menu (TEST FIELD).
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local Build = require(script.Parent.Build)
+local Art = require(ReplicatedStorage:WaitForChild("Shared").Config.Art)
 
 local TestFieldBuilder = {}
 
@@ -42,7 +45,7 @@ function TestFieldBuilder.build(origin: Vector3, parent: Instance): Layout
 		return origin + Vector3.new(x, y or 0, z)
 	end
 
-	Build.part(model, {
+	local turf = Build.part(model, {
 		Name = "Turf",
 		Size = Vector3.new(2 * HALF_W, 1, 2 * HALF_L),
 		CFrame = CFrame.new(at(0, 0, -0.5)),
@@ -50,6 +53,16 @@ function TestFieldBuilder.build(origin: Vector3, parent: Instance): Layout
 		Material = Enum.Material.SmoothPlastic,
 		solid = true,
 	})
+	-- ForgeGUI tiling grass (Config/Art Turf); plain colour when empty
+	local tex = Art.image("Turf")
+	if tex then
+		local t = Instance.new("Texture")
+		t.Texture = tex
+		t.Face = Enum.NormalId.Top
+		t.StudsPerTileU = 20
+		t.StudsPerTileV = 20
+		t.Parent = turf
+	end
 	-- a wide apron so running off the edge never drops you
 	Build.part(model, {
 		Name = "Apron",

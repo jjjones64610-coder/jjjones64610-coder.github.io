@@ -909,6 +909,7 @@ local Art = {}
 Art.Images = {
 	Scoreboard = "115503255890906", -- the top scoreboard bar (team slots left and right)
 	Button = "72548992304180", -- every menu / panel button
+	Turf = "", -- tiling grass on the test field (ForgeGUI)
 }
 
 -- Anime effect textures (ForgeGUI, transparent sprites) for AnimeFX and
@@ -1010,6 +1011,10 @@ Audio.Cues = {
 	Burst = { id = "rbxassetid://97962321370622", volume = 0.5, pitch = 1.0 }, -- ForgeGUI anime dash
 	Land = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.35, pitch = 1.0 },
 	PrecisionLand = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.5, pitch = 1.4 },
+	-- stage 1 movement (ForgeGUI): the cut you hear tells you how it went
+	CutPerfect = { id = "", volume = 0.7, pitch = 1.0 }, -- squeak + sparkle
+	CutClean = { id = "", volume = 0.5, pitch = 1.0 }, -- cleat plant
+	Skid = { id = "", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
 	UiClick = { id = "rbxassetid://136877996742041", volume = 0.5, pitch = 1.0 }, -- ForgeGUI
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },
@@ -12363,7 +12368,10 @@ return Build
 	the training hall. Entered from the main menu (TEST FIELD).
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local Build = require(script.Parent.Build)
+local Art = require(ReplicatedStorage:WaitForChild("Shared").Config.Art)
 
 local TestFieldBuilder = {}
 
@@ -12391,7 +12399,7 @@ function TestFieldBuilder.build(origin: Vector3, parent: Instance): Layout
 		return origin + Vector3.new(x, y or 0, z)
 	end
 
-	Build.part(model, {
+	local turf = Build.part(model, {
 		Name = "Turf",
 		Size = Vector3.new(2 * HALF_W, 1, 2 * HALF_L),
 		CFrame = CFrame.new(at(0, 0, -0.5)),
@@ -12399,6 +12407,16 @@ function TestFieldBuilder.build(origin: Vector3, parent: Instance): Layout
 		Material = Enum.Material.SmoothPlastic,
 		solid = true,
 	})
+	-- ForgeGUI tiling grass (Config/Art Turf); plain colour when empty
+	local tex = Art.image("Turf")
+	if tex then
+		local t = Instance.new("Texture")
+		t.Texture = tex
+		t.Face = Enum.NormalId.Top
+		t.StudsPerTileU = 20
+		t.StudsPerTileV = 20
+		t.Parent = turf
+	end
 	-- a wide apron so running off the edge never drops you
 	Build.part(model, {
 		Name = "Apron",
@@ -31019,6 +31037,14 @@ local function techEvent(e: TechCore.TechEvent)
 	if e.quality == "Perfect" or not QUIET_TECH[e.tech] then
 		local label = if e.quality == "Perfect" then "Perfect " .. name else name
 		controllers.TechFeedback.play(label, e.quality)
+	end
+	-- the cut's own sound: you can hear a Perfect plant from a Clean one
+	if e.tech == "Cut" then
+		controllers.AudioController.play(if e.quality == "Perfect" then "CutPerfect" else "CutClean", 0.08)
+	elseif e.tech == "Juke" then
+		controllers.AudioController.play("CutClean", 0.08, 1.15)
+	elseif e.tech == "Skid" then
+		controllers.AudioController.play("Skid", 0.06)
 	end
 	if e.quality == "Miss" then
 		return
