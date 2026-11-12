@@ -33,14 +33,14 @@ Audio.Cues = {
 	PrecisionLand = { id = "rbxasset://sounds/action_jump_land.mp3", volume = 0.5, pitch = 1.4 },
 	-- stage 1 movement (ForgeGUI): the cut you hear tells you how it went
 	CutPerfect = { id = "rbxassetid://138365407787910", volume = 0.7, pitch = 1.0 }, -- squeak + sparkle (ForgeGUI)
-	CutClean = { id = "", volume = 0.5, pitch = 1.0 }, -- cleat plant
-	Skid = { id = "", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
+	CutClean = { id = "rbxassetid://112239165821720", volume = 0.5, pitch = 1.0 }, -- cleat plant
+	Skid = { id = "rbxassetid://125358915985404", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
 	-- stage 2 air (ForgeGUI)
-	JumpOff = { id = "", volume = 0.4, pitch = 1.0 }, -- push-off scuff
-	DiveLaunch = { id = "", volume = 0.7, pitch = 1.0 }, -- layout whoosh + grunt
-	DiveLand = { id = "", volume = 0.7, pitch = 1.0 }, -- chest-first thud + skid
-	TechRoll = { id = "", volume = 0.7, pitch = 1.0 }, -- roll + sparkle
-	WavedashSlide = { id = "", volume = 0.7, pitch = 1.0 }, -- impact into a power slide
+	JumpOff = { id = "rbxassetid://82144545592579", volume = 0.4, pitch = 1.0 }, -- push-off scuff
+	DiveLaunch = { id = "rbxassetid://72166383280431", volume = 0.7, pitch = 1.0 }, -- layout whoosh + grunt
+	DiveLand = { id = "rbxassetid://83322286458643", volume = 0.7, pitch = 1.0 }, -- chest-first thud + skid
+	TechRoll = { id = "rbxassetid://100907161867440", volume = 0.7, pitch = 1.0 }, -- roll + sparkle
+	WavedashSlide = { id = "rbxassetid://113282679973344", volume = 0.7, pitch = 1.0 }, -- impact into a power slide
 	Rebound = { id = "rbxasset://sounds/snap.mp3", volume = 0.5, pitch = 1.2 },
 	UiClick = { id = "rbxassetid://136877996742041", volume = 0.5, pitch = 1.0 }, -- ForgeGUI
 	Highlight = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.6, pitch = 1.45 },
