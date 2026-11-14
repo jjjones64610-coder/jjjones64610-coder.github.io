@@ -26,6 +26,8 @@ local UserInputService = game:GetService("UserInputService")
 
 local MovementConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Movement"))
 
+local DiscConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Disc"))
+
 local CameraController = {}
 
 local controllers: any
@@ -37,6 +39,8 @@ local targetDistance = 12 -- zoom the wheel asks for
 local collisionDistance = math.huge -- wall-limited distance (in at once, out slowly)
 local focusY: number? = nil
 local speedFov = 0
+local aimOn = false -- the thrower holds Secondary: a tighter view, a slower mouse
+local aimShown = 0 -- 0..1, eased
 local kick = 0 -- requested punch (decays)
 local kickShown = 0 -- what the FOV shows (eases toward kick)
 local shakeAmp = 0
@@ -91,6 +95,11 @@ function CameraController.forward(): Vector3
 end
 
 -- A brief FOV punch (degrees, capped at MAX_KICK).
+-- The thrower's aim view (ThrowController: Secondary held with the disc).
+function CameraController.setAim(on: boolean)
+	aimOn = on
+end
+
 function CameraController.kick(amount: number)
 	kick = math.max(kick, math.min(amount, MAX_KICK))
 end
@@ -156,6 +165,9 @@ local function update(dt: number)
 			capturedLook += md * settings.get("MouseSensitivity")
 		else
 			local sens = 0.0042 * settings.get("MouseSensitivity")
+			if aimOn then
+				sens *= DiscConfig.Throw.AimSensitivity
+			end
 			yaw -= md.X * sens
 			pitch -= md.Y * sens * invert
 		end
@@ -248,7 +260,9 @@ local function update(dt: number)
 	speedFov += (speedTarget - speedFov) * (1 - math.exp(-fovRate * dt))
 	kick = math.max(0, kick - 12 * dt)
 	kickShown += (kick - kickShown) * (1 - math.exp(-25 * dt))
-	camera.FieldOfView = settings.get("FieldOfView") + speedFov + kickShown
+	aimShown += ((if aimOn then 1 else 0) - aimShown) * (1 - math.exp(-14 * dt))
+	local baseFov = settings.get("FieldOfView") * (1 + (DiscConfig.Throw.AimFov - 1) * aimShown)
+	camera.FieldOfView = baseFov + speedFov * (1 - aimShown) + kickShown
 
 	local cf = CFrame.lookAt(camPos, camPos + look)
 	local clock = os.clock()

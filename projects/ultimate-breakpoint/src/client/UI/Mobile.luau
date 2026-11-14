@@ -124,9 +124,9 @@ function Mobile.build(parent: ScreenGui, c: any)
 	-- { name / action, position, size, label without disc, label with disc }
 	local defs: { { any } } = {
 		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
-		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "HOP" },
+		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "" },
 		{ "Burst", UDim2.fromOffset(80, 175), 60, "SPRINT", "" },
-		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "FAKE" },
+		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "AIM\nFAKE" },
 	}
 	local labelled: { { any } } = {}
 	for _, def in defs do
@@ -148,12 +148,8 @@ function Mobile.build(parent: ScreenGui, c: any)
 		Theme.list(8, true),
 	})
 	refs.discRow = discRow
-	local discDefs = {
-		{ "BankLeft", "< BANK" },
-		{ "BankRight", "BANK >" },
-		{ "TypeNext", "TYPE" },
-		{ "LeadLock", "LEAD" },
-	}
+	-- (no extra disc buttons: the stick bends the throw, THROW and FAKE do the rest)
+	local discDefs: { { string } } = {}
 	refs.discActions = {}
 	for i, def in discDefs do
 		table.insert(refs.discActions, def[1])

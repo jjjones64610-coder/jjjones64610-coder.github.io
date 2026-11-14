@@ -35,6 +35,8 @@ Audio.Cues = {
 	CutPerfect = { id = "rbxassetid://138365407787910", volume = 0.7, pitch = 1.0 }, -- squeak + sparkle (ForgeGUI)
 	CutClean = { id = "rbxassetid://112239165821720", volume = 0.5, pitch = 1.0 }, -- cleat plant
 	Skid = { id = "rbxassetid://125358915985404", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
+	-- stage 3 throwing
+	Fake = { id = "rbxasset://sounds/swoosh.wav", volume = 0.35, pitch = 1.3 }, -- pump fake (placeholder until ForgeGUI is reconnected)
 	-- stage 2 air (ForgeGUI)
 	JumpOff = { id = "rbxassetid://82144545592579", volume = 0.4, pitch = 1.0 }, -- push-off scuff
 	DiveLaunch = { id = "rbxassetid://72166383280431", volume = 0.7, pitch = 1.0 }, -- layout whoosh + grunt

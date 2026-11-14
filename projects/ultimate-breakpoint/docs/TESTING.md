@@ -80,7 +80,33 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 2 — Jump, dive, landing recovery (docs/CORE_DESIGN.md) ← test this now
+### STAGE 3 — The disc and throwing (docs/CORE_DESIGN.md) ← test this now
+**TEST FIELD (MOVEMENT)** now has a disc lying in front of you. Walk to it and press LMB to pick it up.
+After every throw the panel reports the throw, the release quality, the distance and how far it curved;
+the disc comes back in front of you a few seconds after it lands. Tune in `Config/Tuning.luau`, section
+"THE DISC, THROWING AND CATCHING" → `Throw`.
+
+- [ ] **Charge and release:** hold LMB, the meter fills; release to throw exactly at the crosshair. A tap is a short dump, a full hold is a long throw.
+- [ ] **Perfect release:** release on the gold line: "SNAP RELEASE", a faster, cleaner flight. Hold past the zone: "OVERCHARGED", it wobbles and fades early. The rhythm is the same for every throw.
+- [ ] **Bend it:** hold **A** at the release: a backhand that curves left (the panel says BENDS LEFT). Hold **D**: a forehand from your other side, curving right. Nothing held: a flat backhand. Expect roughly 30 studs of curve on a 130-stud throw (BendBank).
+- [ ] **Hammer:** aim well above the horizon (about 28°+) with at least a 60 % charge: the panel switches to HAMMER and the disc goes up and over. Aim high with a weak charge and it is just a floaty backhand.
+- [ ] **Flight:** throws float, bank and fade like a disc, not a ball: the flat backhand drifts late, bends hold their curve, the hammer drops steeply.
+- [ ] **Aim:** hold RMB with the disc: the view tightens and the mouse slows for precise aiming.
+- [ ] **Fake:** while charging, press RMB: the throw is cancelled (a pump fake); you can charge again after a moment.
+- [ ] **No running with it:** pick it up or catch it at speed: you skid to a stop, then WASD only steps your free foot around the pivot (double-tap lunges). The bend keys and the step keys are the same on purpose: step out and bend round.
+- [ ] **Air throw:** throw it high to yourself (a hammer works), run under it, jump, catch it in the air and release before you land. Full power, aims true, a little less spin. Same out of a dive.
+- [ ] **On the run:** a release during the catch skid goes exactly where you aim (there is no random spread any more).
+- [ ] **Nothing else throws:** 1-5, T, the mouse wheel, Q, E, Z, X, F, C, R do nothing.
+
+What to tell me: is the charge too slow or too fast (ChargeTime)? Is the Perfect window findable (SnapPerfect)? Is the
+bend too much or too little (BendBank)? Does the hammer trigger when you don't want it (HammerPitch, HammerFill)?
+Does the skid after a catch feel right (CATCH_RUNOUT_FRICTION)?
+
+Known for this stage: the pump-fake sound is a stock placeholder (ForgeGUI is disconnected; it needs
+re-authorizing before I can make the real one). Catching and blocking are still the old rules until stage 4
+(RMB without the disc still marks). Bots still throw their own five throw types.
+
+### STAGE 2 — Jump, dive, landing recovery (docs/CORE_DESIGN.md)
 Same place: **TEST FIELD (MOVEMENT)**. The debug panel's **AIR** line shows whether your air action is
 READY or SPENT; **LAST** shows the timing of the last Tech Roll / Wavedash. Tune in `Config/Tuning.luau`
 (sections JUMP, THE AIR ACTION, LANDING OUT OF A DIVE).

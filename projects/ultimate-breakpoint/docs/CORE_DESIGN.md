@@ -81,6 +81,14 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 3 — the disc and throwing (built, awaiting playtest).** LMB
+  charges and releases; what you hold at the release shapes the throw
+  (nothing: flat backhand; A: backhand bending left; D: forehand bending
+  right; aiming up with a strong charge: hammer). RMB aims, and RMB during
+  a charge is a pump fake. One charge rhythm for every throw; no random
+  aim spread on the run; air throws at full strength. Throw-type keys,
+  bank keys, the low release, the hop and the lead assist are gone. Disc
+  and throw numbers moved into `Config/Tuning.luau`.
 - **Stage 2 — jump, dive, landing recovery (built, awaiting playtest).**
   Space again in the air is the one air action: a dive toward the held
   direction, a wavedash slide near the ground, or a Sky Reach with no

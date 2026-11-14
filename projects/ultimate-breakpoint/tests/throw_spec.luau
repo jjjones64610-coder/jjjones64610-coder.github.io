@@ -49,10 +49,83 @@ test("charge: below and in the zone are Clean, the snap is Perfect, past the zon
 	expect(ThrowModel.chargePhase(0.76 * CT, "Backhand") == "Zone", "meter phase")
 end)
 
-test("forehand charges faster than backhand", function()
-	local pb = ThrowModel.charge(0.3, "Backhand")
-	local pf = ThrowModel.charge(0.3, "Forehand")
-	expect(pf > pb, "forehand charge mult")
+test("one charge rhythm: every player throw charges the same", function()
+	for _, kind in DiscConfig.PlayerTypes do
+		local p, q = ThrowModel.charge(T.SnapPoint * T.ChargeTime, kind)
+		expect(p == 1 and q == "Perfect", kind .. " snaps at the same moment")
+	end
+end)
+
+test("throw shape: A bends a backhand left, D a forehand right, aiming up strong is a hammer", function()
+	local snap = T.SnapPoint * T.ChargeTime
+	local flatAim = math.rad(8)
+	local kind, bank = ThrowModel.shape(0, flatAim, snap)
+	expect(kind == "Backhand" and bank == 0, "nothing held: a flat backhand")
+	kind, bank = ThrowModel.shape(-1, flatAim, snap)
+	expect(kind == "Backhand" and bank == -T.BendBank, "A: backhand, bank left")
+	kind, bank = ThrowModel.shape(1, flatAim, snap)
+	expect(kind == "Forehand" and bank == T.BendBank, "D: forehand, bank right")
+	kind = ThrowModel.shape(0.1, flatAim, snap)
+	expect(kind == "Backhand", "a small sideways input does not bend")
+	kind = ThrowModel.shape(1, math.rad(T.HammerPitch + 2), snap)
+	expect(kind == "Hammer", "aiming up with a strong charge: hammer (even with D held)")
+	kind = ThrowModel.shape(0, math.rad(T.HammerPitch + 2), T.ChargeTime * (T.HammerFill - 0.2))
+	expect(kind == "Backhand", "aiming up with a weak charge: a floaty backhand, no hammer")
+	-- left-handed: A is still the throw from your left that bends left
+	kind, bank = ThrowModel.shape(-1, flatAim, snap, true)
+	expect(kind == "Forehand" and bank == T.BendBank, "lefty A: forehand (mirrored bank)")
+end)
+
+test("throw shape flies as promised: the bends curve their way, the hammer goes over", function()
+	local snap = T.SnapPoint * T.ChargeTime
+	local function land(side: number, pitchDeg: number, lefty: boolean?)
+		local kind, bank = ThrowModel.shape(side, math.rad(pitchDeg), snap, lefty)
+		local l = ThrowModel.launch(
+			params({
+				throwType = kind,
+				bank = bank,
+				pitch = math.rad(pitchDeg),
+				holdTime = snap,
+				pivot = P,
+				leftHanded = lefty,
+			}),
+			P,
+			Vector3.zero
+		)
+		local r = DiscPhysics.simulate(l.state, 9, nil, 0, 1)
+		local apex = 0
+		for _, sm in r.samples do
+			apex = math.max(apex, sm.y)
+		end
+		local last = r.samples[#r.samples]
+		return last.x, -last.z, apex
+	end
+	local x0, d0, apex0 = land(0, 8)
+	local xa, da = land(-1, 8)
+	local xd, dd = land(1, 8)
+	expect(xa < -15 and xa < x0 - 15, "A lands well left: " .. xa)
+	expect(xd > 15 and xd > x0 + 15, "D lands well right: " .. xd)
+	expect(da > d0 * 0.8 and dd > d0 * 0.8, "bends still go the distance")
+	local xl = land(-1, 8, true)
+	local xr = land(1, 8, true)
+	expect(xl < -15 and xr > 15, "left-handed: A still bends left, D right: " .. xl .. " / " .. xr)
+	local _, dh, apexH = land(0, T.HammerPitch + 4)
+	expect(apexH > apex0 and dh > 40 and dh < d0, "the hammer goes up and over, shorter: " .. dh)
+end)
+
+test("the server only accepts shapes a player's inputs can make", function()
+	local snap = T.SnapPoint * T.ChargeTime
+	local blade = ThrowModel.sanitize(params({ throwType = "Blade", bank = -1, holdTime = snap })) :: any
+	ThrowModel.legalShape(blade)
+	expect(blade.throwType == "Backhand" and blade.bank == -T.BendBank, "no blades, bank capped at a bend")
+	local ham = ThrowModel.sanitize(params({ throwType = "Hammer", pitch = 0, holdTime = snap })) :: any
+	ThrowModel.legalShape(ham)
+	expect(ham.throwType == "Backhand", "a hammer needs the aim")
+	local ok = ThrowModel.sanitize(
+		params({ throwType = "Hammer", pitch = math.rad(T.HammerPitch + 5), holdTime = snap, bank = 0.5 })
+	) :: any
+	ThrowModel.legalShape(ok)
+	expect(ok.throwType == "Hammer" and ok.bank == 0, "a real hammer stands, unbent")
 end)
 
 test("sanitize rejects junk and clamps ranges", function()
@@ -113,28 +186,16 @@ test("sanitize clamps hostile steps into the pivot's reach", function()
 	expect((legal - Vector3.new(-1.2, 0, 0.5)).Magnitude < 1e-6, "a legal step is untouched")
 end)
 
-test("run-through release: the aim cone widens with speed, halves after a Perfect Catch", function()
-	local function yawOff(vel: number, perfect: boolean?, releaseT: number): number
-		local p = params({ releaseT = releaseT, perfectCatch = perfect })
-		local l = ThrowModel.launch(p, Vector3.zero, Vector3.new(0, 0, -vel))
+test("a release on the move aims exactly where you point (no random cone), at a spin cost", function()
+	for i = 1, 20 do
+		local l = ThrowModel.launch(params({ releaseT = i * 0.731 }), Vector3.zero, Vector3.new(0, 0, -25))
 		local v = Vector3.new(l.velocity.X, 0, l.velocity.Z).Unit
-		return math.deg(math.atan2(v.X, -v.Z))
+		expect(math.abs(v.X) < 1e-6, "dead straight on the run")
 	end
-	expect(math.abs(yawOff(0, false, 3.7)) < 1e-3, "standing: no cone")
-	local maxDev, maxHalf = 0, 0
-	for i = 1, 40 do
-		local t = i * 0.731
-		maxDev = math.max(maxDev, math.abs(yawOff(20, false, t)))
-		maxHalf = math.max(maxHalf, math.abs(yawOff(20, true, t)))
-		expect(yawOff(20, false, t) == yawOff(20, false, t), "deterministic")
-	end
-	local TechConfig = H.require("Config/Tech")
-	local cone = 20 / TechConfig.RUN_THROUGH_CONE
-	expect(maxDev <= cone + 0.5 and maxDev > cone * 0.5, string.format("cone %.2f, max %.2f", cone, maxDev))
-	expect(maxHalf <= cone / 2 + 0.5, "halved after a Perfect Catch")
-	local pv = ThrowModel.launch(params({ releaseT = 1.3, pivot = Vector3.zero }), Vector3.zero, Vector3.new(0, 0, -20))
-	local d = Vector3.new(pv.velocity.X, 0, pv.velocity.Z).Unit
-	expect(math.abs(d.X) < 1e-3, "from a planted pivot: no cone")
+	local still = ThrowModel.launch(params({ pivot = P }), P, Vector3.zero)
+	local run = ThrowModel.launch(params({}), Vector3.zero, Vector3.new(0, 0, -25))
+	expect(run.spinFactor < still.spinFactor, "less spin on the run")
+	expect(run.velocity.Magnitude > still.velocity.Magnitude, "and some of the run carried")
 end)
 
 test("off-balance throws are capped", function()

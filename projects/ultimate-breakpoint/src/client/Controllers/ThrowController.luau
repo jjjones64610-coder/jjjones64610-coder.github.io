@@ -1,24 +1,27 @@
 --!strict
 --[[
-	ThrowController — everything you do with the disc in your hand.
+	ThrowController — everything you do with the disc in your hand
+	(docs/CORE_DESIGN.md, stage 3). Two buttons, no throw keys:
 
-	  hold Primary      charge (power rises to full at ChargeTime; release in
-	                    the Perfect window for +speed/+spin; holding longer
-	                    bleeds spin = a wobblier line)
-	  WASD              step the free foot around your planted pivot
-	  Q / E             quick swing to the screen-left / right side (the Cut /
-	                    Dive keys; MovementController routes them while
-	                    holding, gamepad X swings to the other side)
-	  Secondary         pump fake: the same windup defenders see on a real
-	                    throw, plus a fake step toward the side you hold (A/D)
-	  Z / X             bank the disc left / right (curves the flight)
-	  wheel, 1-5, T     throw type
-	  hold Slide key    low release (step out under the mark)
-	  Jump              hop (one per possession): a high release over the
-	                    mark; release before you land or the charge is lost
-	  R                 Lead Pass assist: aims at the teammate nearest your
-	                    crosshair using their CURRENT velocity and marks the
-	                    ideal power on the meter; timing the release is still on you
+	  hold Primary (LMB)   charge. Power rises with the hold; releasing on
+	                       the Snap point is a Perfect release (faster, more
+	                       spin); holding past the zone overcharges (wobbly).
+	  release Primary      throw where the crosshair points.
+	  what you hold at the release shapes it (ThrowModel.shape):
+	      nothing          a flat backhand
+	      A                a backhand that bends left
+	      D                a forehand, from your other side, bending right
+	      aim up hard + a strong charge: a Hammer over the defence
+	  hold Secondary (RMB) aim: a tighter view and a slower mouse
+	  Secondary during a charge: a pump fake. The throw is cancelled; the
+	                       defenders saw the same windup as a real throw.
+	  WASD                 step the free foot around your planted pivot
+	                       (double-tap to lunge); stepping out and bending
+	                       the throw are the same keys, as in the real sport
+
+	You can throw during the catch skid and in the air (catch it in a jump or
+	a dive and release before you land): those releases aim exactly where you
+	point but cost spin, since there is no planted pivot.
 
 	The match disc mirrors the server's canThrow: no charge or release outside
 	the Pull (puller) and Live phases (the starter holds the disc through the
@@ -30,21 +33,15 @@
 	then (CatchController ignores Primary during that window, so no Reach).
 
 	Release: the disc leaves from your pivot foot P (the server's UBPivot, or
-	the foot your sim just planted) plus your step (ThrowModel). The Throw remote carries the inputs plus
-	step, pivot, rootPos and releaseT, so ThrowService validates and launches
-	from the same place at the same moment; the flight is predicted locally at
-	once from the same parameters. Fake -> Sold Pivot Swing -> release inside
-	ComboEvaluator's break window scores a "Break"
-	(MovementController.addTech).
-
-	Previews, the lead assist and the predicted throw all use the held disc's
-	own Wind attribute (what the server flies it with), never UBState Wind.
+	the foot you just planted) plus your step (ThrowModel). The Throw remote
+	carries the inputs plus step, pivot, rootPos and releaseT, so ThrowService
+	validates and launches from the same place at the same moment; the flight
+	is predicted locally at once from the same parameters.
 
 	The preview arc shows the first part of the flight (how much depends on
-	the mode: full in training, half in Mini, about a third in Normal, a
-	fifth in ranked). When the mode shows at least MARK_PREVIEW of it, the arc
-	turns red from where it would cross a visible marker's hands (the same
-	CatchGeometry box the server tests).
+	the mode: full in training, less in matches). When the mode shows at
+	least MARK_PREVIEW of it, the arc turns red from where it would cross a
+	visible marker's hands (the same CatchGeometry box the server tests).
 ]]
 
 local Players = game:GetService("Players")
@@ -57,7 +54,6 @@ local TechConfig = require(Shared.Config.Tech)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local ThrowModel = require(Shared.Disc.ThrowModel)
-local Solver = require(Shared.Disc.Solver)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local Actors = require(Shared.Actors)
@@ -80,30 +76,19 @@ local controllers: any
 local player = Players.LocalPlayer
 
 local AIM_OFFSET = math.rad(7) -- the camera looks slightly down over the shoulder
-local BANK_STEPS = 3
 local MARK_PREVIEW = 0.35 -- modes showing at least this much of the arc show the mark
 local MARKER_RANGE = 14 -- markers this close to P are drawn / tested
-local FAKE_SIDE_INPUT = 0.3 -- lateral input needed for the fake to step to a side
 
 local state = {
-	throwType = "Backhand",
-	bankStep = 0,
-	low = false,
+	throwType = "Backhand", -- what a release right now would be (ThrowModel.shape)
+	bank = 0, -- ... and its bend (-1..1 of BankRange, right-handed frame)
+	side = 0, -- the sideways input behind it (-1 A .. +1 D)
 	charging = false,
 	chargeStart = 0,
+	aiming = false, -- Secondary held (not charging): the aim view
 	releasedAt = -math.huge,
 	releasedFlight = -1,
-	leadLock = false,
-	leadTarget = nil :: number?,
-	leadSolution = nil :: Solver.Solution?,
-	lastSolve = 0,
 	lastFake = -math.huge,
-	fakedType = "", -- the throw a fake sold (Fake Switch: the other one)
-	chargeButton = "Primary", -- the button holding the charge (tech engine)
-	-- edge and launch angle on the mouse while charging (tech engine)
-	shaping = false,
-	edge = 0, -- -1..1 of BankRange
-	launchDeg = 8,
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
@@ -143,23 +128,11 @@ function ThrowController.chargeFraction(): (number, string)
 		return 0, "Idle"
 	end
 	local hold = os.clock() - state.chargeStart
-	local info = ThrowModel.typeInfo(state.throwType)
-	local t = hold * (info.ChargeMult or 1)
-	return math.min(t / T.ChargeTime, 1.6), ThrowModel.chargePhase(hold, state.throwType)
+	return math.min(hold / T.ChargeTime, 1.6), ThrowModel.chargePhase(hold, state.throwType)
 end
 
 local function airborne(): boolean
 	return not controllers.MovementController.isGrounded()
-end
-
-local function releaseHeight(): string
-	if state.low then
-		return "Low"
-	end
-	if airborne() then
-		return "High"
-	end
-	return "Mid"
 end
 
 local function leftHanded(): boolean
@@ -214,68 +187,38 @@ local function yawToward(from: Vector3, to: Vector3, fallback: number): number
 	return math.atan2(-d.X, -d.Z)
 end
 
--- Edge past this many degrees turns a backhand / forehand into a Blade.
-local BLADE_EDGE = 35
-local EDGE_RATE = 2.2 -- of the full edge per second while Q / E is held
-local shapedAt = os.clock()
-
--- The charge ended.
-local function stopShaping()
-	state.shaping = false
+-- The aim elevation the throw uses (the camera's, plus the shoulder offset).
+local function aimPitch(): number
+	return controllers.CameraController.getPitch() + AIM_OFFSET
 end
 
--- While charging on the tech engine you keep aiming with the mouse (the
--- launch angle follows the camera, -5..35 deg); hold Cut (Q) / Dive (E) to
--- tilt the edge left / right (docs/tech-spec.md 26). The bank pip shows it.
-local function shapeThrow()
-	local now0 = os.clock()
-	local dt = math.min(now0 - shapedAt, 0.1)
-	shapedAt = now0
-	if not state.shaping then
-		return
-	end
-	state.launchDeg = math.clamp(
-		math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
-		TechConfig.LAUNCH_ANGLE[1],
-		TechConfig.LAUNCH_ANGLE[2]
-	)
+-- Reads what a release right now would be from your inputs: the sideways
+-- input (A / D) and how high you aim. The windup pose, the HUD and the
+-- preview all follow it live; changing side mid-charge never restarts it.
+local function updateShape()
 	local input = controllers.InputController
-	local dir = (if input.isHeld("Dive") then 1 else 0) - (if input.isHeld("Cut") then 1 else 0)
-	if dir ~= 0 then
-		state.edge = math.clamp(state.edge + dir * EDGE_RATE * dt, -1, 1)
-		state.bankStep = math.clamp(math.floor(state.edge * BANK_STEPS + 0.5), -BANK_STEPS, BANK_STEPS)
+	local side = if input.menuOpen() then 0 else input.rawMove().X
+	local hold = if state.charging then os.clock() - state.chargeStart else 0
+	local kind, bank = ThrowModel.shape(side, aimPitch(), hold, leftHanded())
+	state.side = side
+	state.bank = bank
+	if kind ~= state.throwType then
+		state.throwType = kind
+		if state.charging then
+			Net.event("ThrowCharge"):FireServer(kind, true)
+		end
 		ThrowController.Changed:Fire()
 	end
 end
 
--- The throw type that actually leaves: a hard edge is a Blade.
-local function releaseType(): string
-	if state.shaping and (state.throwType == "Backhand" or state.throwType == "Forehand") then
-		if math.abs(state.edge) * T.BankRange > BLADE_EDGE then
-			return "Blade"
-		end
-	end
-	return state.throwType
-end
-
 local function currentParams(holdTime: number): ThrowModel.Params
 	local yaw = controllers.CameraController.getYaw()
-	local pitch = controllers.CameraController.getPitch() + AIM_OFFSET
-	if state.shaping then
-		pitch = math.rad(state.launchDeg)
-	end
-	local sol = state.leadSolution
-	local locked = state.leadLock and sol ~= nil
-	if locked and sol then
-		yaw = sol.params.yaw
-		pitch = sol.params.pitch
-	end
+	local pitch = aimPitch()
 	local mc = controllers.MovementController
-	local sim = mc.sim()
-	local height = releaseHeight()
 	local pivot = serverPivot()
 	local root = mc.root()
-	if not locked and root then
+	local step = if pivot then mc.step() else nil
+	if root then
 		-- converge on the crosshair (the release point depends on the yaw,
 		-- so two passes settle it)
 		local aim = crosshairPoint()
@@ -287,29 +230,28 @@ local function currentParams(holdTime: number): ThrowModel.Params
 				pitch = pitch,
 				holdTime = holdTime,
 				bank = 0,
-				height = height,
-				offBalance = false,
-				groundThrow = false,
+				height = "Mid",
 				leftHanded = leftHanded(),
 				pivot = pivot,
-				step = if pivot then mc.step() else nil,
+				step = step,
 			}
 			yaw = yawToward(ThrowModel.releasePosition(probe, root.Position), aim, camYaw)
 		end
 	end
+	local body = mc.techState().state
 	return {
-		throwType = releaseType(),
+		throwType = state.throwType,
 		yaw = yaw,
 		pitch = pitch,
 		holdTime = holdTime,
-		bank = if state.shaping then state.edge else state.bankStep / BANK_STEPS,
-		height = height,
-		offBalance = airborne() and height ~= "High",
-		groundThrow = sim.mode == "DiveSlide" or sim.mode == "Recover",
+		bank = state.bank,
+		height = "Mid",
+		offBalance = false,
+		-- face down after a layout catch: a weak throw from the ground
+		groundThrow = body == "Downed" or body == "Recovering",
 		leftHanded = leftHanded(),
 		pivot = pivot,
-		step = if pivot then mc.step() else nil,
-		swinging = pivot ~= nil and sim.swingUntil > sim.now,
+		step = step,
 	}
 end
 
@@ -382,15 +324,6 @@ end
 
 function ThrowController.hud(): { [string]: any }
 	local fraction, phase = ThrowController.chargeFraction()
-	local idealPower: number? = nil
-	local sol = state.leadSolution
-	if state.leadLock and sol then
-		idealPower = math.clamp(
-			sol.params.holdTime / T.ChargeTime * (ThrowModel.typeInfo(state.throwType).ChargeMult or 1),
-			0,
-			1
-		)
-	end
 	local holding = ThrowController.isHolding()
 	-- the step gauge, in the throw frame (x = right, y = forward, studs)
 	local stepX, stepY = 0, 0
@@ -428,14 +361,11 @@ function ThrowController.hud(): { [string]: any }
 	return {
 		holding = holding,
 		throwType = state.throwType,
-		bank = state.bankStep,
-		bankSteps = BANK_STEPS,
-		height = releaseHeight(),
+		bank = state.bank, -- -1..1 of BankRange
+		aiming = state.aiming,
+		airborne = airborne(),
 		charge = fraction,
 		phase = phase,
-		leadLock = state.leadLock,
-		leadName = if state.leadTarget then Actors.nameOf(state.leadTarget) else nil,
-		idealPower = idealPower,
 		holds = state.holds,
 		pivoted = pivot ~= nil,
 		stepX = stepX,
@@ -447,37 +377,6 @@ function ThrowController.hud(): { [string]: any }
 		leftHanded = leftHanded(),
 		blocked = state.previewBlocked,
 	}
-end
-
-local function setType(t: string)
-	if (DiscConfig.Types :: any)[t] and t ~= state.throwType then
-		state.throwType = t
-		if state.charging then
-			-- switching mid-charge restarts the windup (no type-switch exploits)
-			state.chargeStart = os.clock()
-			Net.event("ThrowCharge"):FireServer(t)
-		end
-		ThrowController.Changed:Fire()
-	end
-end
-
-local function cycleType(delta: number)
-	local order = DiscConfig.TypeOrder
-	local i = table.find(order, state.throwType) or 1
-	i = ((i - 1 + delta) % #order) + 1
-	setType(order[i])
-end
-
--- The charge is lost (landing from the hop): tell the server too, so nobody
--- keeps seeing (or reacting to) a windup that will never be thrown.
-local function cancelCharge()
-	if state.charging then
-		state.charging = false
-		stopShaping()
-		Net.event("ThrowCharge"):FireServer(false)
-		ThrowController.Changed:Fire()
-		ThrowController.ChargeLost:Fire()
-	end
 end
 
 -- First time (into the flight) the release crosses a visible marker's hands.
@@ -533,23 +432,21 @@ local function release()
 	local folder = ThrowController.heldFolder()
 	local root = controllers.MovementController.root()
 	if not folder or not root then
-		stopShaping()
 		return
 	end
 	local refusal = throwRefusal(folder)
 	if refusal then
 		-- the server would refuse it silently: say so and drop the windup
-		stopShaping()
 		Net.event("ThrowCharge"):FireServer(false)
 		refuseThrow(refusal)
 		ThrowController.Changed:Fire()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
-	shapeThrow() -- the last frame of Q / E counts
+	state.charging = true -- (for the shape's charge share)
+	updateShape() -- what you hold on the release frame is what counts
+	state.charging = false
 	local params = currentParams(hold)
-	stopShaping()
-	params.perfectCatch = controllers.CatchController.hotHands() or nil
 	params.tempest = Abilities.activeOn(player.Character, "TempestThrow", now()) or nil
 	if params.tempest then
 		controllers.TechFeedback.play("TEMPEST", "Perfect")
@@ -571,9 +468,7 @@ local function release()
 		groundThrow = params.groundThrow,
 		step = params.step,
 		pivot = params.pivot,
-		swinging = params.swinging,
 		pinch = params.pinch,
-		perfectCatch = params.perfectCatch,
 		tempest = params.tempest,
 		releaseT = releaseT,
 		rootPos = root.Position,
@@ -606,93 +501,24 @@ local function release()
 	ThrowController.Changed:Fire()
 end
 
--- The fake steps toward the side you hold (-1 screen-left, +1 right, 0 none).
-local function fakeSide(): number
-	local move = controllers.InputController.moveVector()
-	local _, right = ThrowModel.basis(controllers.CameraController.getYaw())
-	local lateral = move:Dot(right)
-	if lateral > FAKE_SIDE_INPUT then
-		return 1
-	elseif lateral < -FAKE_SIDE_INPUT then
-		return -1
-	end
-	return 0
-end
-
+-- The pump fake: Secondary during a charge. The throw is cancelled; the
+-- windup everyone saw was a real one. It leans toward the side you hold.
 local function fake()
-	if os.clock() - state.lastFake < T.FakeCooldown then
+	if not state.charging or os.clock() - state.lastFake < T.FakeCooldown then
 		return
 	end
 	state.lastFake = os.clock()
 	state.charging = false
-	stopShaping()
-	local side = fakeSide()
-	controllers.MovementController.fakeStep(side)
+	local side = if state.side > T.BendInput then 1 elseif state.side < -T.BendInput then -1 else 0
 	Net.event("Fake"):FireServer(state.throwType, side)
 	local c = player.Character
 	if c then
 		c:SetAttribute("UB_LocalFake", now())
 		c:SetAttribute("UB_LocalWindupType", state.throwType)
 	end
+	controllers.AudioController.play("Fake", 0.08)
 	ThrowController.Faked:Fire()
-end
-
--- picks the teammate closest to the crosshair and solves a lead pass
-local function updateLead()
-	if not state.leadLock then
-		return
-	end
-	local root = controllers.MovementController.root()
-	local c = player.Character
-	if not root or not c then
-		return
-	end
-	local myTeam = c:GetAttribute("UBTeam")
-	local aim = controllers.CameraController.getAimDirection()
-	local best, bestDot = nil, math.cos(math.rad(35))
-	for _, model in Actors.characters() do
-		if model ~= c and (model:GetAttribute("UBTeam") == myTeam or myTeam == "N") then
-			local r = model:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if r then
-				local dir = (r.Position - root.Position)
-				if dir.Magnitude > 6 then
-					local d = aim:Dot(dir.Unit)
-					if d > bestDot then
-						best, bestDot = model, d
-					end
-				end
-			end
-		end
-	end
-	local id = if best then Actors.idOf(best) else nil
-	state.leadTarget = id
-	if not best or os.clock() - state.lastSolve < 0.2 then
-		if not best then
-			state.leadSolution = nil
-		end
-		return
-	end
-	state.lastSolve = os.clock()
-	local r = (best :: Model):FindFirstChild("HumanoidRootPart") :: BasePart
-	local wind = windOf(state.heldFolder)
-	local pivot = serverPivot()
-	local sol = Solver.solve({
-		rootPos = root.Position,
-		throwerVel = root.AssemblyLinearVelocity,
-		throwType = state.throwType,
-		bank = state.bankStep / BANK_STEPS,
-		height = releaseHeight(),
-		target = r.Position + Vector3.new(0, 1, 0),
-		targetVel = VecMath.flat(r.AssemblyLinearVelocity),
-		wind = wind,
-		groundY = groundYOf(state.heldFolder),
-		coarse = true,
-		leftHanded = leftHanded(),
-		pivot = pivot,
-		step = if pivot then controllers.MovementController.step() else nil,
-	})
-	-- only offer a lead when a catchable pass exists
-	state.leadSolution = if sol and sol.miss <= 4 then sol else nil
+	ThrowController.Changed:Fire()
 end
 
 local function previewFraction(folder: Configuration): number
@@ -724,10 +550,8 @@ local function drawPreview(folder: Configuration)
 	local hold: number
 	if state.charging then
 		hold = os.clock() - state.chargeStart
-	elseif state.leadLock and state.leadSolution then
-		hold = (state.leadSolution :: Solver.Solution).params.holdTime
 	else
-		hold = T.ChargeTime * 0.6 / (ThrowModel.typeInfo(state.throwType).ChargeMult or 1)
+		hold = T.ChargeTime * T.SnapPoint -- not charging: what a Snap would do
 	end
 	local params = currentParams(hold)
 	local launch = ThrowModel.launch(params, root.Position, root.AssemblyLinearVelocity)
@@ -765,22 +589,27 @@ local function drawPreview(folder: Configuration)
 	end
 end
 
+local function setAiming(on: boolean)
+	if on ~= state.aiming then
+		state.aiming = on
+		controllers.CameraController.setAim(on)
+		ThrowController.Changed:Fire()
+	end
+end
+
 local function beginCharge()
 	local refusal = throwRefusal(ThrowController.heldFolder())
 	if refusal then
 		refuseThrow(refusal)
 		return
 	end
+	if os.clock() - state.lastFake < T.FakeRecovery then
+		return -- still recovering from the fake
+	end
 	state.charging = true
 	state.chargeStart = os.clock()
+	updateShape()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
-	if controllers.MovementController.engine() == "Tech" then
-		-- Q / E tilt the edge while charging; the mouse keeps aiming
-		state.shaping = true
-		state.edge = state.bankStep / BANK_STEPS
-		shapedAt = os.clock()
-		shapeThrow()
-	end
 	if controllers.CatchController.hotHands() then
 		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once
 		state.chargeStart = os.clock() - T.ChargeTime * TechConfig.HOT_HANDS_POWER
@@ -806,9 +635,7 @@ local function step()
 			state.pendingCharge = false
 		else
 			state.charging = false
-			stopShaping()
-			state.leadSolution = nil
-			state.low = false
+			setAiming(false)
 		end
 		ThrowController.Changed:Fire()
 	end
@@ -816,8 +643,7 @@ local function step()
 		hideDots()
 		return
 	end
-	shapeThrow()
-	updateLead()
+	updateShape()
 	drawPreview(folder)
 	local c = player.Character
 	if c then
@@ -854,91 +680,27 @@ function ThrowController.Start()
 			if action == "Primary" and controllers.MovementController.holdingDisc() then
 				-- caught, but the server has not confirmed yet: charge on confirm
 				state.pendingCharge = true
-			elseif action == "Celebrate" then
-				Net.event("Action"):FireServer("Celebrate", nil)
 			end
 			return
 		end
-		-- Cut / Dive / Jump while holding are swings and the hop (MovementController)
-		if controllers.MovementController.engine() == "Tech" then
-			-- the tech-spec throws: LMB backhand (F: scoober), RMB forehand
-			-- (F: hammer), the Slide key fakes while charging
-			local overhead = input.isHeld("Overhead")
-			if action == "Primary" or action == "Secondary" then
-				if state.charging then
-					return
-				end
-				local kind = if action == "Primary"
-					then (if overhead then "Scoober" else "Backhand")
-					else (if overhead then "Hammer" else "Forehand")
-				local sinceFake = os.clock() - state.lastFake
-				local switch = sinceFake <= TechConfig.FAKE_SWITCH_WINDOW and kind ~= state.fakedType
-				if sinceFake < TechConfig.FAKE_RECOVERY and not switch then
-					return -- still recovering from the fake
-				end
-				state.chargeButton = action
-				setType(kind)
-				beginCharge()
-				if switch then
-					controllers.TechFeedback.play("Fake Switch", "Perfect")
-					controllers.MovementController.addTech("FakeSwitch", "Perfect", Vector3.zero)
-				end
-				return
-			elseif action == "Slide" and state.charging then
-				state.fakedType = state.throwType
-				fake()
-				return
-			end
-		end
 		if action == "Primary" then
-			beginCharge()
-		elseif action == "Secondary" then
-			fake()
-		elseif action == "BankLeft" then
-			state.bankStep = math.max(-BANK_STEPS, state.bankStep - 1)
-			ThrowController.Changed:Fire()
-		elseif action == "BankRight" then
-			state.bankStep = math.min(BANK_STEPS, state.bankStep + 1)
-			ThrowController.Changed:Fire()
-		elseif action == "TypeNext" then
-			cycleType(1)
-		elseif action == "TypePrev" then
-			cycleType(-1)
-		elseif string.sub(action, 1, 4) == "Type" then
-			local n = tonumber(string.sub(action, 5))
-			if n and DiscConfig.TypeOrder[n] then
-				setType(DiscConfig.TypeOrder[n])
+			if not state.charging then
+				beginCharge()
 			end
-		elseif action == "Slide" then
-			state.low = true
-			ThrowController.Changed:Fire()
-		elseif action == "LeadLock" then
-			state.leadLock = not state.leadLock
-			state.leadSolution = nil
-			ThrowController.Changed:Fire()
+		elseif action == "Secondary" then
+			if state.charging then
+				fake()
+			else
+				setAiming(true)
+			end
 		end
 	end)
 	input.ActionEnded:Connect(function(action)
-		if action == "Primary" or (action == "Secondary" and state.chargeButton == "Secondary") then
-			if action ~= state.chargeButton and controllers.MovementController.engine() == "Tech" then
-				return -- the other button: not the throw being charged
-			end
+		if action == "Primary" then
 			state.pendingCharge = false
 			release()
-		elseif action == "Slide" then
-			state.low = false
-			ThrowController.Changed:Fire()
-		end
-	end)
-	input.Wheel:Connect(function(delta)
-		if ThrowController.isHolding() then
-			cycleType(if delta > 0 then -1 else 1)
-		end
-	end)
-	controllers.MovementController.Feedback:Connect(function(fb)
-		-- landing from the hop loses the charge
-		if fb.kind == "HopLanded" then
-			cancelCharge()
+		elseif action == "Secondary" then
+			setAiming(false)
 		end
 	end)
 	RunService:BindToRenderStep("UBThrow", Enum.RenderPriority.Camera.Value + 4, step)

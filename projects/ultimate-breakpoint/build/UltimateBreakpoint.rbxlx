@@ -1015,6 +1015,8 @@ Audio.Cues = {
 	CutPerfect = { id = "rbxassetid://138365407787910", volume = 0.7, pitch = 1.0 }, -- squeak + sparkle (ForgeGUI)
 	CutClean = { id = "rbxassetid://112239165821720", volume = 0.5, pitch = 1.0 }, -- cleat plant
 	Skid = { id = "rbxassetid://125358915985404", volume = 0.6, pitch = 1.0 }, -- shoes tearing turf
+	-- stage 3 throwing
+	Fake = { id = "rbxasset://sounds/swoosh.wav", volume = 0.35, pitch = 1.3 }, -- pump fake (placeholder until ForgeGUI is reconnected)
 	-- stage 2 air (ForgeGUI)
 	JumpOff = { id = "rbxassetid://82144545592579", volume = 0.4, pitch = 1.0 }, -- push-off scuff
 	DiveLaunch = { id = "rbxassetid://72166383280431", volume = 0.7, pitch = 1.0 }, -- layout whoosh + grunt
@@ -1052,278 +1054,8 @@ return Audio
           <Properties>
             <string name="Name">Disc</string>
             <string name="Source"><![CDATA[--!strict
--- DISC + THROW + CATCH TUNING
--- Scale: 1 metre ~= 3 studs (a 5.3-stud avatar is ~1.77 m). The flight model
--- uses real-world frisbee coefficients (Hummel 2003) converted to studs, then
--- lightly tuned so throws read clearly on a Roblox field. See docs/DESIGN.md.
---
--- Field fit (Config/Modes.Fields): a full-power Perfect backhand flies
--- ~160-170 studs aimed flat and ~185 at its best aim, so a Normal pull from
--- the goal line lands around the receivers' brick, a Mini pull can reach the
--- end zone, and light touches (~0.1-0.2 s holds) stay short. tests/disc_spec
--- encodes this; tests/flight_table prints the numbers.
---
--- Tempo: the real-world model above flies a mid-range throw at about a
--- sprinter's speed, which reads as a floaty balloon. Every flight therefore
--- runs TEMPO times faster: the same shapes and ranges in studs, flight times
--- divided by TEMPO (speeds and spin x TEMPO, accelerations x TEMPO^2). Wind,
--- deflection and bobble velocities scale the same way, so nothing changes
--- shape - a 110-stud backhand just arrives in ~2.7 s instead of ~4.1 s.
-local TEMPO = 1.8
-
-local Disc = {
-	Tempo = TEMPO,
-	Physics = {
-		Dt = 1 / 120, -- fixed simulation step, identical on client and server
-		Gravity = 29.4 * TEMPO * TEMPO, -- studs/s^2 (9.81 m/s^2 * 3, at TEMPO)
-		AirK = 0.0665, -- 0.5 * rho * area / mass, per stud
-		CL0 = 0.15,
-		CLa = 1.4, -- per radian
-		StallAlpha = 0.45, -- radians; lift collapses beyond this
-		CD0 = 0.08,
-		CDa = 2.72,
-		CDMax = 1.2,
-		Alpha0 = -0.0698, -- -4 degrees
-		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
-		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
-		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
-		SpinDecay = 0.1 * TEMPO, -- per second (docs/tech-spec.md SPIN_DECAY 0.15 at tempo 1.5)
-		-- fade drift (spec): the tilt rolls toward the fade side at
-		-- (1 - spin share) x FadeDrift, where spin share is |spin| / Throw.SpinBase,
-		-- so a low-spin (overcharged) disc fades early and a Snap holds its edge
-		FadeDrift = math.rad(40) * TEMPO / 1.5, -- radians per second at zero spin (40 deg/s at tempo 1.5)
-		MinSpin = 8 * TEMPO,
-		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
-		GroundContact = 0.14, -- disc centre height that counts as touching the ground
-		MaxFlightTime = 9,
-		HistorySeconds = 0.6, -- server keeps this much flight history for lag compensation
-	},
-
-	Throw = {
-		SpinBase = 50 * TEMPO, -- rad/s (~8 rev/s at real tempo)
-		-- Charge and Snap Release (docs/tech-spec.md 25): the ring fills over
-		-- ChargeTime; the snap zone is SnapZone of the fill and the Snap
-		-- Release is SnapPoint ± SnapPerfect. Model power 1 is a snap.
-		ChargeTime = 0.7, -- seconds for the ring to fill (spec 1.0; quicker after playtest)
-		SnapZone = { 0.75, 0.85 }, -- of the fill: a clean, stable release
-		SnapPoint = 0.80,
-		SnapPerfect = 0.025, -- s either side of the snap point = Snap Release
-		MinPowerFill = 0, -- the spec floors power at 0.3; 0 keeps the short no-charge dump (the speed floor is Throw.MinSpeed)
-		SnapSpin = 1.2,
-		OverSpin = 0.6, -- above the zone: full power, wobbly
-		LongHold = 1.2, -- of ChargeTime: held this long, spin drops to LongSpin
-		LongSpin = 0.4,
-		PerfectWindow = 0.05, -- (meter) the Snap band height: 2 x SnapPerfect
-		PerfectSpeedMult = 1.05,
-		PerfectSpinMult = 1.2,
-		OffBalancePowerCap = 0.75,
-		OffBalanceSpin = 0.8,
-		GroundThrowPowerCap = 0.6,
-		MovingSpinPenaltySpeed = 12, -- throwing on the run faster than this costs spin (no pivot yet)
-		MovingSpinPenalty = 0.85,
-		ThrowerVelocityCarry = 0.45, -- share of the run-up added to the disc (no pivot yet)
-		SwingSpinPenalty = 0.9, -- releasing mid Quick Swing costs 10% spin (no power cap)
-		MinSpeed = 28 * TEMPO,
-		MaxSpeed = 88 * TEMPO, -- sized for the Normal field (see the header)
-		PowerCurve = 0.85,
-		BankRange = 40, -- degrees of player-controlled bank (edge) either side (spec: ±40)
-		BankSteps = 7, -- discrete bank positions for keyboard/gamepad (-3..3)
-		FakeCooldown = 0.45,
-		FakeDuration = 0.22,
-		MinPitch = -12,
-		MaxPitch = 60,
-		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
-		PassChainWindow = 2.0, -- ... within this long keeps the team's pass chain going
-		HandBlockCheckTime = 0.3 * 1.5 / TEMPO, -- seconds of early flight checked against markers' hands (the same distance at any tempo)
-		NoCatchTime = 0.15 * 1.5 / TEMPO, -- nobody can catch in the first moments (hand blocks cover that)
-
-		-- Release from the pivot (ThrowModel.releasePosition with params.pivot):
-		-- P + step + right * (Side * PivotSideScale, +-LowReach for Low)
-		--   + forward * ReleaseForward + up * (height + hop).
-		PivotSideScale = 0.5, -- squared up: BH -0.3, FH +0.7 from the pivot
-		LowReach = 0.9, -- a Low release extends this much further to the throw's side
-		ReleaseForward = 0.8,
-		MaxHopLift = 3.2, -- cap on the hop height added to a pivot release (peak ~2.8)
-		-- Server check of the client's step (ThrowModel.resolveStep): accepted if
-		-- the server root is within Base + Ping * min(ping, MaxPing) of P + share * step.
-		StepCheckBase = 1.5,
-		StepCheckPing = 12,
-		StepCheckMaxPing = 0.35,
-	},
-
-	-- Per-throw definition. Side/LowSide are release offsets from the root part
-	-- when no pivot is planted (right-handed thrower; mirrored for left-handed);
-	-- from a pivot the release uses Side * Throw.PivotSideScale plus the step.
-	-- bank/alpha/pitch are degrees. spin is the sign of rotation about the
-	-- disc's top-face normal.
-	Types = {
-		Backhand = {
-			Display = "Backhand",
-			Short = "BH",
-			Order = 1,
-			SpeedMult = 1.0,
-			Spin = -1,
-			Bank = 0,
-			Alpha = 6,
-			PitchOffset = 4,
-			Side = -0.6,
-			LowSide = -2.2,
-			ChargeMult = 1.0,
-			Description = "Reliable baseline. Fades left (right-handed).",
-		},
-		Forehand = {
-			Display = "Forehand",
-			Short = "FH",
-			Order = 2,
-			SpeedMult = 0.95,
-			Spin = 1,
-			Bank = 0,
-			Alpha = 6,
-			PitchOffset = 3,
-			Side = 1.4,
-			LowSide = 2.4,
-			ChargeMult = 1.2, -- quicker release
-			Description = "Fast flick release from the other side. Fades right.",
-		},
-		Hammer = {
-			Display = "Hammer",
-			Short = "HAM",
-			Order = 3,
-			SpeedMult = 0.85,
-			Spin = 1,
-			Bank = -100,
-			Alpha = 6,
-			PitchOffset = 30,
-			Side = 0.8,
-			LowSide = 0.8,
-			Overhead = true,
-			ChargeMult = 1.0,
-			Description = "Overhead. Inverts mid-flight and drops steeply over defenders.",
-		},
-		Scoober = {
-			Display = "Scoober",
-			Short = "SCB",
-			Order = 4,
-			SpeedMult = 0.6,
-			Spin = -1,
-			Bank = 100,
-			Alpha = 6,
-			PitchOffset = 22,
-			Side = -0.4,
-			LowSide = -0.4,
-			Overhead = true,
-			ChargeMult = 1.3,
-			Description = "Short upside-down flip over a close mark. Breaks right.",
-		},
-		Blade = {
-			Display = "Blade",
-			Short = "BLD",
-			Order = 5,
-			SpeedMult = 0.95,
-			Spin = -1,
-			Bank = -55,
-			Alpha = -4,
-			PitchOffset = 6,
-			Side = -0.6,
-			LowSide = -2.2,
-			ChargeMult = 1.0,
-			Description = "Steep edge, fast dive. Short hang time: hard to intercept.",
-		},
-	},
-
-	TypeOrder = { "Backhand", "Forehand", "Hammer", "Scoober", "Blade" },
-
-	-- Release heights relative to the root part centre (from a pivot: relative
-	-- to P, plus the hop height). High without a pivot is the hop itself.
-	Heights = {
-		High = 2.6,
-		Mid = 0.5,
-		Low = -1.6,
-	},
-	OverheadHeight = 2.6,
-
-	-- Catch geometry (studs, relative to the root part centre).
-	Catch = {
-		ChestHeight = 1.0,
-		SecureRadius = 2.4, -- passive catch zone around the chest
-		CleanFraction = 0.8, -- min depth (over QualityWindow) inside this fraction = clean catch
-		QualityWindow = 0.1, -- a claim's quality is its minimum depth over this long after first contact
-		QualitySamples = 12, -- ... sampled every 1/120 s: first contact + this many steps
-		ReachLength = 3.6,
-		ReachRadius = 1.15,
-		ReachWindow = 0.28,
-		ReachCooldown = 0.4,
-		DiveLength = 5.2,
-		DiveRadius = 1.4,
-		SlideDrop = 1.4, -- slide lowers the secure zone this much
-		ShoulderHeight = 1.5,
-		ShoulderWidth = 1.0,
-		BobbleSpeed = 95 * TEMPO, -- fingertip catch of a disc faster than this bobbles (disc speed only)
-		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
-		ContestWindow = 0.04, -- claims this close in time are contested
-		ResolveDelay = 0.04, -- server waits this long to collect competing claims
-		MaxRewind = 0.3, -- max seconds a claim can be backdated (lag compensation)
-		ClaimThrottle = 0.03, -- client: min seconds between claims for one disc (a Denied clears it)
-		ClaimTrackTime = 0.08, -- client: keeps tracking after first contact up to this long before claiming
-		ClaimRateLimit = 0.02, -- server: min seconds between claims per actor (replies Denied)
-		-- Claim slack (CatchGeometry.slack): Base + ping * PingSlackPerSecond
-		-- + body speed * SpeedSlack, capped at MaxSlack.
-		BaseSlack = 1.3, -- positional tolerance for claims (studs; humans only, bots are judged exactly)
-		PingSlackPerSecond = 26, -- extra tolerance per second of ping (≈ sprint speed)
-		SpeedSlack = 0.06, -- extra tolerance per stud/s of body speed
-		MaxSlack = 5,
-		-- Client-sent body position (CatchGeometry.claimRoot): accepted within
-		-- Base + speed * SpeedTime + ping * speed of the server root (cap Max);
-		-- otherwise the server root is led by its velocity * Lead.
-		ClientRootBase = 2,
-		ClientRootSpeedTime = 0.25,
-		ClientRootMax = 8,
-		ClientRootLead = 0.08,
-		PickupRadius = 3.5,
-		BobbleUp = 16 * TEMPO,
-		BobbleCarry = 0.25,
-		BlockCarry = 0.18,
-		BlockDown = -6 * TEMPO,
-		-- Tip (the Tip Reset): an airborne player taps the disc up through
-		-- their hands. The Tip zone is a hands-up sphere over the head, on top
-		-- of the normal zones. The disc pops ~1.5 studs and comes back down in
-		-- ~0.4 s - about as long as the tipper's reset lift keeps them up.
-		TipHeight = 3.1, -- Tip sphere centre above the hitbox root
-		TipRadius = 1.9,
-		TipUp = 14, -- vertical speed of the popped disc
-		TipCarry = 0.25, -- share of the disc's velocity it keeps
-		TipPush = 4, -- plus this much along the tipper's facing
-		TipSpin = 10 * TEMPO,
-	},
-
-	-- Marker hand zones (for hand blocks on release). The box is centred on the
-	-- marker and faces the marker's facing blended FacingBlend toward the
-	-- thrower's pivot P, never more than MaxFacingOff degrees off P, so a
-	-- marker aims the hands but cannot turn them away from the thrower.
-	-- Distances (StallRange, DiscSpace) are measured from P, not the thrower's
-	-- root, so a lunge cannot cause a disc-space call.
-	Mark = {
-		StallRange = 9, -- studs from P: ~10 ft
-		DiscSpace = 2.4, -- a marker closer than this to P is a disc-space call
-		MarkDistance = 3.2, -- where a marker stands upfield of P ...
-		Shade = 1.6, -- ... shaded this far toward the break side
-		MirrorMax = 2.4, -- bots mirror the thrower's step by at most this much
-		FacingBlend = 0.5,
-		MaxFacingOff = 35, -- degrees
-		LowY = { 0.8, 4.6 }, -- above the ground: low/wide stance, knees to chest
-		HighY = { 4.4, 8.2 }, -- hands up: shoulders to well above the head
-		LowHalfWidth = 2.5, -- (2.8 before hand blocks were sub-stepped; fast discs no longer tunnel)
-		HighHalfWidth = 2.0,
-		JumpBonus = 1, -- jumping lifts the box by the jump height plus up to this (arms stretch)
-		DepthMin = -0.8, -- along the box forward (toward the thrower)
-		DepthMax = 2.0,
-		RelaxedRadius = 1.6, -- hands-down marker: small zone at the chest
-		RewindBase = 0.05, -- hand blocks rewind markers by min(ping / 2 + RewindBase, RewindMax)
-		RewindMax = 0.25,
-	},
-}
-
-return Disc
+-- Alias: the disc, throw and catch numbers live in Config/Tuning (Tech.Disc).
+return require(script.Parent.Tuning).Disc
 ]]></string>
           </Properties>
         </Item>
@@ -2993,8 +2725,10 @@ return require(script.Parent.Tuning)
 	unless the name or comment says s. Sections marked (stage N) belong to a
 	build stage that hasn't been reworked to the core design yet.
 
-	Config/Tech is an alias of this module (older code requires it by that
-	name).
+	Movement numbers are the flat Tech.NAME values; the disc, throwing and
+	catching numbers are in Tech.Disc at the bottom. Config/Tech and
+	Config/Disc are aliases of this module (older code requires them by
+	those names).
 ]]
 
 local Tech = {}
@@ -3174,10 +2908,6 @@ Tech.SPIN_DECAY = 0.15
 Tech.SNAP_ZONE = { 0.75, 0.85 }
 Tech.SNAP_POINT = 0.80
 Tech.SNAP_PERFECT = 20 -- ± ms
-Tech.LAUNCH_ANGLE = { -5, 35 } -- degrees, the mouse sets it while charging
-Tech.RUN_THROUGH_CONE = 10 -- studs/s of speed per degree of aim cone (spec 29: 5)
-Tech.FAKE_RECOVERY = 0.2 -- s after a pump fake before the next throw
-Tech.FAKE_SWITCH_WINDOW = 0.15 -- s: the other throw this soon skips the recovery
 
 -- the pivot (holding the disc)
 Tech.PIVOT_REACH = 1.2 -- studs the free foot steps from the pivot
@@ -3199,6 +2929,299 @@ Tech.JUKED_LOSS = 0.30
 Tech.CONTACT_LOSS = 0.30 -- speed lost running through a player
 Tech.CONTACT_RADIUS = 2 -- studs between roots that counts as overlapping
 Tech.FOUL_WINDOW = 0.3 -- s: a defender's touch this close to the receiver's claim, overlapping, is a foul
+
+---------------------------------------------------------------------------
+-- THE DISC, THROWING AND CATCHING (Config/Disc is an alias of Tech.Disc)
+---------------------------------------------------------------------------
+
+-- DISC + THROW + CATCH TUNING
+-- Scale: 1 metre ~= 3 studs (a 5.3-stud avatar is ~1.77 m). The flight model
+-- uses real-world frisbee coefficients (Hummel 2003) converted to studs, then
+-- lightly tuned so throws read clearly on a Roblox field. See docs/DESIGN.md.
+--
+-- Field fit (Config/Modes.Fields): a full-power Perfect backhand flies
+-- ~160-170 studs aimed flat and ~185 at its best aim, so a Normal pull from
+-- the goal line lands around the receivers' brick, a Mini pull can reach the
+-- end zone, and light touches (~0.1-0.2 s holds) stay short. tests/disc_spec
+-- encodes this; tests/flight_table prints the numbers.
+--
+-- Tempo: the real-world model above flies a mid-range throw at about a
+-- sprinter's speed, which reads as a floaty balloon. Every flight therefore
+-- runs TEMPO times faster: the same shapes and ranges in studs, flight times
+-- divided by TEMPO (speeds and spin x TEMPO, accelerations x TEMPO^2). Wind,
+-- deflection and bobble velocities scale the same way, so nothing changes
+-- shape - a 110-stud backhand just arrives in ~2.7 s instead of ~4.1 s.
+local TEMPO = 1.8
+
+local Disc = {
+	Tempo = TEMPO,
+	Physics = {
+		Dt = 1 / 120, -- fixed simulation step, identical on client and server
+		Gravity = 29.4 * TEMPO * TEMPO, -- studs/s^2 (9.81 m/s^2 * 3, at TEMPO)
+		AirK = 0.0665, -- 0.5 * rho * area / mass, per stud
+		CL0 = 0.15,
+		CLa = 1.4, -- per radian
+		StallAlpha = 0.45, -- radians; lift collapses beyond this
+		CD0 = 0.08,
+		CDa = 2.72,
+		CDMax = 1.2,
+		Alpha0 = -0.0698, -- -4 degrees
+		CM0 = -0.01, -- pitching moment at zero angle of attack (nose down => "turn")
+		CMa = 1.0, -- grows with angle of attack (nose up => "fade")
+		RollK = 0.07, -- gyroscopic precession gain (tuned, see tests/disc_spec)
+		SpinDecay = 0.1 * TEMPO, -- per second (docs/tech-spec.md SPIN_DECAY 0.15 at tempo 1.5)
+		-- fade drift (spec): the tilt rolls toward the fade side at
+		-- (1 - spin share) x FadeDrift, where spin share is |spin| / Throw.SpinBase,
+		-- so a low-spin (overcharged) disc fades early and a Snap holds its edge
+		FadeDrift = math.rad(40) * TEMPO / 1.5, -- radians per second at zero spin (40 deg/s at tempo 1.5)
+		MinSpin = 8 * TEMPO,
+		Radius = 1.1, -- visual/catch radius in studs (~0.27 m disc)
+		GroundContact = 0.14, -- disc centre height that counts as touching the ground
+		MaxFlightTime = 9,
+		HistorySeconds = 0.6, -- server keeps this much flight history for lag compensation
+	},
+
+	Throw = {
+		-- THROW SHAPE (stage 3, docs/CORE_DESIGN.md): what you are doing at
+		-- the release picks the throw (ThrowModel.shape). No throw keys.
+		--   nothing held   a flat backhand
+		--   A held         a backhand that bends left
+		--   D held         a forehand (released from the other side) that bends right
+		--   aiming up hard with a strong charge: a Hammer over the defence
+		BendInput = 0.3, -- sideways input (A / D) past this bends the throw
+		BendBank = 0.35, -- FEEL: how hard a bent throw curves (share of BankRange; 0.35 ~ 30 studs over 130)
+		HammerPitch = 28, -- degrees the camera aims above flat ...
+		HammerFill = 0.6, -- ... with the charge at least this full: a Hammer
+		AimFov = 0.82, -- holding RMB to aim narrows the view to this share
+		AimSensitivity = 0.6, -- ... and slows the mouse to this share
+		FakeRecovery = 0.2, -- s after a fake (RMB during a charge) before you can charge again
+		SpinBase = 50 * TEMPO, -- rad/s (~8 rev/s at real tempo)
+		-- Charge and Snap Release (docs/tech-spec.md 25): the ring fills over
+		-- ChargeTime; the snap zone is SnapZone of the fill and the Snap
+		-- Release is SnapPoint ± SnapPerfect. Model power 1 is a snap.
+		ChargeTime = 0.7, -- seconds for the ring to fill (spec 1.0; quicker after playtest)
+		SnapZone = { 0.75, 0.85 }, -- of the fill: a clean, stable release
+		SnapPoint = 0.80,
+		SnapPerfect = 0.025, -- s either side of the snap point = Snap Release
+		MinPowerFill = 0, -- the spec floors power at 0.3; 0 keeps the short no-charge dump (the speed floor is Throw.MinSpeed)
+		SnapSpin = 1.2,
+		OverSpin = 0.6, -- above the zone: full power, wobbly
+		LongHold = 1.2, -- of ChargeTime: held this long, spin drops to LongSpin
+		LongSpin = 0.4,
+		PerfectWindow = 0.05, -- (meter) the Snap band height: 2 x SnapPerfect
+		PerfectSpeedMult = 1.05,
+		PerfectSpinMult = 1.2,
+		OffBalancePowerCap = 0.75,
+		OffBalanceSpin = 0.8,
+		GroundThrowPowerCap = 0.6,
+		MovingSpinPenaltySpeed = 12, -- throwing on the run faster than this costs spin (no pivot yet)
+		MovingSpinPenalty = 0.85,
+		ThrowerVelocityCarry = 0.45, -- share of the run-up added to the disc (no pivot yet)
+		SwingSpinPenalty = 0.9, -- releasing mid Quick Swing costs 10% spin (no power cap)
+		MinSpeed = 28 * TEMPO,
+		MaxSpeed = 88 * TEMPO, -- sized for the Normal field (see the header)
+		PowerCurve = 0.85,
+		BankRange = 40, -- degrees of player-controlled bank (edge) either side (spec: ±40)
+		BankSteps = 7, -- discrete bank positions for keyboard/gamepad (-3..3)
+		FakeCooldown = 0.45,
+		FakeDuration = 0.22,
+		MinPitch = -12,
+		MaxPitch = 60,
+		QuickReleaseWindow = 0.6, -- release within this long after a catch = Quick Release
+		PassChainWindow = 2.0, -- ... within this long keeps the team's pass chain going
+		HandBlockCheckTime = 0.3 * 1.5 / TEMPO, -- seconds of early flight checked against markers' hands (the same distance at any tempo)
+		NoCatchTime = 0.15 * 1.5 / TEMPO, -- nobody can catch in the first moments (hand blocks cover that)
+
+		-- Release from the pivot (ThrowModel.releasePosition with params.pivot):
+		-- P + step + right * (Side * PivotSideScale, +-LowReach for Low)
+		--   + forward * ReleaseForward + up * (height + hop).
+		PivotSideScale = 0.5, -- squared up: BH -0.3, FH +0.7 from the pivot
+		LowReach = 0.9, -- a Low release extends this much further to the throw's side
+		ReleaseForward = 0.8,
+		MaxHopLift = 3.2, -- cap on the hop height added to a pivot release (peak ~2.8)
+		-- Server check of the client's step (ThrowModel.resolveStep): accepted if
+		-- the server root is within Base + Ping * min(ping, MaxPing) of P + share * step.
+		StepCheckBase = 1.5,
+		StepCheckPing = 12,
+		StepCheckMaxPing = 0.35,
+	},
+
+	-- Per-throw definition. Side/LowSide are release offsets from the root part
+	-- when no pivot is planted (right-handed thrower; mirrored for left-handed);
+	-- from a pivot the release uses Side * Throw.PivotSideScale plus the step.
+	-- bank/alpha/pitch are degrees. spin is the sign of rotation about the
+	-- disc's top-face normal.
+	Types = {
+		Backhand = {
+			Display = "Backhand",
+			Short = "BH",
+			Order = 1,
+			SpeedMult = 1.0,
+			Spin = -1,
+			Bank = 0,
+			Alpha = 6,
+			PitchOffset = 4,
+			Side = -0.6,
+			LowSide = -2.2,
+			ChargeMult = 1.0,
+			Description = "Reliable baseline. Fades left (right-handed).",
+		},
+		Forehand = {
+			Display = "Forehand",
+			Short = "FH",
+			Order = 2,
+			SpeedMult = 0.95,
+			Spin = 1,
+			Bank = 0,
+			Alpha = 6,
+			PitchOffset = 3,
+			Side = 1.4,
+			LowSide = 2.4,
+			ChargeMult = 1.0, -- every player throw charges on the same rhythm
+			Description = "Fast flick release from the other side. Fades right.",
+		},
+		Hammer = {
+			Display = "Hammer",
+			Short = "HAM",
+			Order = 3,
+			SpeedMult = 0.85,
+			Spin = 1,
+			Bank = -100,
+			Alpha = 6,
+			PitchOffset = 30,
+			Side = 0.8,
+			LowSide = 0.8,
+			Overhead = true,
+			ChargeMult = 1.0,
+			Description = "Overhead. Inverts mid-flight and drops steeply over defenders.",
+		},
+		Scoober = {
+			Display = "Scoober",
+			Short = "SCB",
+			Order = 4,
+			SpeedMult = 0.6,
+			Spin = -1,
+			Bank = 100,
+			Alpha = 6,
+			PitchOffset = 22,
+			Side = -0.4,
+			LowSide = -0.4,
+			Overhead = true,
+			ChargeMult = 1.3,
+			Description = "Short upside-down flip over a close mark. Breaks right.",
+		},
+		Blade = {
+			Display = "Blade",
+			Short = "BLD",
+			Order = 5,
+			SpeedMult = 0.95,
+			Spin = -1,
+			Bank = -55,
+			Alpha = -4,
+			PitchOffset = 6,
+			Side = -0.6,
+			LowSide = -2.2,
+			ChargeMult = 1.0,
+			Description = "Steep edge, fast dive. Short hang time: hard to intercept.",
+		},
+	},
+
+	TypeOrder = { "Backhand", "Forehand", "Hammer", "Scoober", "Blade" },
+	-- what a player's inputs can produce (ThrowModel.shape); the others are
+	-- for bots and the training launcher
+	PlayerTypes = { "Backhand", "Forehand", "Hammer" },
+
+	-- Release heights relative to the root part centre (from a pivot: relative
+	-- to P, plus the hop height). High without a pivot is the hop itself.
+	Heights = {
+		High = 2.6,
+		Mid = 0.5,
+		Low = -1.6,
+	},
+	OverheadHeight = 2.6,
+
+	-- Catch geometry (studs, relative to the root part centre).
+	Catch = {
+		ChestHeight = 1.0,
+		SecureRadius = 2.4, -- passive catch zone around the chest
+		CleanFraction = 0.8, -- min depth (over QualityWindow) inside this fraction = clean catch
+		QualityWindow = 0.1, -- a claim's quality is its minimum depth over this long after first contact
+		QualitySamples = 12, -- ... sampled every 1/120 s: first contact + this many steps
+		ReachLength = 3.6,
+		ReachRadius = 1.15,
+		ReachWindow = 0.28,
+		ReachCooldown = 0.4,
+		DiveLength = 5.2,
+		DiveRadius = 1.4,
+		SlideDrop = 1.4, -- slide lowers the secure zone this much
+		ShoulderHeight = 1.5,
+		ShoulderWidth = 1.0,
+		BobbleSpeed = 95 * TEMPO, -- fingertip catch of a disc faster than this bobbles (disc speed only)
+		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
+		ContestWindow = 0.04, -- claims this close in time are contested
+		ResolveDelay = 0.04, -- server waits this long to collect competing claims
+		MaxRewind = 0.3, -- max seconds a claim can be backdated (lag compensation)
+		ClaimThrottle = 0.03, -- client: min seconds between claims for one disc (a Denied clears it)
+		ClaimTrackTime = 0.08, -- client: keeps tracking after first contact up to this long before claiming
+		ClaimRateLimit = 0.02, -- server: min seconds between claims per actor (replies Denied)
+		-- Claim slack (CatchGeometry.slack): Base + ping * PingSlackPerSecond
+		-- + body speed * SpeedSlack, capped at MaxSlack.
+		BaseSlack = 1.3, -- positional tolerance for claims (studs; humans only, bots are judged exactly)
+		PingSlackPerSecond = 26, -- extra tolerance per second of ping (≈ sprint speed)
+		SpeedSlack = 0.06, -- extra tolerance per stud/s of body speed
+		MaxSlack = 5,
+		-- Client-sent body position (CatchGeometry.claimRoot): accepted within
+		-- Base + speed * SpeedTime + ping * speed of the server root (cap Max);
+		-- otherwise the server root is led by its velocity * Lead.
+		ClientRootBase = 2,
+		ClientRootSpeedTime = 0.25,
+		ClientRootMax = 8,
+		ClientRootLead = 0.08,
+		PickupRadius = 3.5,
+		BobbleUp = 16 * TEMPO,
+		BobbleCarry = 0.25,
+		BlockCarry = 0.18,
+		BlockDown = -6 * TEMPO,
+		-- Tip (the Tip Reset): an airborne player taps the disc up through
+		-- their hands. The Tip zone is a hands-up sphere over the head, on top
+		-- of the normal zones. The disc pops ~1.5 studs and comes back down in
+		-- ~0.4 s - about as long as the tipper's reset lift keeps them up.
+		TipHeight = 3.1, -- Tip sphere centre above the hitbox root
+		TipRadius = 1.9,
+		TipUp = 14, -- vertical speed of the popped disc
+		TipCarry = 0.25, -- share of the disc's velocity it keeps
+		TipPush = 4, -- plus this much along the tipper's facing
+		TipSpin = 10 * TEMPO,
+	},
+
+	-- Marker hand zones (for hand blocks on release). The box is centred on the
+	-- marker and faces the marker's facing blended FacingBlend toward the
+	-- thrower's pivot P, never more than MaxFacingOff degrees off P, so a
+	-- marker aims the hands but cannot turn them away from the thrower.
+	-- Distances (StallRange, DiscSpace) are measured from P, not the thrower's
+	-- root, so a lunge cannot cause a disc-space call.
+	Mark = {
+		StallRange = 9, -- studs from P: ~10 ft
+		DiscSpace = 2.4, -- a marker closer than this to P is a disc-space call
+		MarkDistance = 3.2, -- where a marker stands upfield of P ...
+		Shade = 1.6, -- ... shaded this far toward the break side
+		MirrorMax = 2.4, -- bots mirror the thrower's step by at most this much
+		FacingBlend = 0.5,
+		MaxFacingOff = 35, -- degrees
+		LowY = { 0.8, 4.6 }, -- above the ground: low/wide stance, knees to chest
+		HighY = { 4.4, 8.2 }, -- hands up: shoulders to well above the head
+		LowHalfWidth = 2.5, -- (2.8 before hand blocks were sub-stepped; fast discs no longer tunnel)
+		HighHalfWidth = 2.0,
+		JumpBonus = 1, -- jumping lifts the box by the jump height plus up to this (arms stretch)
+		DepthMin = -0.8, -- along the box forward (toward the thrower)
+		DepthMax = 2.0,
+		RelaxedRadius = 1.6, -- hands-down marker: small zone at the chest
+		RewindBase = 0.05, -- hand blocks rewind markers by min(ping / 2 + RewindBase, RewindMax)
+		RewindMax = 0.25,
+	},
+}
+
+Tech.Disc = Disc
 
 return Tech
 ]]></string>
@@ -3775,7 +3798,7 @@ return Solver
 	ThrowModel — turns a player's throw inputs into a disc launch state.
 
 	Inputs that matter (all deterministic, no hidden accuracy roll):
-	  throw type      Backhand / Forehand / Hammer / Scoober / Blade
+	  throw type      Backhand / Forehand / Hammer for players (shape()); Scoober / Blade for bots
 	  aim yaw/pitch   from the camera
 	  hold time       charge -> power; releasing in the Perfect window at full
 	                  charge gives +speed and +spin; holding too long (Over)
@@ -3826,7 +3849,6 @@ export type Params = {
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
-	perfectCatch: boolean?, -- right after a Perfect Catch (halves the run-through cone)
 	tempest: boolean?, -- Tempest Throw is armed (Config/Abilities): faster, more spin
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
@@ -3917,6 +3939,50 @@ function ThrowModel.chargePhase(holdTime: number, throwType: string): string
 	return "Charging"
 end
 
+-- THROW SHAPE: what the thrower is doing at the release picks the throw
+-- (Config/Tuning Disc.Throw). `side` is the sideways input in the aim frame
+-- (-1 = A / screen-left .. +1 = D / right), `pitch` the aim elevation in
+-- radians and `holdTime` the charge so far. Returns the throw type and its
+-- bank (-1..1 of BankRange), for a right- or left-handed thrower:
+--   aiming up past HammerPitch with the charge past HammerFill: a Hammer
+--   A: the throw from your left side, bending left; D: from your right,
+--   bending right; neither: a flat backhand
+function ThrowModel.shape(side: number, pitch: number, holdTime: number, leftHanded: boolean?): (string, number)
+	local fill = math.max(0, holdTime) / T.ChargeTime
+	if math.deg(pitch) >= T.HammerPitch and fill >= T.HammerFill then
+		return "Hammer", 0
+	end
+	if side ~= side or math.abs(side) < T.BendInput then
+		return "Backhand", 0
+	end
+	-- a right-hander's left side is the backhand; a left-hander's the forehand
+	local left = side < 0
+	local backhand = left ~= (leftHanded == true)
+	-- params.bank is in the right-handed frame (launch mirrors it)
+	local bank = if left then -T.BendBank else T.BendBank
+	if leftHanded then
+		bank = -bank
+	end
+	return if backhand then "Backhand" else "Forehand", bank
+end
+
+-- Server check of a player's throw shape: only the types shape() can make,
+-- a Hammer only with its aim and charge, and no more bank than a bend.
+function ThrowModel.legalShape(p: Params)
+	if not table.find(DiscConfig.PlayerTypes, p.throwType) then
+		p.throwType = "Backhand"
+	end
+	if p.throwType == "Hammer" then
+		local fill = p.holdTime / T.ChargeTime
+		if math.deg(p.pitch) < T.HammerPitch - 1 or fill < T.HammerFill - 0.05 then
+			p.throwType = "Backhand"
+		end
+		p.bank = 0
+	else
+		p.bank = math.clamp(p.bank, -T.BendBank, T.BendBank)
+	end
+end
+
 -- Clamps any value into a legal step for aim `yaw`: a flat Vector3 with
 -- |step| <= StepRadius and its forward part in [-BackMax, ForwardMax] * R
 -- (the same limits MovementSim uses). Junk, NaN or infinity -> zero.
@@ -4002,7 +4068,6 @@ function ThrowModel.sanitize(raw: any): Params?
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
-		perfectCatch = raw.perfectCatch == true,
 		tempest = raw.tempest == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
@@ -4115,20 +4180,10 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 		spinFactor *= Abilities.TempestSpin
 	end
 
-	-- Run-Through Release (docs/tech-spec.md 29): released on the move (no
-	-- pivot yet), the aim cone widens 1 degree per RUN_THROUGH_CONE studs/s
-	-- of speed (half after a Perfect Catch). The deviation is a fixed hash of
-	-- the release time, so the client and the server agree.
+	-- A release on the move (the catch skid, or in the air) aims exactly
+	-- where you point: it costs spin (MovingSpinPenalty) and carries some of
+	-- your speed, never accuracy.
 	local yaw = p.yaw
-	if not pivoting and not p.groundThrow then
-		local flat = Vector3.new(throwerVel.X, 0, throwerVel.Z).Magnitude
-		if flat == flat and flat > 1 then
-			local cone = flat / TechConfig.RUN_THROUGH_CONE * (if p.perfectCatch then 0.5 else 1)
-			local seed = (p.releaseT or 0) * 12.9898
-			local noise = (math.sin(seed) * 43758.5453) % 1 * 2 - 1
-			yaw += math.rad(cone * noise)
-		end
-	end
 	local forward, right = ThrowModel.basis(yaw)
 	local dir = forward * math.cos(pitch) + UP * math.sin(pitch)
 
@@ -23277,7 +23332,10 @@ local function prepare(actorId: number, raw: any, isBot: boolean): Prepared?
 	-- the air for longer than the replication lag (a fresh landing is fine)
 	local since = if track then track.airborneSince else nil
 	local seenAirborne = not grounded and since ~= nil and os.clock() - since > ping + AIR_LAG
-	p.offBalance = p.height ~= "High" and (p.offBalance == true or seenAirborne)
+	-- Players: catching in a jump or a dive and releasing before landing is
+	-- a legal, full-strength play (docs/CORE_DESIGN.md); with no planted
+	-- pivot it already costs spin. Only bots keep the off-balance cap.
+	p.offBalance = isBot and p.height ~= "High" and (p.offBalance == true or seenAirborne)
 	p.groundThrow = services.MovementService.isOnGroundAfterLayout(actorId)
 	if p.groundThrow then
 		p.height = "Mid"
@@ -23357,12 +23415,9 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	end
 	chargeStart[actorId] = nil
 
-	-- the halved run-through cone needs a catch this player just made
-	if p.perfectCatch and not bot then
-		local track = services.MovementService.track(actorId)
-		if not track or os.clock() - track.lastCatchClock > TechConfig.HOT_HANDS_TIME + 0.6 then
-			p.perfectCatch = false
-		end
+	-- players can only throw what their inputs can shape
+	if not bot then
+		ThrowModel.legalShape(p)
 	end
 
 	-- a Pinch needs the feet to really be touching down: a touchdown the
@@ -23511,7 +23566,7 @@ function ThrowService.Init(s: any)
 end
 
 function ThrowService.Start()
-	Net.event("ThrowCharge").OnServerEvent:Connect(function(player, throwType)
+	Net.event("ThrowCharge").OnServerEvent:Connect(function(player, throwType, keep)
 		local actor = services.PlayerService.fromPlayer(player)
 		if not actor then
 			return
@@ -23519,7 +23574,12 @@ function ThrowService.Start()
 		if throwType == false then
 			ThrowService.endCharge(actor.id)
 		elseif type(throwType) == "string" and (DiscConfig.Types :: any)[throwType] then
-			ThrowService.beginCharge(actor.id, throwType)
+			if keep == true and chargeStart[actor.id] ~= nil then
+				-- the windup changed side mid-charge: same charge, new pose
+				setAttr(actor.id, "WindupType", throwType)
+			else
+				ThrowService.beginCharge(actor.id, throwType)
+			end
 		end
 	end)
 	Net.event("Fake").OnServerEvent:Connect(function(player, throwType, side)
@@ -25288,6 +25348,79 @@ DRILLS.ResetLab = {
 -- session lifecycle
 ---------------------------------------------------------------------------
 
+---------------------------------------------------------------------------
+-- Test field (Arena/TestFieldBuilder): free movement and free throws
+---------------------------------------------------------------------------
+
+local TEST_RETURN = 3.5 -- s a thrown disc lies where it landed before it comes back
+local TEST_AHEAD = 7 -- studs in front of you it comes back to
+
+local function testFieldDrop(s: Session)
+	local r = root(s)
+	if not r then
+		return
+	end
+	local look = flat(r.CFrame.LookVector)
+	local ahead = if look.Magnitude > 0.1 then look.Unit else Vector3.new(0, 0, 1)
+	services.DiscService.placeOnGround(discFor(s), r.Position + ahead * TEST_AHEAD)
+	s.data.returnAt = nil
+end
+
+-- No goal and no score: a disc to pick up (Primary next to it) and throw.
+-- Every throw reports what left your hand and where it came down.
+DRILLS.TestField = {
+	start = function(s: Session)
+		testFieldDrop(s)
+		hud(s, "TEST FIELD", "Run, cut, jump, dive. The disc is in front of you: pick it up and throw.")
+	end,
+	onThrown = function(s: Session, _d: any, info: any)
+		s.data.throw = {
+			from = info.launch.releasePos,
+			yaw = info.params.yaw,
+			kind = info.params.throwType,
+			quality = info.launch.quality,
+			speed = info.launch.speed,
+		}
+		s.data.returnAt = nil
+	end,
+	onCaught = function(s: Session)
+		s.data.returnAt = nil
+	end,
+	onGrounded = function(s: Session, d: any, land: Vector3)
+		services.DiscService.placeOnGround(d, land)
+		s.data.returnAt = now() + TEST_RETURN
+		local th = s.data.throw
+		if not th then
+			return
+		end
+		s.data.throw = nil
+		local forward, right = ThrowModel.basis(th.yaw)
+		local off = flat(land - th.from)
+		local along, side = off:Dot(forward), off:Dot(right)
+		local curve = if math.abs(side) < 3
+			then "straight"
+			else string.format("%d %s", math.floor(math.abs(side) + 0.5), if side < 0 then "left" else "right")
+		hud(
+			s,
+			"TEST FIELD",
+			string.format(
+				"%s  ·  %s release  ·  %d studs  ·  %s",
+				string.upper(th.kind),
+				string.upper(th.quality),
+				math.floor(along + 0.5),
+				curve
+			)
+		)
+	end,
+	step = function(s: Session)
+		local at = s.data.returnAt
+		local d = s.disc
+		if at and d and now() >= at and d.mode == "Ground" then
+			testFieldDrop(s)
+		end
+	end,
+}
+
 function stopDrill(actor: any)
 	local s = sessions[actor.id]
 	if not s then
@@ -25337,6 +25470,7 @@ function TrainingService.enterTestField(actor: any)
 	services.PlayerService.setFrozen(actor, false)
 	services.PlayerService.setLine(actor, nil, nil)
 	services.PlayerService.teleport(actor, testField.entry, { face = true })
+	TrainingService.startDrill(actor, "TestField")
 end
 
 function TrainingService.enter(actor: any)
@@ -25362,6 +25496,9 @@ function TrainingService.respawned(actor: any)
 	TrainingService.stopDrill(actor)
 	local at = if onTestField[actor.id] then testField.entry else layout.entry
 	services.PlayerService.teleport(actor, at, { face = true })
+	if onTestField[actor.id] then
+		TrainingService.startDrill(actor, "TestField")
+	end
 end
 
 function TrainingService.action(player: Player, kind: string, payload: any)
@@ -26587,6 +26724,8 @@ local UserInputService = game:GetService("UserInputService")
 
 local MovementConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Movement"))
 
+local DiscConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Disc"))
+
 local CameraController = {}
 
 local controllers: any
@@ -26598,6 +26737,8 @@ local targetDistance = 12 -- zoom the wheel asks for
 local collisionDistance = math.huge -- wall-limited distance (in at once, out slowly)
 local focusY: number? = nil
 local speedFov = 0
+local aimOn = false -- the thrower holds Secondary: a tighter view, a slower mouse
+local aimShown = 0 -- 0..1, eased
 local kick = 0 -- requested punch (decays)
 local kickShown = 0 -- what the FOV shows (eases toward kick)
 local shakeAmp = 0
@@ -26652,6 +26793,11 @@ function CameraController.forward(): Vector3
 end
 
 -- A brief FOV punch (degrees, capped at MAX_KICK).
+-- The thrower's aim view (ThrowController: Secondary held with the disc).
+function CameraController.setAim(on: boolean)
+	aimOn = on
+end
+
 function CameraController.kick(amount: number)
 	kick = math.max(kick, math.min(amount, MAX_KICK))
 end
@@ -26717,6 +26863,9 @@ local function update(dt: number)
 			capturedLook += md * settings.get("MouseSensitivity")
 		else
 			local sens = 0.0042 * settings.get("MouseSensitivity")
+			if aimOn then
+				sens *= DiscConfig.Throw.AimSensitivity
+			end
 			yaw -= md.X * sens
 			pitch -= md.Y * sens * invert
 		end
@@ -26809,7 +26958,9 @@ local function update(dt: number)
 	speedFov += (speedTarget - speedFov) * (1 - math.exp(-fovRate * dt))
 	kick = math.max(0, kick - 12 * dt)
 	kickShown += (kick - kickShown) * (1 - math.exp(-25 * dt))
-	camera.FieldOfView = settings.get("FieldOfView") + speedFov + kickShown
+	aimShown += ((if aimOn then 1 else 0) - aimShown) * (1 - math.exp(-14 * dt))
+	local baseFov = settings.get("FieldOfView") * (1 + (DiscConfig.Throw.AimFov - 1) * aimShown)
+	camera.FieldOfView = baseFov + speedFov * (1 - aimShown) + kickShown
 
 	local cf = CFrame.lookAt(camPos, camPos + look)
 	local clock = os.clock()
@@ -33299,25 +33450,28 @@ return TechFeedback
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
 --[[
-	ThrowController — everything you do with the disc in your hand.
+	ThrowController — everything you do with the disc in your hand
+	(docs/CORE_DESIGN.md, stage 3). Two buttons, no throw keys:
 
-	  hold Primary      charge (power rises to full at ChargeTime; release in
-	                    the Perfect window for +speed/+spin; holding longer
-	                    bleeds spin = a wobblier line)
-	  WASD              step the free foot around your planted pivot
-	  Q / E             quick swing to the screen-left / right side (the Cut /
-	                    Dive keys; MovementController routes them while
-	                    holding, gamepad X swings to the other side)
-	  Secondary         pump fake: the same windup defenders see on a real
-	                    throw, plus a fake step toward the side you hold (A/D)
-	  Z / X             bank the disc left / right (curves the flight)
-	  wheel, 1-5, T     throw type
-	  hold Slide key    low release (step out under the mark)
-	  Jump              hop (one per possession): a high release over the
-	                    mark; release before you land or the charge is lost
-	  R                 Lead Pass assist: aims at the teammate nearest your
-	                    crosshair using their CURRENT velocity and marks the
-	                    ideal power on the meter; timing the release is still on you
+	  hold Primary (LMB)   charge. Power rises with the hold; releasing on
+	                       the Snap point is a Perfect release (faster, more
+	                       spin); holding past the zone overcharges (wobbly).
+	  release Primary      throw where the crosshair points.
+	  what you hold at the release shapes it (ThrowModel.shape):
+	      nothing          a flat backhand
+	      A                a backhand that bends left
+	      D                a forehand, from your other side, bending right
+	      aim up hard + a strong charge: a Hammer over the defence
+	  hold Secondary (RMB) aim: a tighter view and a slower mouse
+	  Secondary during a charge: a pump fake. The throw is cancelled; the
+	                       defenders saw the same windup as a real throw.
+	  WASD                 step the free foot around your planted pivot
+	                       (double-tap to lunge); stepping out and bending
+	                       the throw are the same keys, as in the real sport
+
+	You can throw during the catch skid and in the air (catch it in a jump or
+	a dive and release before you land): those releases aim exactly where you
+	point but cost spin, since there is no planted pivot.
 
 	The match disc mirrors the server's canThrow: no charge or release outside
 	the Pull (puller) and Live phases (the starter holds the disc through the
@@ -33329,21 +33483,15 @@ return TechFeedback
 	then (CatchController ignores Primary during that window, so no Reach).
 
 	Release: the disc leaves from your pivot foot P (the server's UBPivot, or
-	the foot your sim just planted) plus your step (ThrowModel). The Throw remote carries the inputs plus
-	step, pivot, rootPos and releaseT, so ThrowService validates and launches
-	from the same place at the same moment; the flight is predicted locally at
-	once from the same parameters. Fake -> Sold Pivot Swing -> release inside
-	ComboEvaluator's break window scores a "Break"
-	(MovementController.addTech).
-
-	Previews, the lead assist and the predicted throw all use the held disc's
-	own Wind attribute (what the server flies it with), never UBState Wind.
+	the foot you just planted) plus your step (ThrowModel). The Throw remote
+	carries the inputs plus step, pivot, rootPos and releaseT, so ThrowService
+	validates and launches from the same place at the same moment; the flight
+	is predicted locally at once from the same parameters.
 
 	The preview arc shows the first part of the flight (how much depends on
-	the mode: full in training, half in Mini, about a third in Normal, a
-	fifth in ranked). When the mode shows at least MARK_PREVIEW of it, the arc
-	turns red from where it would cross a visible marker's hands (the same
-	CatchGeometry box the server tests).
+	the mode: full in training, less in matches). When the mode shows at
+	least MARK_PREVIEW of it, the arc turns red from where it would cross a
+	visible marker's hands (the same CatchGeometry box the server tests).
 ]]
 
 local Players = game:GetService("Players")
@@ -33356,7 +33504,6 @@ local TechConfig = require(Shared.Config.Tech)
 local MovementConfig = require(Shared.Config.Movement)
 local DiscPhysics = require(Shared.Disc.DiscPhysics)
 local ThrowModel = require(Shared.Disc.ThrowModel)
-local Solver = require(Shared.Disc.Solver)
 local CatchGeometry = require(Shared.Rules.CatchGeometry)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
 local Actors = require(Shared.Actors)
@@ -33379,30 +33526,19 @@ local controllers: any
 local player = Players.LocalPlayer
 
 local AIM_OFFSET = math.rad(7) -- the camera looks slightly down over the shoulder
-local BANK_STEPS = 3
 local MARK_PREVIEW = 0.35 -- modes showing at least this much of the arc show the mark
 local MARKER_RANGE = 14 -- markers this close to P are drawn / tested
-local FAKE_SIDE_INPUT = 0.3 -- lateral input needed for the fake to step to a side
 
 local state = {
-	throwType = "Backhand",
-	bankStep = 0,
-	low = false,
+	throwType = "Backhand", -- what a release right now would be (ThrowModel.shape)
+	bank = 0, -- ... and its bend (-1..1 of BankRange, right-handed frame)
+	side = 0, -- the sideways input behind it (-1 A .. +1 D)
 	charging = false,
 	chargeStart = 0,
+	aiming = false, -- Secondary held (not charging): the aim view
 	releasedAt = -math.huge,
 	releasedFlight = -1,
-	leadLock = false,
-	leadTarget = nil :: number?,
-	leadSolution = nil :: Solver.Solution?,
-	lastSolve = 0,
 	lastFake = -math.huge,
-	fakedType = "", -- the throw a fake sold (Fake Switch: the other one)
-	chargeButton = "Primary", -- the button holding the charge (tech engine)
-	-- edge and launch angle on the mouse while charging (tech engine)
-	shaping = false,
-	edge = 0, -- -1..1 of BankRange
-	launchDeg = 8,
 	heldFolder = nil :: Configuration?,
 	holds = 0, -- possessions this session (key hints show for the first few)
 	previewBlocked = false,
@@ -33442,23 +33578,11 @@ function ThrowController.chargeFraction(): (number, string)
 		return 0, "Idle"
 	end
 	local hold = os.clock() - state.chargeStart
-	local info = ThrowModel.typeInfo(state.throwType)
-	local t = hold * (info.ChargeMult or 1)
-	return math.min(t / T.ChargeTime, 1.6), ThrowModel.chargePhase(hold, state.throwType)
+	return math.min(hold / T.ChargeTime, 1.6), ThrowModel.chargePhase(hold, state.throwType)
 end
 
 local function airborne(): boolean
 	return not controllers.MovementController.isGrounded()
-end
-
-local function releaseHeight(): string
-	if state.low then
-		return "Low"
-	end
-	if airborne() then
-		return "High"
-	end
-	return "Mid"
 end
 
 local function leftHanded(): boolean
@@ -33513,68 +33637,38 @@ local function yawToward(from: Vector3, to: Vector3, fallback: number): number
 	return math.atan2(-d.X, -d.Z)
 end
 
--- Edge past this many degrees turns a backhand / forehand into a Blade.
-local BLADE_EDGE = 35
-local EDGE_RATE = 2.2 -- of the full edge per second while Q / E is held
-local shapedAt = os.clock()
-
--- The charge ended.
-local function stopShaping()
-	state.shaping = false
+-- The aim elevation the throw uses (the camera's, plus the shoulder offset).
+local function aimPitch(): number
+	return controllers.CameraController.getPitch() + AIM_OFFSET
 end
 
--- While charging on the tech engine you keep aiming with the mouse (the
--- launch angle follows the camera, -5..35 deg); hold Cut (Q) / Dive (E) to
--- tilt the edge left / right (docs/tech-spec.md 26). The bank pip shows it.
-local function shapeThrow()
-	local now0 = os.clock()
-	local dt = math.min(now0 - shapedAt, 0.1)
-	shapedAt = now0
-	if not state.shaping then
-		return
-	end
-	state.launchDeg = math.clamp(
-		math.deg(controllers.CameraController.getPitch() + AIM_OFFSET),
-		TechConfig.LAUNCH_ANGLE[1],
-		TechConfig.LAUNCH_ANGLE[2]
-	)
+-- Reads what a release right now would be from your inputs: the sideways
+-- input (A / D) and how high you aim. The windup pose, the HUD and the
+-- preview all follow it live; changing side mid-charge never restarts it.
+local function updateShape()
 	local input = controllers.InputController
-	local dir = (if input.isHeld("Dive") then 1 else 0) - (if input.isHeld("Cut") then 1 else 0)
-	if dir ~= 0 then
-		state.edge = math.clamp(state.edge + dir * EDGE_RATE * dt, -1, 1)
-		state.bankStep = math.clamp(math.floor(state.edge * BANK_STEPS + 0.5), -BANK_STEPS, BANK_STEPS)
+	local side = if input.menuOpen() then 0 else input.rawMove().X
+	local hold = if state.charging then os.clock() - state.chargeStart else 0
+	local kind, bank = ThrowModel.shape(side, aimPitch(), hold, leftHanded())
+	state.side = side
+	state.bank = bank
+	if kind ~= state.throwType then
+		state.throwType = kind
+		if state.charging then
+			Net.event("ThrowCharge"):FireServer(kind, true)
+		end
 		ThrowController.Changed:Fire()
 	end
 end
 
--- The throw type that actually leaves: a hard edge is a Blade.
-local function releaseType(): string
-	if state.shaping and (state.throwType == "Backhand" or state.throwType == "Forehand") then
-		if math.abs(state.edge) * T.BankRange > BLADE_EDGE then
-			return "Blade"
-		end
-	end
-	return state.throwType
-end
-
 local function currentParams(holdTime: number): ThrowModel.Params
 	local yaw = controllers.CameraController.getYaw()
-	local pitch = controllers.CameraController.getPitch() + AIM_OFFSET
-	if state.shaping then
-		pitch = math.rad(state.launchDeg)
-	end
-	local sol = state.leadSolution
-	local locked = state.leadLock and sol ~= nil
-	if locked and sol then
-		yaw = sol.params.yaw
-		pitch = sol.params.pitch
-	end
+	local pitch = aimPitch()
 	local mc = controllers.MovementController
-	local sim = mc.sim()
-	local height = releaseHeight()
 	local pivot = serverPivot()
 	local root = mc.root()
-	if not locked and root then
+	local step = if pivot then mc.step() else nil
+	if root then
 		-- converge on the crosshair (the release point depends on the yaw,
 		-- so two passes settle it)
 		local aim = crosshairPoint()
@@ -33586,29 +33680,28 @@ local function currentParams(holdTime: number): ThrowModel.Params
 				pitch = pitch,
 				holdTime = holdTime,
 				bank = 0,
-				height = height,
-				offBalance = false,
-				groundThrow = false,
+				height = "Mid",
 				leftHanded = leftHanded(),
 				pivot = pivot,
-				step = if pivot then mc.step() else nil,
+				step = step,
 			}
 			yaw = yawToward(ThrowModel.releasePosition(probe, root.Position), aim, camYaw)
 		end
 	end
+	local body = mc.techState().state
 	return {
-		throwType = releaseType(),
+		throwType = state.throwType,
 		yaw = yaw,
 		pitch = pitch,
 		holdTime = holdTime,
-		bank = if state.shaping then state.edge else state.bankStep / BANK_STEPS,
-		height = height,
-		offBalance = airborne() and height ~= "High",
-		groundThrow = sim.mode == "DiveSlide" or sim.mode == "Recover",
+		bank = state.bank,
+		height = "Mid",
+		offBalance = false,
+		-- face down after a layout catch: a weak throw from the ground
+		groundThrow = body == "Downed" or body == "Recovering",
 		leftHanded = leftHanded(),
 		pivot = pivot,
-		step = if pivot then mc.step() else nil,
-		swinging = pivot ~= nil and sim.swingUntil > sim.now,
+		step = step,
 	}
 end
 
@@ -33681,15 +33774,6 @@ end
 
 function ThrowController.hud(): { [string]: any }
 	local fraction, phase = ThrowController.chargeFraction()
-	local idealPower: number? = nil
-	local sol = state.leadSolution
-	if state.leadLock and sol then
-		idealPower = math.clamp(
-			sol.params.holdTime / T.ChargeTime * (ThrowModel.typeInfo(state.throwType).ChargeMult or 1),
-			0,
-			1
-		)
-	end
 	local holding = ThrowController.isHolding()
 	-- the step gauge, in the throw frame (x = right, y = forward, studs)
 	local stepX, stepY = 0, 0
@@ -33727,14 +33811,11 @@ function ThrowController.hud(): { [string]: any }
 	return {
 		holding = holding,
 		throwType = state.throwType,
-		bank = state.bankStep,
-		bankSteps = BANK_STEPS,
-		height = releaseHeight(),
+		bank = state.bank, -- -1..1 of BankRange
+		aiming = state.aiming,
+		airborne = airborne(),
 		charge = fraction,
 		phase = phase,
-		leadLock = state.leadLock,
-		leadName = if state.leadTarget then Actors.nameOf(state.leadTarget) else nil,
-		idealPower = idealPower,
 		holds = state.holds,
 		pivoted = pivot ~= nil,
 		stepX = stepX,
@@ -33746,37 +33827,6 @@ function ThrowController.hud(): { [string]: any }
 		leftHanded = leftHanded(),
 		blocked = state.previewBlocked,
 	}
-end
-
-local function setType(t: string)
-	if (DiscConfig.Types :: any)[t] and t ~= state.throwType then
-		state.throwType = t
-		if state.charging then
-			-- switching mid-charge restarts the windup (no type-switch exploits)
-			state.chargeStart = os.clock()
-			Net.event("ThrowCharge"):FireServer(t)
-		end
-		ThrowController.Changed:Fire()
-	end
-end
-
-local function cycleType(delta: number)
-	local order = DiscConfig.TypeOrder
-	local i = table.find(order, state.throwType) or 1
-	i = ((i - 1 + delta) % #order) + 1
-	setType(order[i])
-end
-
--- The charge is lost (landing from the hop): tell the server too, so nobody
--- keeps seeing (or reacting to) a windup that will never be thrown.
-local function cancelCharge()
-	if state.charging then
-		state.charging = false
-		stopShaping()
-		Net.event("ThrowCharge"):FireServer(false)
-		ThrowController.Changed:Fire()
-		ThrowController.ChargeLost:Fire()
-	end
 end
 
 -- First time (into the flight) the release crosses a visible marker's hands.
@@ -33832,23 +33882,21 @@ local function release()
 	local folder = ThrowController.heldFolder()
 	local root = controllers.MovementController.root()
 	if not folder or not root then
-		stopShaping()
 		return
 	end
 	local refusal = throwRefusal(folder)
 	if refusal then
 		-- the server would refuse it silently: say so and drop the windup
-		stopShaping()
 		Net.event("ThrowCharge"):FireServer(false)
 		refuseThrow(refusal)
 		ThrowController.Changed:Fire()
 		return
 	end
 	local hold = os.clock() - state.chargeStart
-	shapeThrow() -- the last frame of Q / E counts
+	state.charging = true -- (for the shape's charge share)
+	updateShape() -- what you hold on the release frame is what counts
+	state.charging = false
 	local params = currentParams(hold)
-	stopShaping()
-	params.perfectCatch = controllers.CatchController.hotHands() or nil
 	params.tempest = Abilities.activeOn(player.Character, "TempestThrow", now()) or nil
 	if params.tempest then
 		controllers.TechFeedback.play("TEMPEST", "Perfect")
@@ -33870,9 +33918,7 @@ local function release()
 		groundThrow = params.groundThrow,
 		step = params.step,
 		pivot = params.pivot,
-		swinging = params.swinging,
 		pinch = params.pinch,
-		perfectCatch = params.perfectCatch,
 		tempest = params.tempest,
 		releaseT = releaseT,
 		rootPos = root.Position,
@@ -33905,93 +33951,24 @@ local function release()
 	ThrowController.Changed:Fire()
 end
 
--- The fake steps toward the side you hold (-1 screen-left, +1 right, 0 none).
-local function fakeSide(): number
-	local move = controllers.InputController.moveVector()
-	local _, right = ThrowModel.basis(controllers.CameraController.getYaw())
-	local lateral = move:Dot(right)
-	if lateral > FAKE_SIDE_INPUT then
-		return 1
-	elseif lateral < -FAKE_SIDE_INPUT then
-		return -1
-	end
-	return 0
-end
-
+-- The pump fake: Secondary during a charge. The throw is cancelled; the
+-- windup everyone saw was a real one. It leans toward the side you hold.
 local function fake()
-	if os.clock() - state.lastFake < T.FakeCooldown then
+	if not state.charging or os.clock() - state.lastFake < T.FakeCooldown then
 		return
 	end
 	state.lastFake = os.clock()
 	state.charging = false
-	stopShaping()
-	local side = fakeSide()
-	controllers.MovementController.fakeStep(side)
+	local side = if state.side > T.BendInput then 1 elseif state.side < -T.BendInput then -1 else 0
 	Net.event("Fake"):FireServer(state.throwType, side)
 	local c = player.Character
 	if c then
 		c:SetAttribute("UB_LocalFake", now())
 		c:SetAttribute("UB_LocalWindupType", state.throwType)
 	end
+	controllers.AudioController.play("Fake", 0.08)
 	ThrowController.Faked:Fire()
-end
-
--- picks the teammate closest to the crosshair and solves a lead pass
-local function updateLead()
-	if not state.leadLock then
-		return
-	end
-	local root = controllers.MovementController.root()
-	local c = player.Character
-	if not root or not c then
-		return
-	end
-	local myTeam = c:GetAttribute("UBTeam")
-	local aim = controllers.CameraController.getAimDirection()
-	local best, bestDot = nil, math.cos(math.rad(35))
-	for _, model in Actors.characters() do
-		if model ~= c and (model:GetAttribute("UBTeam") == myTeam or myTeam == "N") then
-			local r = model:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if r then
-				local dir = (r.Position - root.Position)
-				if dir.Magnitude > 6 then
-					local d = aim:Dot(dir.Unit)
-					if d > bestDot then
-						best, bestDot = model, d
-					end
-				end
-			end
-		end
-	end
-	local id = if best then Actors.idOf(best) else nil
-	state.leadTarget = id
-	if not best or os.clock() - state.lastSolve < 0.2 then
-		if not best then
-			state.leadSolution = nil
-		end
-		return
-	end
-	state.lastSolve = os.clock()
-	local r = (best :: Model):FindFirstChild("HumanoidRootPart") :: BasePart
-	local wind = windOf(state.heldFolder)
-	local pivot = serverPivot()
-	local sol = Solver.solve({
-		rootPos = root.Position,
-		throwerVel = root.AssemblyLinearVelocity,
-		throwType = state.throwType,
-		bank = state.bankStep / BANK_STEPS,
-		height = releaseHeight(),
-		target = r.Position + Vector3.new(0, 1, 0),
-		targetVel = VecMath.flat(r.AssemblyLinearVelocity),
-		wind = wind,
-		groundY = groundYOf(state.heldFolder),
-		coarse = true,
-		leftHanded = leftHanded(),
-		pivot = pivot,
-		step = if pivot then controllers.MovementController.step() else nil,
-	})
-	-- only offer a lead when a catchable pass exists
-	state.leadSolution = if sol and sol.miss <= 4 then sol else nil
+	ThrowController.Changed:Fire()
 end
 
 local function previewFraction(folder: Configuration): number
@@ -34023,10 +34000,8 @@ local function drawPreview(folder: Configuration)
 	local hold: number
 	if state.charging then
 		hold = os.clock() - state.chargeStart
-	elseif state.leadLock and state.leadSolution then
-		hold = (state.leadSolution :: Solver.Solution).params.holdTime
 	else
-		hold = T.ChargeTime * 0.6 / (ThrowModel.typeInfo(state.throwType).ChargeMult or 1)
+		hold = T.ChargeTime * T.SnapPoint -- not charging: what a Snap would do
 	end
 	local params = currentParams(hold)
 	local launch = ThrowModel.launch(params, root.Position, root.AssemblyLinearVelocity)
@@ -34064,22 +34039,27 @@ local function drawPreview(folder: Configuration)
 	end
 end
 
+local function setAiming(on: boolean)
+	if on ~= state.aiming then
+		state.aiming = on
+		controllers.CameraController.setAim(on)
+		ThrowController.Changed:Fire()
+	end
+end
+
 local function beginCharge()
 	local refusal = throwRefusal(ThrowController.heldFolder())
 	if refusal then
 		refuseThrow(refusal)
 		return
 	end
+	if os.clock() - state.lastFake < T.FakeRecovery then
+		return -- still recovering from the fake
+	end
 	state.charging = true
 	state.chargeStart = os.clock()
+	updateShape()
 	Net.event("ThrowCharge"):FireServer(state.throwType)
-	if controllers.MovementController.engine() == "Tech" then
-		-- Q / E tilt the edge while charging; the mouse keeps aiming
-		state.shaping = true
-		state.edge = state.bankStep / BANK_STEPS
-		shapedAt = os.clock()
-		shapeThrow()
-	end
 	if controllers.CatchController.hotHands() then
 		-- Hot Hands: a Perfect Catch skips the charge, out at 70 % at once
 		state.chargeStart = os.clock() - T.ChargeTime * TechConfig.HOT_HANDS_POWER
@@ -34105,9 +34085,7 @@ local function step()
 			state.pendingCharge = false
 		else
 			state.charging = false
-			stopShaping()
-			state.leadSolution = nil
-			state.low = false
+			setAiming(false)
 		end
 		ThrowController.Changed:Fire()
 	end
@@ -34115,8 +34093,7 @@ local function step()
 		hideDots()
 		return
 	end
-	shapeThrow()
-	updateLead()
+	updateShape()
 	drawPreview(folder)
 	local c = player.Character
 	if c then
@@ -34153,91 +34130,27 @@ function ThrowController.Start()
 			if action == "Primary" and controllers.MovementController.holdingDisc() then
 				-- caught, but the server has not confirmed yet: charge on confirm
 				state.pendingCharge = true
-			elseif action == "Celebrate" then
-				Net.event("Action"):FireServer("Celebrate", nil)
 			end
 			return
 		end
-		-- Cut / Dive / Jump while holding are swings and the hop (MovementController)
-		if controllers.MovementController.engine() == "Tech" then
-			-- the tech-spec throws: LMB backhand (F: scoober), RMB forehand
-			-- (F: hammer), the Slide key fakes while charging
-			local overhead = input.isHeld("Overhead")
-			if action == "Primary" or action == "Secondary" then
-				if state.charging then
-					return
-				end
-				local kind = if action == "Primary"
-					then (if overhead then "Scoober" else "Backhand")
-					else (if overhead then "Hammer" else "Forehand")
-				local sinceFake = os.clock() - state.lastFake
-				local switch = sinceFake <= TechConfig.FAKE_SWITCH_WINDOW and kind ~= state.fakedType
-				if sinceFake < TechConfig.FAKE_RECOVERY and not switch then
-					return -- still recovering from the fake
-				end
-				state.chargeButton = action
-				setType(kind)
-				beginCharge()
-				if switch then
-					controllers.TechFeedback.play("Fake Switch", "Perfect")
-					controllers.MovementController.addTech("FakeSwitch", "Perfect", Vector3.zero)
-				end
-				return
-			elseif action == "Slide" and state.charging then
-				state.fakedType = state.throwType
-				fake()
-				return
-			end
-		end
 		if action == "Primary" then
-			beginCharge()
-		elseif action == "Secondary" then
-			fake()
-		elseif action == "BankLeft" then
-			state.bankStep = math.max(-BANK_STEPS, state.bankStep - 1)
-			ThrowController.Changed:Fire()
-		elseif action == "BankRight" then
-			state.bankStep = math.min(BANK_STEPS, state.bankStep + 1)
-			ThrowController.Changed:Fire()
-		elseif action == "TypeNext" then
-			cycleType(1)
-		elseif action == "TypePrev" then
-			cycleType(-1)
-		elseif string.sub(action, 1, 4) == "Type" then
-			local n = tonumber(string.sub(action, 5))
-			if n and DiscConfig.TypeOrder[n] then
-				setType(DiscConfig.TypeOrder[n])
+			if not state.charging then
+				beginCharge()
 			end
-		elseif action == "Slide" then
-			state.low = true
-			ThrowController.Changed:Fire()
-		elseif action == "LeadLock" then
-			state.leadLock = not state.leadLock
-			state.leadSolution = nil
-			ThrowController.Changed:Fire()
+		elseif action == "Secondary" then
+			if state.charging then
+				fake()
+			else
+				setAiming(true)
+			end
 		end
 	end)
 	input.ActionEnded:Connect(function(action)
-		if action == "Primary" or (action == "Secondary" and state.chargeButton == "Secondary") then
-			if action ~= state.chargeButton and controllers.MovementController.engine() == "Tech" then
-				return -- the other button: not the throw being charged
-			end
+		if action == "Primary" then
 			state.pendingCharge = false
 			release()
-		elseif action == "Slide" then
-			state.low = false
-			ThrowController.Changed:Fire()
-		end
-	end)
-	input.Wheel:Connect(function(delta)
-		if ThrowController.isHolding() then
-			cycleType(if delta > 0 then -1 else 1)
-		end
-	end)
-	controllers.MovementController.Feedback:Connect(function(fb)
-		-- landing from the hop loses the charge
-		if fb.kind == "HopLanded" then
-			cancelCharge()
+		elseif action == "Secondary" then
+			setAiming(false)
 		end
 	end)
 	RunService:BindToRenderStep("UBThrow", Enum.RenderPriority.Camera.Value + 4, step)
@@ -36173,6 +36086,18 @@ local function techGuide(): { string }
 			jump
 		),
 		string.format("WALL KICK — %s right after touching a wall in the air.", jump),
+		string.format(
+			"THROW — hold %s to charge, release to throw at the crosshair. Releasing on the gold line is a Perfect release; holding too long overcharges.",
+			k("Primary")
+		),
+		"BEND IT — hold A at the release for a backhand that curves left, D for a forehand that curves right. Nothing held is a flat backhand.",
+		"HAMMER — aim well above the horizon with a strong charge: the disc goes up and over the defence.",
+		string.format(
+			"AIM / FAKE — hold %s for a tighter, steadier view. Press it during a charge to cancel the throw: a pump fake.",
+			k("Secondary")
+		),
+		"WITH THE DISC — you skid to a stop, then only your free foot moves (WASD around the pivot; double-tap to lunge). Throw before the stall count ends.",
+		"AIR THROW — catch it in a jump or a dive and release before you land. Legal, and deadly.",
 		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end
@@ -37610,9 +37535,9 @@ function Mobile.build(parent: ScreenGui, c: any)
 	-- { name / action, position, size, label without disc, label with disc }
 	local defs: { { any } } = {
 		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
-		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "HOP" },
+		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "" },
 		{ "Burst", UDim2.fromOffset(80, 175), 60, "SPRINT", "" },
-		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "FAKE" },
+		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "AIM\nFAKE" },
 	}
 	local labelled: { { any } } = {}
 	for _, def in defs do
@@ -37634,12 +37559,8 @@ function Mobile.build(parent: ScreenGui, c: any)
 		Theme.list(8, true),
 	})
 	refs.discRow = discRow
-	local discDefs = {
-		{ "BankLeft", "< BANK" },
-		{ "BankRight", "BANK >" },
-		{ "TypeNext", "TYPE" },
-		{ "LeadLock", "LEAD" },
-	}
+	-- (no extra disc buttons: the stick bends the throw, THROW and FAKE do the rest)
+	local discDefs: { { string } } = {}
 	refs.discActions = {}
 	for i, def in discDefs do
 		table.insert(refs.discActions, def[1])
@@ -38731,9 +38652,10 @@ return Theme
               <string name="Source"><![CDATA[--!strict
 --[[
 	ThrowHud — the thrower's panel, kept small so the field stays readable:
-	  * throw type, release height chip and bank
-	  * type chips (1-5) and the power meter with its Perfect band (and the
-	    Lead assist's ideal-power mark)
+	  * the throw a release right now would be (it follows what you hold: A,
+	    D, aiming up), the three throw chips and the bend
+	  * the power meter: the pale snap zone, the gold Snap line (a Perfect
+	    release), red above it (overcharge)
 	  * the step gauge: a top-down view around your pivot foot (up = where
 	    you aim): the step range, your free foot, the nearest marker's hand
 	    box (red when the preview says the throw would be blocked) and which
@@ -38741,7 +38663,7 @@ return Theme
 	  * key hints and the throw description only for your first HINT_HOLDS
 	    possessions of the session
 	Release text appears only when it matters: a Perfect release, an
-	overcharge, a hand block, or a hop the server did not see (released Mid).
+	overcharge or a hand block.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -38855,9 +38777,7 @@ local function onFeedback(kind: any, payload: any)
 	end
 	local text, color = nil, C.Text
 	if payload.blocked then
-		text, color = "HAND BLOCKED — step out, fake or change height", C.Bad
-	elseif payload.heightAsked == "High" and payload.heightUsed ~= "High" then
-		text, color = "RELEASED MID — the hop was not seen", C.Sloppy
+		text, color = "HAND BLOCKED — step out, fake or bend it round", C.Bad
 	elseif payload.quality == "Perfect" then
 		text, color = "SNAP RELEASE", C.Perfect
 	elseif payload.quality == "Over" then
@@ -38909,13 +38829,14 @@ function ThrowHud.build(parent: ScreenGui, c: any)
 		Theme.list(3, true),
 	})
 	refs.typeChips = {}
-	for i, id in DiscConfig.TypeOrder do
+	local CHIP_KEY = { Backhand = "A", Forehand = "D", Hammer = "UP" }
+	for i, id in DiscConfig.PlayerTypes do
 		local info = (DiscConfig.Types :: any)[id]
 		local chip = make("TextLabel", {
 			BackgroundColor3 = C.PanelLight,
 			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(37, 20),
-			Text = i .. " " .. info.Short,
+			Size = UDim2.fromOffset(62, 20),
+			Text = CHIP_KEY[id] .. " " .. info.Short,
 			TextSize = 10,
 			Font = Theme.Fonts.Bold,
 			TextColor3 = C.Muted,
@@ -39074,20 +38995,15 @@ end
 
 local function hintText(scheme: string): string
 	if scheme == "Gamepad" then
-		return "LS step · X swing · LT fake · B low · A hop · RT throw · D-pad bank / type · R3 lead"
+		return "RT hold and release: throw · stick left / right at release: bend · LT aim, LT while charging: fake"
 	elseif scheme == "Touch" then
-		return "Stick: step around your pivot · hold THROW · FAKE · bank and type buttons"
+		return "Hold THROW and let go · stick left / right bends it · FAKE while charging"
 	end
 	return string.format(
-		"WASD step · %s/%s swing · %s fake · %s low · %s hop · %s/%s bank · wheel type · %s lead",
-		key("Cut", "Q"),
-		key("Dive", "E"),
+		"Hold %s, release to throw · A / D at release bends it · aim high + strong = hammer · %s aims, %s while charging fakes",
+		key("Primary", "LMB"),
 		key("Secondary", "RMB"),
-		key("Slide", "C"),
-		key("Jump", "SPACE"),
-		key("BankLeft", "Z"),
-		key("BankRight", "X"),
-		key("LeadLock", "R")
+		key("Secondary", "RMB")
 	)
 end
 
@@ -39168,15 +39084,16 @@ function ThrowHud.update()
 		chip.BackgroundColor3 = if selected then C.Accent else C.PanelLight
 		chip.TextColor3 = if selected then Color3.new(0, 0, 0) else C.Muted
 	end
-	refs.height.Text = string.upper(h.height)
-	refs.height.TextColor3 = if h.height == "High" then C.Gold elseif h.height == "Low" then C.Good else C.Accent
-	local bankDeg = h.bank / h.bankSteps * DiscConfig.Throw.BankRange
-	refs.bankDisc.Rotation = bankDeg
-	refs.bankText.Text = if h.bank == 0
-		then "FLAT"
-		elseif h.bank > 0 then ("BANK R" .. h.bank)
-		else ("BANK L" .. -h.bank)
-	refs.lead.Text = if h.leadLock then ("LEAD: " .. (h.leadName or "aim at a teammate")) else ""
+	refs.height.Text = if h.airborne then "AIR" elseif h.aiming then "AIM" elseif h.pivoted then "SET" else "RUN"
+	refs.height.TextColor3 = if h.airborne then C.Gold elseif h.aiming then C.Good else C.Accent
+	local bend = h.bank * (if h.leftHanded then -1 else 1) -- screen side
+	refs.bankDisc.Rotation = bend * DiscConfig.Throw.BankRange
+	refs.bankText.Text = if h.throwType == "Hammer"
+		then "OVER THE TOP"
+		elseif bend == 0 then "FLAT"
+		elseif bend > 0 then "BENDS RIGHT"
+		else "BENDS LEFT"
+	refs.lead.Text = ""
 	if showHints then
 		refs.desc.Text = info.Description
 		refs.keys.Text = hintText(controllers.InputController.scheme())
@@ -39190,12 +39107,7 @@ function ThrowHud.update()
 		elseif h.phase == "Over" then C.Bad
 		elseif h.phase == "Zone" then C.Accent
 		else Color3.new(1, 1, 1)
-	if h.idealPower then
-		refs.ideal.Visible = true
-		refs.ideal.Position = UDim2.new(0, -4, 1 - h.idealPower / refs.meterScale, 0)
-	else
-		refs.ideal.Visible = false
-	end
+	refs.ideal.Visible = false
 end
 
 return ThrowHud

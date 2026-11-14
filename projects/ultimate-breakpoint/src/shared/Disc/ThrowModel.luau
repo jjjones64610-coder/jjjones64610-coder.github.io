@@ -3,7 +3,7 @@
 	ThrowModel — turns a player's throw inputs into a disc launch state.
 
 	Inputs that matter (all deterministic, no hidden accuracy roll):
-	  throw type      Backhand / Forehand / Hammer / Scoober / Blade
+	  throw type      Backhand / Forehand / Hammer for players (shape()); Scoober / Blade for bots
 	  aim yaw/pitch   from the camera
 	  hold time       charge -> power; releasing in the Perfect window at full
 	                  charge gives +speed and +spin; holding too long (Over)
@@ -54,7 +54,6 @@ export type Params = {
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
-	perfectCatch: boolean?, -- right after a Perfect Catch (halves the run-through cone)
 	tempest: boolean?, -- Tempest Throw is armed (Config/Abilities): faster, more spin
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
@@ -145,6 +144,50 @@ function ThrowModel.chargePhase(holdTime: number, throwType: string): string
 	return "Charging"
 end
 
+-- THROW SHAPE: what the thrower is doing at the release picks the throw
+-- (Config/Tuning Disc.Throw). `side` is the sideways input in the aim frame
+-- (-1 = A / screen-left .. +1 = D / right), `pitch` the aim elevation in
+-- radians and `holdTime` the charge so far. Returns the throw type and its
+-- bank (-1..1 of BankRange), for a right- or left-handed thrower:
+--   aiming up past HammerPitch with the charge past HammerFill: a Hammer
+--   A: the throw from your left side, bending left; D: from your right,
+--   bending right; neither: a flat backhand
+function ThrowModel.shape(side: number, pitch: number, holdTime: number, leftHanded: boolean?): (string, number)
+	local fill = math.max(0, holdTime) / T.ChargeTime
+	if math.deg(pitch) >= T.HammerPitch and fill >= T.HammerFill then
+		return "Hammer", 0
+	end
+	if side ~= side or math.abs(side) < T.BendInput then
+		return "Backhand", 0
+	end
+	-- a right-hander's left side is the backhand; a left-hander's the forehand
+	local left = side < 0
+	local backhand = left ~= (leftHanded == true)
+	-- params.bank is in the right-handed frame (launch mirrors it)
+	local bank = if left then -T.BendBank else T.BendBank
+	if leftHanded then
+		bank = -bank
+	end
+	return if backhand then "Backhand" else "Forehand", bank
+end
+
+-- Server check of a player's throw shape: only the types shape() can make,
+-- a Hammer only with its aim and charge, and no more bank than a bend.
+function ThrowModel.legalShape(p: Params)
+	if not table.find(DiscConfig.PlayerTypes, p.throwType) then
+		p.throwType = "Backhand"
+	end
+	if p.throwType == "Hammer" then
+		local fill = p.holdTime / T.ChargeTime
+		if math.deg(p.pitch) < T.HammerPitch - 1 or fill < T.HammerFill - 0.05 then
+			p.throwType = "Backhand"
+		end
+		p.bank = 0
+	else
+		p.bank = math.clamp(p.bank, -T.BendBank, T.BendBank)
+	end
+end
+
 -- Clamps any value into a legal step for aim `yaw`: a flat Vector3 with
 -- |step| <= StepRadius and its forward part in [-BackMax, ForwardMax] * R
 -- (the same limits MovementSim uses). Junk, NaN or infinity -> zero.
@@ -230,7 +273,6 @@ function ThrowModel.sanitize(raw: any): Params?
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
-		perfectCatch = raw.perfectCatch == true,
 		tempest = raw.tempest == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
@@ -343,20 +385,10 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 		spinFactor *= Abilities.TempestSpin
 	end
 
-	-- Run-Through Release (docs/tech-spec.md 29): released on the move (no
-	-- pivot yet), the aim cone widens 1 degree per RUN_THROUGH_CONE studs/s
-	-- of speed (half after a Perfect Catch). The deviation is a fixed hash of
-	-- the release time, so the client and the server agree.
+	-- A release on the move (the catch skid, or in the air) aims exactly
+	-- where you point: it costs spin (MovingSpinPenalty) and carries some of
+	-- your speed, never accuracy.
 	local yaw = p.yaw
-	if not pivoting and not p.groundThrow then
-		local flat = Vector3.new(throwerVel.X, 0, throwerVel.Z).Magnitude
-		if flat == flat and flat > 1 then
-			local cone = flat / TechConfig.RUN_THROUGH_CONE * (if p.perfectCatch then 0.5 else 1)
-			local seed = (p.releaseT or 0) * 12.9898
-			local noise = (math.sin(seed) * 43758.5453) % 1 * 2 - 1
-			yaw += math.rad(cone * noise)
-		end
-	end
 	local forward, right = ThrowModel.basis(yaw)
 	local dir = forward * math.cos(pitch) + UP * math.sin(pitch)
 

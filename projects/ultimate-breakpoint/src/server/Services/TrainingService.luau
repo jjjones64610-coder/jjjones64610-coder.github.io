@@ -1738,6 +1738,79 @@ DRILLS.ResetLab = {
 -- session lifecycle
 ---------------------------------------------------------------------------
 
+---------------------------------------------------------------------------
+-- Test field (Arena/TestFieldBuilder): free movement and free throws
+---------------------------------------------------------------------------
+
+local TEST_RETURN = 3.5 -- s a thrown disc lies where it landed before it comes back
+local TEST_AHEAD = 7 -- studs in front of you it comes back to
+
+local function testFieldDrop(s: Session)
+	local r = root(s)
+	if not r then
+		return
+	end
+	local look = flat(r.CFrame.LookVector)
+	local ahead = if look.Magnitude > 0.1 then look.Unit else Vector3.new(0, 0, 1)
+	services.DiscService.placeOnGround(discFor(s), r.Position + ahead * TEST_AHEAD)
+	s.data.returnAt = nil
+end
+
+-- No goal and no score: a disc to pick up (Primary next to it) and throw.
+-- Every throw reports what left your hand and where it came down.
+DRILLS.TestField = {
+	start = function(s: Session)
+		testFieldDrop(s)
+		hud(s, "TEST FIELD", "Run, cut, jump, dive. The disc is in front of you: pick it up and throw.")
+	end,
+	onThrown = function(s: Session, _d: any, info: any)
+		s.data.throw = {
+			from = info.launch.releasePos,
+			yaw = info.params.yaw,
+			kind = info.params.throwType,
+			quality = info.launch.quality,
+			speed = info.launch.speed,
+		}
+		s.data.returnAt = nil
+	end,
+	onCaught = function(s: Session)
+		s.data.returnAt = nil
+	end,
+	onGrounded = function(s: Session, d: any, land: Vector3)
+		services.DiscService.placeOnGround(d, land)
+		s.data.returnAt = now() + TEST_RETURN
+		local th = s.data.throw
+		if not th then
+			return
+		end
+		s.data.throw = nil
+		local forward, right = ThrowModel.basis(th.yaw)
+		local off = flat(land - th.from)
+		local along, side = off:Dot(forward), off:Dot(right)
+		local curve = if math.abs(side) < 3
+			then "straight"
+			else string.format("%d %s", math.floor(math.abs(side) + 0.5), if side < 0 then "left" else "right")
+		hud(
+			s,
+			"TEST FIELD",
+			string.format(
+				"%s  ·  %s release  ·  %d studs  ·  %s",
+				string.upper(th.kind),
+				string.upper(th.quality),
+				math.floor(along + 0.5),
+				curve
+			)
+		)
+	end,
+	step = function(s: Session)
+		local at = s.data.returnAt
+		local d = s.disc
+		if at and d and now() >= at and d.mode == "Ground" then
+			testFieldDrop(s)
+		end
+	end,
+}
+
 function stopDrill(actor: any)
 	local s = sessions[actor.id]
 	if not s then
@@ -1787,6 +1860,7 @@ function TrainingService.enterTestField(actor: any)
 	services.PlayerService.setFrozen(actor, false)
 	services.PlayerService.setLine(actor, nil, nil)
 	services.PlayerService.teleport(actor, testField.entry, { face = true })
+	TrainingService.startDrill(actor, "TestField")
 end
 
 function TrainingService.enter(actor: any)
@@ -1812,6 +1886,9 @@ function TrainingService.respawned(actor: any)
 	TrainingService.stopDrill(actor)
 	local at = if onTestField[actor.id] then testField.entry else layout.entry
 	services.PlayerService.teleport(actor, at, { face = true })
+	if onTestField[actor.id] then
+		TrainingService.startDrill(actor, "TestField")
+	end
 end
 
 function TrainingService.action(player: Player, kind: string, payload: any)

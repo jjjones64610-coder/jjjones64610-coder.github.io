@@ -234,7 +234,10 @@ local function prepare(actorId: number, raw: any, isBot: boolean): Prepared?
 	-- the air for longer than the replication lag (a fresh landing is fine)
 	local since = if track then track.airborneSince else nil
 	local seenAirborne = not grounded and since ~= nil and os.clock() - since > ping + AIR_LAG
-	p.offBalance = p.height ~= "High" and (p.offBalance == true or seenAirborne)
+	-- Players: catching in a jump or a dive and releasing before landing is
+	-- a legal, full-strength play (docs/CORE_DESIGN.md); with no planted
+	-- pivot it already costs spin. Only bots keep the off-balance cap.
+	p.offBalance = isBot and p.height ~= "High" and (p.offBalance == true or seenAirborne)
 	p.groundThrow = services.MovementService.isOnGroundAfterLayout(actorId)
 	if p.groundThrow then
 		p.height = "Mid"
@@ -314,12 +317,9 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 	end
 	chargeStart[actorId] = nil
 
-	-- the halved run-through cone needs a catch this player just made
-	if p.perfectCatch and not bot then
-		local track = services.MovementService.track(actorId)
-		if not track or os.clock() - track.lastCatchClock > TechConfig.HOT_HANDS_TIME + 0.6 then
-			p.perfectCatch = false
-		end
+	-- players can only throw what their inputs can shape
+	if not bot then
+		ThrowModel.legalShape(p)
 	end
 
 	-- a Pinch needs the feet to really be touching down: a touchdown the
@@ -468,7 +468,7 @@ function ThrowService.Init(s: any)
 end
 
 function ThrowService.Start()
-	Net.event("ThrowCharge").OnServerEvent:Connect(function(player, throwType)
+	Net.event("ThrowCharge").OnServerEvent:Connect(function(player, throwType, keep)
 		local actor = services.PlayerService.fromPlayer(player)
 		if not actor then
 			return
@@ -476,7 +476,12 @@ function ThrowService.Start()
 		if throwType == false then
 			ThrowService.endCharge(actor.id)
 		elseif type(throwType) == "string" and (DiscConfig.Types :: any)[throwType] then
-			ThrowService.beginCharge(actor.id, throwType)
+			if keep == true and chargeStart[actor.id] ~= nil then
+				-- the windup changed side mid-charge: same charge, new pose
+				setAttr(actor.id, "WindupType", throwType)
+			else
+				ThrowService.beginCharge(actor.id, throwType)
+			end
 		end
 	end)
 	Net.event("Fake").OnServerEvent:Connect(function(player, throwType, side)

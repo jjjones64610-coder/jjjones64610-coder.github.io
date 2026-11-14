@@ -136,6 +136,18 @@ local function techGuide(): { string }
 			jump
 		),
 		string.format("WALL KICK — %s right after touching a wall in the air.", jump),
+		string.format(
+			"THROW — hold %s to charge, release to throw at the crosshair. Releasing on the gold line is a Perfect release; holding too long overcharges.",
+			k("Primary")
+		),
+		"BEND IT — hold A at the release for a backhand that curves left, D for a forehand that curves right. Nothing held is a flat backhand.",
+		"HAMMER — aim well above the horizon with a strong charge: the disc goes up and over the defence.",
+		string.format(
+			"AIM / FAKE — hold %s for a tighter, steadier view. Press it during a charge to cancel the throw: a pump fake.",
+			k("Secondary")
+		),
+		"WITH THE DISC — you skid to a stop, then only your free foot moves (WASD around the pivot; double-tap to lunge). Throw before the stall count ends.",
+		"AIR THROW — catch it in a jump or a dive and release before you land. Legal, and deadly.",
 		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end

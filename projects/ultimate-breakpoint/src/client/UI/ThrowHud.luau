@@ -1,9 +1,10 @@
 --!strict
 --[[
 	ThrowHud — the thrower's panel, kept small so the field stays readable:
-	  * throw type, release height chip and bank
-	  * type chips (1-5) and the power meter with its Perfect band (and the
-	    Lead assist's ideal-power mark)
+	  * the throw a release right now would be (it follows what you hold: A,
+	    D, aiming up), the three throw chips and the bend
+	  * the power meter: the pale snap zone, the gold Snap line (a Perfect
+	    release), red above it (overcharge)
 	  * the step gauge: a top-down view around your pivot foot (up = where
 	    you aim): the step range, your free foot, the nearest marker's hand
 	    box (red when the preview says the throw would be blocked) and which
@@ -11,7 +12,7 @@
 	  * key hints and the throw description only for your first HINT_HOLDS
 	    possessions of the session
 	Release text appears only when it matters: a Perfect release, an
-	overcharge, a hand block, or a hop the server did not see (released Mid).
+	overcharge or a hand block.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -125,9 +126,7 @@ local function onFeedback(kind: any, payload: any)
 	end
 	local text, color = nil, C.Text
 	if payload.blocked then
-		text, color = "HAND BLOCKED — step out, fake or change height", C.Bad
-	elseif payload.heightAsked == "High" and payload.heightUsed ~= "High" then
-		text, color = "RELEASED MID — the hop was not seen", C.Sloppy
+		text, color = "HAND BLOCKED — step out, fake or bend it round", C.Bad
 	elseif payload.quality == "Perfect" then
 		text, color = "SNAP RELEASE", C.Perfect
 	elseif payload.quality == "Over" then
@@ -179,13 +178,14 @@ function ThrowHud.build(parent: ScreenGui, c: any)
 		Theme.list(3, true),
 	})
 	refs.typeChips = {}
-	for i, id in DiscConfig.TypeOrder do
+	local CHIP_KEY = { Backhand = "A", Forehand = "D", Hammer = "UP" }
+	for i, id in DiscConfig.PlayerTypes do
 		local info = (DiscConfig.Types :: any)[id]
 		local chip = make("TextLabel", {
 			BackgroundColor3 = C.PanelLight,
 			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(37, 20),
-			Text = i .. " " .. info.Short,
+			Size = UDim2.fromOffset(62, 20),
+			Text = CHIP_KEY[id] .. " " .. info.Short,
 			TextSize = 10,
 			Font = Theme.Fonts.Bold,
 			TextColor3 = C.Muted,
@@ -344,20 +344,15 @@ end
 
 local function hintText(scheme: string): string
 	if scheme == "Gamepad" then
-		return "LS step · X swing · LT fake · B low · A hop · RT throw · D-pad bank / type · R3 lead"
+		return "RT hold and release: throw · stick left / right at release: bend · LT aim, LT while charging: fake"
 	elseif scheme == "Touch" then
-		return "Stick: step around your pivot · hold THROW · FAKE · bank and type buttons"
+		return "Hold THROW and let go · stick left / right bends it · FAKE while charging"
 	end
 	return string.format(
-		"WASD step · %s/%s swing · %s fake · %s low · %s hop · %s/%s bank · wheel type · %s lead",
-		key("Cut", "Q"),
-		key("Dive", "E"),
+		"Hold %s, release to throw · A / D at release bends it · aim high + strong = hammer · %s aims, %s while charging fakes",
+		key("Primary", "LMB"),
 		key("Secondary", "RMB"),
-		key("Slide", "C"),
-		key("Jump", "SPACE"),
-		key("BankLeft", "Z"),
-		key("BankRight", "X"),
-		key("LeadLock", "R")
+		key("Secondary", "RMB")
 	)
 end
 
@@ -438,15 +433,16 @@ function ThrowHud.update()
 		chip.BackgroundColor3 = if selected then C.Accent else C.PanelLight
 		chip.TextColor3 = if selected then Color3.new(0, 0, 0) else C.Muted
 	end
-	refs.height.Text = string.upper(h.height)
-	refs.height.TextColor3 = if h.height == "High" then C.Gold elseif h.height == "Low" then C.Good else C.Accent
-	local bankDeg = h.bank / h.bankSteps * DiscConfig.Throw.BankRange
-	refs.bankDisc.Rotation = bankDeg
-	refs.bankText.Text = if h.bank == 0
-		then "FLAT"
-		elseif h.bank > 0 then ("BANK R" .. h.bank)
-		else ("BANK L" .. -h.bank)
-	refs.lead.Text = if h.leadLock then ("LEAD: " .. (h.leadName or "aim at a teammate")) else ""
+	refs.height.Text = if h.airborne then "AIR" elseif h.aiming then "AIM" elseif h.pivoted then "SET" else "RUN"
+	refs.height.TextColor3 = if h.airborne then C.Gold elseif h.aiming then C.Good else C.Accent
+	local bend = h.bank * (if h.leftHanded then -1 else 1) -- screen side
+	refs.bankDisc.Rotation = bend * DiscConfig.Throw.BankRange
+	refs.bankText.Text = if h.throwType == "Hammer"
+		then "OVER THE TOP"
+		elseif bend == 0 then "FLAT"
+		elseif bend > 0 then "BENDS RIGHT"
+		else "BENDS LEFT"
+	refs.lead.Text = ""
 	if showHints then
 		refs.desc.Text = info.Description
 		refs.keys.Text = hintText(controllers.InputController.scheme())
@@ -460,12 +456,7 @@ function ThrowHud.update()
 		elseif h.phase == "Over" then C.Bad
 		elseif h.phase == "Zone" then C.Accent
 		else Color3.new(1, 1, 1)
-	if h.idealPower then
-		refs.ideal.Visible = true
-		refs.ideal.Position = UDim2.new(0, -4, 1 - h.idealPower / refs.meterScale, 0)
-	else
-		refs.ideal.Visible = false
-	end
+	refs.ideal.Visible = false
 end
 
 return ThrowHud
