@@ -124,7 +124,8 @@ local lastAirAttr: boolean? = nil
 local techRemote: RemoteEvent? = nil
 local pivotRemote: RemoteEvent? = nil
 
-local MOVEMENT_ACTIONS = { Jump = true, Cut = true, Slide = true, Dive = true, Burst = true }
+-- the only press the movement core reads (Burst is a hold; cuts come from the stick)
+local MOVEMENT_ACTIONS = { Jump = true }
 local WALL_RAY = MovementConfig.WallRebound.DetectDistance
 local BLOCK_RAY = 2.5
 local GROUND_RAY_GROUND = 1.2 -- studs past the feet that still count as grounded (ground modes)
@@ -665,7 +666,7 @@ local function techPoseMode(): string
 		return if TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then "Pivot" else "Ground"
 	elseif st == "Marking" then
 		return "Mark"
-	elseif st == "Airborne" or st == "AirDodging" then
+	elseif st == "Airborne" then
 		return "Air"
 	elseif st == "Diving" then
 		return "Dive"
@@ -735,6 +736,8 @@ local function techEvent(e: TechCore.TechEvent)
 	end
 	local t = now()
 	if e.tech == "Plant" then
+		-- Mirror Step: planting right as the opponent you guard plants
+		checkMirror()
 		-- the start of a cut or a juke: posed everywhere, scores nothing
 		table.insert(pending, { tech = e.tech, quality = e.quality, dir = e.dir, t = t })
 		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = t, dir = e.dir, chain = false })
@@ -882,9 +885,7 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 			then {}
 			else {
 				Burst = inputs.isHeld("Burst"),
-				Slide = inputs.isHeld("Slide"),
 				Jump = inputs.isHeld("Jump"),
-				Cut = inputs.isHeld("Cut"),
 			},
 		aim = VecMath.flatUnit(controllers.CameraController.forward()),
 	}, { grounded = groundY ~= nil, wallNormal = wallNormal, timeToLand = ttl }, dt)
@@ -1086,9 +1087,9 @@ end
 -- presses
 ---------------------------------------------------------------------------
 
--- Mirror Step: a Cut within MIRROR_WINDOW of the plant of the opponent you're
--- closest to (within MIRROR_RANGE) mirrors it. If their plant turns out to be
--- a Juke, you bit on the fake.
+-- Mirror Step: your plant (the let-go) within MIRROR_WINDOW of the plant of
+-- the opponent you're closest to (within MIRROR_RANGE) mirrors it: your cut
+-- out of it is Perfect. If their plant turns out to be a Juke, you bit.
 checkMirror = function()
 	local r = root
 	local me = character
@@ -1154,9 +1155,6 @@ local function onAction(action: string)
 		return
 	end
 	if engineOn then
-		if action == "Cut" then
-			checkMirror()
-		end
 		TechCore.press(tech, action)
 	end
 end

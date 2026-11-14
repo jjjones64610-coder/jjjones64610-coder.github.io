@@ -630,6 +630,99 @@ test("dive landing: belly slide, then get up; Space on the touchdown is a Tech R
 	expect(late.s.state ~= "Downed" and late.s.state ~= "Recovering", "up sooner than a full down")
 end)
 
+test("plant rules: timed from the let-go, never during the cooldown, never stale", function()
+	-- a let-go during the cut cooldown is a stop, not a late-starting plant
+	local w = newWorld(Config.RUN_TOP_SPEED)
+	letGoThen(w, 0.08, RIGHT)
+	worldRun(w, 0.1) -- inside CUT_COOLDOWN
+	letGoThen(w, Config.CUT_COOLDOWN, FWD) -- let go through the end of the cooldown
+	expect(#events(w.s, "Cut") == 1, "no second cut from a let-go that began in the cooldown")
+	-- the stick pushed again in the air ends the plant: a later let-go plants afresh
+	local a = newWorld(Config.RUN_TOP_SPEED)
+	a.move = Vector3.zero
+	worldRun(a, 0.03)
+	tap(a, "Jump")
+	a.move = FWD
+	worldUntil(a, function(x)
+		return not x.s.grounded
+	end, 0.1)
+	untilLanded(a)
+	worldRun(a, 0.3)
+	local cuts = #events(a.s, "Cut")
+	letGoThen(a, 0.08, RIGHT)
+	expect(#events(a.s, "Cut") == cuts + 1, "a fresh plant after landing cuts")
+	-- one mistake, one skid
+	local k = newWorld(Config.BURST_TOP_SPEED)
+	k.move = -FWD
+	worldRun(k, Config.SKID_MAX_TIME + 0.1)
+	expect(#events(k.s, "Skid") == 1, "no chain of skids: " .. #events(k.s, "Skid"))
+	-- hopping out of a skid earns nothing
+	local h = newWorld(Config.RUN_TOP_SPEED)
+	h.move = -FWD
+	worldRun(h, 0.2)
+	local before = TechCore.flatSpeed(h.s)
+	tap(h, "Jump")
+	worldStep(h)
+	expect(not h.s.grounded and TechCore.flatSpeed(h.s) <= before + 0.01, "no hop bonus from a skid")
+end)
+
+test(
+	"air action rules: not with the disc; a standing dive still travels; a roll never adds speed to a holder",
+	function()
+		local w = newWorld(Config.RUN_TOP_SPEED)
+		tap(w, "Jump")
+		worldRun(w, 0.12)
+		TechCore.setHolding(w.s, true) -- caught it in the air
+		tap(w, "Jump")
+		worldStep(w)
+		expect(#events(w.s, "Layout") == 0 and #events(w.s, "SkyReach") == 0, "no air action with the disc")
+
+		local st = newWorld(0)
+		st.move = Vector3.zero
+		tap(st, "Jump")
+		worldRun(st, 0.12)
+		st.move = RIGHT
+		tap(st, "Jump")
+		worldStep(st)
+		expect(
+			near(TechCore.flatSpeed(st.s), Config.DIVE_MIN_SPEED, 0.5),
+			"standing dive: " .. TechCore.flatSpeed(st.s)
+		)
+
+		local c = newWorld(Config.RUN_TOP_SPEED)
+		jumpThen(c, 0.12, FWD)
+		TechCore.setHolding(c.s, true) -- a layout catch
+		worldUntil(c, function(x)
+			return x.s.vel.Y < 0 and x.y < 0.3
+		end, 3)
+		tap(c, "Jump")
+		untilLanded(c)
+		local landing = TechCore.flatSpeed(c.s)
+		worldStep(c)
+		expect(#events(c.s, "TechRoll") == 1, "rolls up with the disc")
+		expect(TechCore.flatSpeed(c.s) <= landing + 0.01, "but the roll adds no speed")
+	end
+)
+
+test("cuts read the same at 30, 60 and 144 fps", function()
+	-- the client feeds whole frames (TechCore.advance); a let-go of ~83 ms
+	-- must be a Perfect cut at any frame rate
+	for _, fps in { 30, 60, 144 } do
+		local s = moving(Config.RUN_TOP_SPEED)
+		local dt = 1 / fps
+		local function frames(n: number, move: Vector3)
+			for _ = 1, n do
+				TechCore.advance(s, { move = move }, GROUND, dt)
+			end
+		end
+		frames(math.floor(fps * 0.3), FWD)
+		frames(math.max(1, math.floor(0.083 * fps + 0.5)), Vector3.zero)
+		frames(2, RIGHT)
+		local cuts = events(s, "Cut")
+		expect(#cuts == 1 and cuts[1].quality == "Perfect", "Perfect cut at " .. fps .. " fps")
+	end
+end)
+
 test("sky reach: Space again with no direction hangs with the hands up", function()
 	local w = newWorld(0)
 	jumpThen(w, 0.18, Vector3.zero)
@@ -668,7 +761,21 @@ test("wavedash: a dive just before landing lands in a fast slide instead", funct
 	expect(#e == 1 and #events(w.s, "Layout") == 0, "wavedash, no layout")
 	expect(w.s.state == "Sliding" and w.s.wave, "a fast slide")
 	expect(Vector3.new(w.s.vel.X, 0, w.s.vel.Z).Unit:Dot(RIGHT) > 0.99, "toward the stick")
-	expect(TechCore.flatSpeed(w.s) > Config.RUN_TOP_SPEED + Config.WAVEDASH_BURST - 2, "faster")
+	local sideKeep = 1 + (Config.WAVEDASH_TURN_KEEP - 1) * 0.5
+	expect(
+		near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED * sideKeep + Config.WAVEDASH_BURST_PERFECT, 3.5),
+		"a sideways wavedash keeps part of the speed + the boost: " .. TechCore.flatSpeed(w.s)
+	)
+	local f = newWorld(Config.RUN_TOP_SPEED)
+	tap(f, "Jump")
+	worldStep(f)
+	worldUntil(f, function(x)
+		return x.s.vel.Y < 0 and x.y < 0.6
+	end, 2)
+	tap(f, "Jump")
+	untilLanded(f)
+	worldStep(f)
+	expect(TechCore.flatSpeed(f.s) > Config.RUN_TOP_SPEED + Config.WAVEDASH_BURST - 2, "straight ahead it is faster")
 	expect(w.s.dodgeAvailable, "air action ready again")
 	worldRun(w, Config.WAVE_SLIDE_TIME + 0.05)
 	expect(w.s.state ~= "Sliding", "runs out of it")

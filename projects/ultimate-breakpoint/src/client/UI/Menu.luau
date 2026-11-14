@@ -14,7 +14,7 @@
 	mode's preset) and can START MATCH NOW; ranked is always off there. The
 	page refreshes itself while open when the vote state changes.
 
-	Controls: rebinding, sprint options (AutoSprint, ToggleSprint) and a
+	Controls: rebinding (only the core actions of Config/Input) and a
 	technique guide written with the keys you have bound.
 ]]
 
@@ -104,80 +104,39 @@ local DRILLS: { any } = {
 }
 
 -- The technique guide, written with the keys currently bound (keyboard).
+-- Only what the core design's inputs do (docs/CORE_DESIGN.md); throwing and
+-- catching lines are added as their stages land.
 local function techGuide(): { string }
 	local function k(action: string): string
 		local label = controllers.SettingsController.keyLabel(action, "keyboard")
 		return if label ~= "" then label else "(unbound)"
 	end
-	local cut, burst, slide, dive, jump = k("Cut"), k("Burst"), k("Slide"), k("Dive"), k("Jump")
+	local burst, jump = k("Burst"), k("Jump")
 	return {
+		"RUN — WASD. You build up speed and carry it: at speed, wide turns keep it and sharp turns cost it.",
 		string.format(
-			"RUN — move to run; sprint starts by itself when you push one way (AutoSprint), or hold %s.",
-			k("Sprint")
+			"SPRINT — hold %s. It drains a meter that refills when you let go. A quick tap is a small shove forward.",
+			burst
+		),
+		"CUT — while running, let go of WASD for a split second, then press the new direction. A clean, short let-go is a Perfect cut that keeps all your speed.",
+		"JUKE — right after a cut, go straight back to your old direction.",
+		"SKID — swing your direction hard round at speed without letting go first and you skid instead, losing speed.",
+		string.format("JUMP — %s. Hold it to jump higher. In the air you can steer only a little.", jump),
+		string.format("DIVE — %s again in the air with a direction held: you lay out that way. One per jump.", jump),
+		string.format("SKY REACH — %s again in the air with no direction: hang a moment with your hands up.", jump),
+		string.format(
+			"WAVEDASH — %s + a direction just before you land: no dive, you hit the ground in a fast slide. %s hops out of it, %s carves it.",
+			jump,
+			jump,
+			burst
 		),
 		string.format(
-			"SNAP CUT — while running, steer to the new direction and tap %s (hold A or D, then %s). A longer straight line before it = Perfect.",
-			cut,
-			cut
-		),
-		string.format(
-			"PLANT — tap %s with S held (or no direction) at speed: you stop dead. Hold a direction to restart; %s, %s or %s just after = a faster restart.",
-			cut,
-			cut,
-			burst,
+			"TECH ROLL — %s right as a dive lands: roll to your feet keeping speed. Later, %s scrambles up.",
+			jump,
 			jump
 		),
-		string.format(
-			"FAKE COMMIT — %s along your line without steering: a jab. Cut away within 0.6 s for a Sold cut (always Perfect).",
-			cut
-		),
-		string.format(
-			"BURST — %s. A short explosive push (1.2 s cooldown). Perfect right after a cut, slide cut or pop-up; free out of a plant.",
-			burst
-		),
-		string.format(
-			"SLIDE / SLIDE CUT — %s while running. %s mid-slide leaves at a new angle; %s bursts out.",
-			slide,
-			cut,
-			burst
-		),
-		string.format(
-			"AIR REDIRECT — %s in the air with a direction held: bend your path once per jump. Near the apex = Perfect.",
-			cut
-		),
-		string.format(
-			"PRECISION LANDING — %s just before touchdown keeps your speed. After a dive it is a Roll-out.",
-			slide
-		),
-		string.format(
-			"LAYOUT — %s. A huge reach. Pop up with %s, %s or %s as the slide stops.",
-			dive,
-			jump,
-			cut,
-			burst
-		),
-		string.format(
-			"WALL REBOUND — %s beside a glowing Rebound wall while airborne (special arenas and the Combo Lab).",
-			jump
-		),
-		string.format(
-			"TIP RESET — in the air, press %s as the disc reaches your hands: it pops up and your air cut and air layout come back (Charged). Wall Rebounds reset too; a Perfect landing or pop-up refunds Burst / Layout.",
-			k("Secondary")
-		),
-		"SIGNATURE MOVES — Reset Grab, Double Tip, Wall Tip, Double Layout, Reset Loop, Self-D, Skyball, The Greatest: hard, and worth thousands (Training lists how).",
-		"CHAINS — techniques within 1.5 s of each other chain. A catch, block or interception within 2 s converts the chain: x2 points and a highlight.",
-		string.format(
-			"WITH THE DISC — WASD steps your free foot around the pivot (the coloured disc under you). %s / %s swing left / right, RMB fakes, %s hops for a high release, hold %s to release low. Fake, swing, release fast = BREAK.",
-			cut,
-			dive,
-			jump,
-			slide
-		),
-		string.format(
-			"MARK — hold RMB near the thrower: shuffle and keep your hands in the lane. %s switches Low / High hands; jump to block a hop.",
-			slide
-		),
-		"REACH — LMB without the disc: extend toward your aim for a moment. Airborne reaches are Aerial Catch Adjustments.",
+		string.format("WALL KICK — %s right after touching a wall in the air.", jump),
+		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end
 
@@ -1235,19 +1194,12 @@ function render.Controls(content: Instance)
 		o += 1
 		return o
 	end
-	section(content, "SPRINT", nextOrder())
-	for _, t in
-		{
-			{ key = "AutoSprint", label = "Auto-sprint (push one way to sprint)" },
-			{ key = "ToggleSprint", label = "Sprint key toggles (instead of hold)" },
-			{ key = "AutoSprintTouch", label = "Auto-sprint on touch (push the stick fully)" },
-		}
-	do
-		toggleRow(content, nextOrder(), t.label, s.get(t.key) == true, function()
-			s.set(t.key, not s.get(t.key))
-			Menu.refresh(true)
-		end)
-	end
+	local rr = row(content, nextOrder(), 44)
+	local reset = Theme.button("RESET TO DEFAULTS", { Parent = rr, Size = UDim2.fromOffset(200, 36) })
+	reset.Activated:Connect(function()
+		s.resetBindings()
+		Menu.refresh(true)
+	end)
 	section(content, "CONTROLS (click a binding, then press the new key/button)", nextOrder())
 	local kb = s.bindings("keyboard")
 	local gp = s.bindings("gamepad")
@@ -1274,12 +1226,6 @@ function render.Controls(content: Instance)
 			{ Parent = r, LayoutOrder = 3, Size = UDim2.fromOffset(150, 28), TextColor3 = C.Muted }
 		)
 	end
-	local rr = row(content, nextOrder(), 44)
-	local reset = Theme.button("RESET TO DEFAULTS", { Parent = rr, Size = UDim2.fromOffset(200, 36) })
-	reset.Activated:Connect(function()
-		s.resetBindings()
-		Menu.refresh(true)
-	end)
 	section(content, "TECHNIQUE GUIDE", nextOrder())
 	for _, line in techGuide() do
 		Theme.label(line, 13, {

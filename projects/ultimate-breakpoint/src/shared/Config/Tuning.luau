@@ -84,7 +84,6 @@ Tech.CUT_REVERSE_KEEP = 0.65 -- ... down to this share of the keep at a full 180
 Tech.CUT_COOLDOWN = 0.35 -- s before the next plant can start
 Tech.CUT_REPEAT_TIME = 0.6 -- s: a cut this soon after the last ...
 Tech.CUT_REPEAT_CAP = 0.85 -- ... keeps at most this (no free zigzags)
-Tech.CUT_RESET_ANGLE = 30 -- (internal) ° under which the stick counts as on your line
 Tech.JUKE_WINDOW = 120 -- ms after a cut: the stick back to the old line is a Juke ...
 Tech.JUKE_KEEP = 0.90 -- ... which puts you back on it at this share of the speed
 Tech.JUKE_RETURN_ANGLE = 30 -- ° from the old line that counts as "back"
@@ -96,6 +95,7 @@ Tech.SKID_FRICTION = 45 -- FEEL: speed lost per second while skidding
 Tech.SKID_TURN = 120 -- °/s you can steer the skid
 Tech.SKID_MAX_TIME = 0.5 -- s at most, then you run again
 Tech.SKID_EXIT_SPEED = 8 -- ... or as soon as you are this slow
+Tech.SKID_COOLDOWN = 1.0 -- s before another skid can start (one mistake, one skid)
 
 -- slides (stage 2: from dive landings; Shift in a slide carves, Space hops)
 Tech.SLIDE_TURN = 60 -- °/s
@@ -129,6 +129,7 @@ Tech.DIVE_BOOST = 9 -- FEEL: studs/s the dive adds along its direction (distance
 Tech.DIVE_UP = 9 -- FEEL: lift at the start of the dive (higher = longer, floatier arc)
 Tech.DIVE_VY_KEEP = 0.4 -- share of your upward speed the dive keeps
 Tech.DIVE_TURN_KEEP = 0.35 -- share of your speed carried into a dive straight backwards (100 % straight ahead)
+Tech.DIVE_MIN_SPEED = 18 -- a dive from a standstill still travels at this
 Tech.DIVE_MAX_SPEED = 46
 Tech.DIVE_GRAVITY_MULT = 0.9 -- gravity x this while diving
 --   ... close to the ground: the WAVEDASH (no layout, land in a fast slide)
@@ -136,6 +137,7 @@ Tech.WAVEDASH_WINDOW = 80 -- ms before landing
 Tech.WAVEDASH_PERFECT = 40
 Tech.WAVEDASH_BURST = 10 -- studs/s added
 Tech.WAVEDASH_BURST_PERFECT = 14
+Tech.WAVEDASH_TURN_KEEP = 0.4 -- share of your speed kept wavedashing straight backwards (100 % straight ahead)
 Tech.WAVE_SLIDE_TIME = 0.45 -- s of slide before you run again (Space hops, Shift carves)
 --   with no direction: the SKY REACH (hands up at the top of a jump)
 Tech.SKY_REACH_HANG = 0.12 -- s you hang

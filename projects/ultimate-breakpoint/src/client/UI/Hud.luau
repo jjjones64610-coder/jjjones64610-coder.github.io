@@ -876,11 +876,11 @@ local function modeChipText(state: Instance, phase: string): string
 end
 
 local function exertionHint(): string
-	local key = keyOf("Sprint")
-	if key ~= "" and not controllers.SettingsController.get("AutoSprint") then
-		return string.format("LOW ENERGY — release %s to recover", key)
+	local key = keyOf("Burst")
+	if key ~= "" then
+		return string.format("SPRINT EMPTY — release %s to refill", key)
 	end
-	return "LOW ENERGY — ease off to a jog to recover"
+	return "SPRINT EMPTY — ease off to refill"
 end
 
 function Hud.update(_dt: number)

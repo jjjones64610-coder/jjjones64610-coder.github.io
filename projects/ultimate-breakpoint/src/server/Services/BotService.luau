@@ -978,7 +978,7 @@ local function techMode(tech: TechCore.State): string
 		return "Frozen"
 	elseif st == "Marking" then
 		return "Mark"
-	elseif st == "Airborne" or st == "AirDodging" then
+	elseif st == "Airborne" then
 		return "Air"
 	elseif st == "Diving" then
 		return "Dive"

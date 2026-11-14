@@ -72,7 +72,6 @@ export type StateName =
 	"Grounded"
 	| "Sliding"
 	| "Airborne"
-	| "AirDodging"
 	| "Diving"
 	| "Downed"
 	| "Recovering"
@@ -143,6 +142,7 @@ export type State = {
 	kickReadyAt: number,
 
 	-- cuts (from the stick: let go to plant, then snap a new direction)
+	stickOffAt: number?, -- when the stick was let go (nil while it is pushed)
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
@@ -150,8 +150,8 @@ export type State = {
 	reachHangUntil: number, -- the Sky Reach hang
 	scrambled: boolean, -- this dive's scramble is spent
 	cutReport: { quality: string, gapMs: number, angle: number, kept: number }?, -- the last cut (debug HUD)
-	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
+	skidReadyAt: number, -- no new skid before this
 	cutReadyAt: number,
 
 	-- slides and hops
@@ -171,6 +171,7 @@ export type State = {
 
 	-- layout / recovery / sky
 	diveAt: number,
+	landSpeed: number, -- flat speed at the last touchdown (the Tech Roll keeps a share of it)
 	downedUntil: number,
 	recoverUntil: number,
 	skyPerfectUntil: number, -- hands-up reach bonus lasts while this is ahead
@@ -208,14 +209,12 @@ TechCore.Transitions = {
 	Grounded = { Sliding = true, Airborne = true, Diving = true, HoldingDisc = true, Marking = true },
 	Sliding = { Grounded = true, Airborne = true, Diving = true, HoldingDisc = true },
 	Airborne = {
-		AirDodging = true,
 		Diving = true,
 		Grounded = true,
 		Sliding = true,
 		HoldingDisc = true,
 		Recovering = true,
 	},
-	AirDodging = { Airborne = true, Grounded = true, Sliding = true, Diving = true, Recovering = true },
 	Diving = { Downed = true, Recovering = true, Grounded = true, HoldingDisc = true },
 	Downed = { Recovering = true },
 	Recovering = { Grounded = true, Marking = true, HoldingDisc = true },
@@ -228,7 +227,7 @@ local BASE: { [StateName]: boolean } = { Grounded = true, Airborne = true, Holdi
 -- States that steer and accelerate with the stick on the ground.
 local RUNNING: { [StateName]: boolean } = { Grounded = true, Marking = true }
 -- States in the air.
-local AIR: { [StateName]: boolean } = { Airborne = true, AirDodging = true, Diving = true }
+local AIR: { [StateName]: boolean } = { Airborne = true, Diving = true }
 
 local NO_HELD: { [string]: boolean } = {}
 
@@ -264,6 +263,7 @@ function TechCore.new(now: number?): State
 		burstDrained = 0,
 		kickReadyAt = -math.huge,
 
+		stickOffAt = nil,
 		release = nil,
 		lastCut = nil,
 		skid = false,
@@ -271,8 +271,8 @@ function TechCore.new(now: number?): State
 		reachHangUntil = -math.huge,
 		scrambled = false,
 		cutReport = nil,
-		crossAt = nil,
 		lastCutAt = -math.huge,
+		skidReadyAt = -math.huge,
 		cutReadyAt = -math.huge,
 
 		slideSince = -math.huge,
@@ -289,6 +289,7 @@ function TechCore.new(now: number?): State
 		wavedash = nil,
 
 		diveAt = -math.huge,
+		landSpeed = 0,
 		downedUntil = -math.huge,
 		recoverUntil = -math.huge,
 		skyPerfectUntil = -math.huge,
@@ -424,6 +425,13 @@ function TechCore.reset(s: State)
 	table.clear(s.buffer)
 	s.wavedash = nil
 	s.dodgeAvailable = true
+	s.stickOffAt = nil
+	s.release = nil
+	s.lastCut = nil
+	s.skid = false
+	s.wave = false
+	s.reachHangUntil = -math.huge
+	s.storedFlips = 0
 	s.state = baseState(s)
 	s.stateSince = s.now
 end
@@ -633,14 +641,21 @@ local function slideHop(s: State)
 	local quality = noteRange(s, "Slide Hop", into * 1000, lo * 1000, hi * 1000)
 	s.hopCount += 1
 	local idx = math.min(s.hopCount, #Config.SLIDE_HOP_BONUS)
-	local bonus = if quality == "Clean"
-		then Config.SLIDE_HOP_BONUS[idx]
+	local bonus = if s.skid
+		then 0 -- a skid is a mistake: hopping out of it earns nothing
+		elseif quality == "Clean" then Config.SLIDE_HOP_BONUS[idx]
 		else math.min(Config.SLIDE_HOP_OFF_WINDOW, Config.SLIDE_HOP_BONUS[idx])
 	local flat = flatOf(s.vel)
 	setFlat(s, s.heading * (flat.Magnitude + bonus))
 	jumpOff(s, Config.JUMP_TAP * math.sqrt(Config.SLIDE_HOP_HEIGHT), false)
 	-- a hop in the window is the "Perfect" hop of the spec
-	emit(s, "SlideHop", if quality == "Clean" then "Perfect" else "Clean", s.heading, tostring(s.hopCount))
+	emit(
+		s,
+		"SlideHop",
+		if quality == "Clean" and bonus > 0 then "Perfect" else "Clean",
+		s.heading,
+		tostring(s.hopCount)
+	)
 end
 
 -- THE DIVE (stage 2): Space again in the air with a direction held. You
@@ -652,7 +667,8 @@ local function dive(s: State, dir: Vector3)
 	local speed = flat.Magnitude
 	local angle = if speed > 1 then VecMath.flatAngle(flat / speed, dir) else 0
 	local keep = 1 + (Config.DIVE_TURN_KEEP - 1) * (angle / 180)
-	local out = math.min(speed * keep + Config.DIVE_BOOST, Config.DIVE_MAX_SPEED)
+	-- a dive from a standstill still goes somewhere (DIVE_MIN_SPEED)
+	local out = math.clamp(speed * keep + Config.DIVE_BOOST, Config.DIVE_MIN_SPEED, Config.DIVE_MAX_SPEED)
 	local nv = dir * out
 	s.vel = Vector3.new(nv.X, math.max(s.vel.Y, 0) * Config.DIVE_VY_KEEP + Config.DIVE_UP, nv.Z)
 	s.heading = dir
@@ -670,8 +686,8 @@ end
 -- It is spent until you land; a Flip Reset stores one more, Sky Walk adds
 -- extras. Returns whether the press was used.
 local function tryAirAction(s: State, input: Input, env: Env): boolean
-	if not AIR[s.state] or s.state == "Diving" then
-		return false
+	if not AIR[s.state] or s.state == "Diving" or s.holding then
+		return false -- with the disc in your hands you can't change your flight
 	end
 	if not s.dodgeAvailable then
 		if s.storedFlips > 0 then
@@ -726,8 +742,10 @@ local function tryTechRoll(s: State, at: number): boolean
 	end
 	local keep = if quality == "Perfect" then Config.TECH_ROLL_KEEP_PERFECT else Config.TECH_ROLL_KEEP
 	local flat = flatOf(s.vel)
-	s.vel = Vector3.new(0, s.vel.Y, 0)
-	setFlat(s, unitOr(flat, s.heading) * (s.takeoffSpeed * keep))
+	-- you roll out with a share of the speed you landed with; holding the
+	-- disc (a layout catch) the roll only gets you up, it never adds speed
+	local out = if s.holding then math.min(flat.Magnitude, s.landSpeed * keep) else s.landSpeed * keep
+	setFlat(s, unitOr(flat, s.heading) * out)
 	s.recoverUntil = s.now + Config.TECH_ROLL_RECOVER
 	s.downedUntil = -math.huge
 	TechCore.enter(s, "Recovering", true)
@@ -927,6 +945,7 @@ local function onLand(s: State)
 	s.frame.landed = true
 	s.frame.landingSpeed = math.max(s.frame.landingSpeed, -s.vel.Y)
 	s.vel = Vector3.new(s.vel.X, 0, s.vel.Z)
+	s.landSpeed = flatOf(s.vel).Magnitude
 	s.dodgeAvailable = true
 	s.discResetUsed = false
 	s.extraDodgesLeft = s.extraDodges
@@ -952,12 +971,16 @@ local function onLand(s: State)
 		-- FEEL: the Wavedash. A dive pressed just before the ground never
 		-- lays out: you land in a fast slide toward the stick (+boost),
 		-- and can hop (Space) or carve (Shift) out of it.
+		-- Like a dive, turning costs: all your speed straight ahead, down
+		-- to WAVEDASH_TURN_KEEP of it straight back, plus the boost.
 		local flat = flatOf(s.vel)
 		local boost = if wd.perfect then Config.WAVEDASH_BURST_PERFECT else Config.WAVEDASH_BURST
 		local speed = flat.Magnitude
+		local angle = if speed > 1 then VecMath.flatAngle(flat / speed, wd.dir) else 0
+		local keep = 1 + (Config.WAVEDASH_TURN_KEEP - 1) * (angle / 180)
 		s.state = baseState(s)
 		s.stateSince = s.now
-		setFlat(s, wd.dir * (speed + boost))
+		setFlat(s, wd.dir * (speed * keep + boost))
 		s.heading = wd.dir
 		s.wavedashAt = s.now
 		if not s.holding then
@@ -1060,8 +1083,18 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		-- CUT_RELEASE_MAX you only lose PLANT_HOLD_FRICTION, so the next
 		-- direction can be a cut that keeps your speed; let go longer and
 		-- you simply stop (GROUND_FRICTION).
-		if s.release == nil and s.state ~= "Marking" and speed >= Config.CUT_MIN_SPEED and s.now >= s.cutReadyAt then
-			s.release = { at = s.now, speed = speed, dir = s.heading }
+		-- The plant starts at the moment of the let-go (s.stickOffAt), and
+		-- only if that moment is after the cut cooldown: a let-go during
+		-- the cooldown is just a stop.
+		local off = s.stickOffAt or s.now
+		if
+			s.release == nil
+			and s.state ~= "Marking"
+			and speed >= Config.CUT_MIN_SPEED
+			and off >= s.cutReadyAt
+			and s.now - off <= Config.CUT_RELEASE_MAX
+		then
+			s.release = { at = off, speed = speed, dir = s.heading }
 			emit(s, "Plant", "Clean", s.heading)
 		end
 		local r = s.release
@@ -1074,7 +1107,6 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		-- the mark shuffle: quick, instant turns, capped at MARK_SPEED
 		top = math.min(top, Config.MARK_SPEED)
 		s.heading = want
-		s.crossAt = nil
 		local target = top * mag
 		speed = moveToward(math.min(speed, top), target, Config.MARK_ACCEL * dt)
 		return want * speed
@@ -1101,26 +1133,17 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	end
 	-- Skid: yanking the stick hard round at speed with no plant throws you
 	-- into a skid that eats your speed (the sloppy version of a cut)
-	if speed >= Config.SKID_MIN_SPEED and not s.holding and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE then
+	if
+		speed >= Config.SKID_MIN_SPEED
+		and s.now >= s.skidReadyAt
+		and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE
+	then
 		startSlide(s, nil)
 		s.skid = true
+		s.skidReadyAt = s.now + Config.SKID_COOLDOWN
 		s.cutReport = { quality = "Skid", gapMs = 0, angle = VecMath.flatAngle(s.heading, want), kept = 0 }
 		emit(s, "Skid", "Miss", s.heading)
 		return flat
-	end
-
-	-- the stick crossing 45° from the line (the Perfect Cut reference)
-	if speed >= Config.CUT_MIN_SPEED then
-		local angle = VecMath.flatAngle(s.heading, want)
-		if angle >= Config.CUT_ANGLE then
-			if s.crossAt == nil then
-				s.crossAt = s.now
-			end
-		elseif angle < Config.CUT_RESET_ANGLE then
-			s.crossAt = nil
-		end
-	else
-		s.crossAt = nil
 	end
 
 	-- steer
@@ -1261,6 +1284,13 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		TechCore.enter(s, baseState(s), true)
 	end
 
+	-- the stick's let-go edge (the plant / cut timing reference)
+	if stickDir(input) == nil then
+		s.stickOffAt = s.stickOffAt or s.now
+	else
+		s.stickOffAt = nil
+	end
+
 	-- held edges
 	updateBurst(s, input, dt)
 	local jumpHeld = isHeld(input, "Jump")
@@ -1326,6 +1356,12 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	else
 		-- Recovering
 		flat = brakeFlat(s, Config.GROUND_FRICTION, dt)
+	end
+
+	-- a plant only lasts while the stick is let go on the ground: pushed
+	-- again (a cut took it in runFlat) or off the ground, it is over
+	if s.release and (s.stickOffAt == nil or not s.grounded or not RUNNING[s.state]) then
+		s.release = nil
 	end
 
 	-- walls: never push into one

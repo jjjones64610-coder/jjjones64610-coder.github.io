@@ -73,16 +73,6 @@ Input.Stick = {
 	TouchFull = 0.92,
 }
 
--- AutoSprint: sprint once the move input has been at least MinMagnitude for
--- ChargeTime without leaving a MaxAngle cone; it then lasts while the input
--- stays strong (short dips under Grace are forgiven, e.g. switching keys).
-Input.AutoSprint = {
-	MinMagnitude = 0.9,
-	ChargeTime = 0.3,
-	MaxAngle = 35,
-	Grace = 0.15,
-}
-
 -- Short key names for HUD pips / hints ("Q", "LMB", "SHIFT"). Anything not
 -- listed is shown upper-cased.
 Input.KeyLabels = {
@@ -163,9 +153,6 @@ Input.DefaultSettings = {
 	Ability = "FlashStep", -- Config/Abilities id
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
-	AutoSprint = true,
-	ToggleSprint = false,
-	AutoSprintTouch = true,
 	LeftHanded = false,
 	TrajectoryPreview = true,
 	TouchButtonScale = 1.0,

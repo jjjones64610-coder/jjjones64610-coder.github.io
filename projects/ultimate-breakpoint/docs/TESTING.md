@@ -97,6 +97,14 @@ READY or SPENT; **LAST** shows the timing of the last Tech Roll / Wavedash. Tune
 - [ ] **Sounds (ForgeGUI):** jump, dive launch, chest landing, tech roll, wavedash slide each have their own sound.
 - [ ] **Look:** the dive is flat and stretched, the belly slide stays on the ground, the skid now leans back with the feet dug in.
 
+Rules tightened in the audit pass (worth a specific look):
+- [ ] A dive from a standstill still travels (DIVE_MIN_SPEED); you can't dive or Sky Reach while holding the disc.
+- [ ] A wavedash sideways or backwards keeps less speed than one straight ahead (WAVEDASH_TURN_KEEP).
+- [ ] One mistake gives one skid (no skid-into-skid), and hopping out of a skid gives no speed.
+- [ ] Letting go during the short cooldown after a cut just slows you; it never turns into a late cut.
+- [ ] Menu → Controls lists only Jump, Sprint, Throw, Aim/Fake, Menu, and the guide under it teaches the current moves.
+- Known: Sky Reach shows the hang and the hands-up pose, but its extra catch reach is only connected in stage 4 (catching).
+
 What to tell me: is the dive too long or too short (DIVE_BOOST, DIVE_UP)? Is the face-down time punishing enough
 but not boring (LAYOUT_DOWN_TIME, GETUP_TIME)? Is the Tech Roll timing findable (TECH_ROLL_WINDOW / _PERFECT)?
 Is the jump too floaty or too heavy (JUMP_TAP, PLAYER_GRAVITY)?

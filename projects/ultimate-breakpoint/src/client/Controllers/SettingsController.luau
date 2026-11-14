@@ -3,7 +3,7 @@
 	SettingsController — local settings and key bindings, synced to the
 	player's saved profile (Settings > Controls rebinding writes here).
 
-	Every key in Config/Input DefaultSettings is persisted (AutoSprint, on by
+	Every key in Config/Input DefaultSettings is persisted (every toggle, on or off by
 	default, included); profiles saved before a key existed simply get its
 	default. When a default changes on purpose (Input.SettingsVersion /
 	Input.Migrations) the listed keys are reset once for older profiles.

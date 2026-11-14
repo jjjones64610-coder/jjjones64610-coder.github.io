@@ -1470,16 +1470,6 @@ Input.Stick = {
 	TouchFull = 0.92,
 }
 
--- AutoSprint: sprint once the move input has been at least MinMagnitude for
--- ChargeTime without leaving a MaxAngle cone; it then lasts while the input
--- stays strong (short dips under Grace are forgiven, e.g. switching keys).
-Input.AutoSprint = {
-	MinMagnitude = 0.9,
-	ChargeTime = 0.3,
-	MaxAngle = 35,
-	Grace = 0.15,
-}
-
 -- Short key names for HUD pips / hints ("Q", "LMB", "SHIFT"). Anything not
 -- listed is shown upper-cased.
 Input.KeyLabels = {
@@ -1560,9 +1550,6 @@ Input.DefaultSettings = {
 	Ability = "FlashStep", -- Config/Abilities id
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
-	AutoSprint = true,
-	ToggleSprint = false,
-	AutoSprintTouch = true,
 	LeftHanded = false,
 	TrajectoryPreview = true,
 	TouchButtonScale = 1.0,
@@ -3079,7 +3066,6 @@ Tech.CUT_REVERSE_KEEP = 0.65 -- ... down to this share of the keep at a full 180
 Tech.CUT_COOLDOWN = 0.35 -- s before the next plant can start
 Tech.CUT_REPEAT_TIME = 0.6 -- s: a cut this soon after the last ...
 Tech.CUT_REPEAT_CAP = 0.85 -- ... keeps at most this (no free zigzags)
-Tech.CUT_RESET_ANGLE = 30 -- (internal) ° under which the stick counts as on your line
 Tech.JUKE_WINDOW = 120 -- ms after a cut: the stick back to the old line is a Juke ...
 Tech.JUKE_KEEP = 0.90 -- ... which puts you back on it at this share of the speed
 Tech.JUKE_RETURN_ANGLE = 30 -- ° from the old line that counts as "back"
@@ -3091,6 +3077,7 @@ Tech.SKID_FRICTION = 45 -- FEEL: speed lost per second while skidding
 Tech.SKID_TURN = 120 -- °/s you can steer the skid
 Tech.SKID_MAX_TIME = 0.5 -- s at most, then you run again
 Tech.SKID_EXIT_SPEED = 8 -- ... or as soon as you are this slow
+Tech.SKID_COOLDOWN = 1.0 -- s before another skid can start (one mistake, one skid)
 
 -- slides (stage 2: from dive landings; Shift in a slide carves, Space hops)
 Tech.SLIDE_TURN = 60 -- °/s
@@ -3124,6 +3111,7 @@ Tech.DIVE_BOOST = 9 -- FEEL: studs/s the dive adds along its direction (distance
 Tech.DIVE_UP = 9 -- FEEL: lift at the start of the dive (higher = longer, floatier arc)
 Tech.DIVE_VY_KEEP = 0.4 -- share of your upward speed the dive keeps
 Tech.DIVE_TURN_KEEP = 0.35 -- share of your speed carried into a dive straight backwards (100 % straight ahead)
+Tech.DIVE_MIN_SPEED = 18 -- a dive from a standstill still travels at this
 Tech.DIVE_MAX_SPEED = 46
 Tech.DIVE_GRAVITY_MULT = 0.9 -- gravity x this while diving
 --   ... close to the ground: the WAVEDASH (no layout, land in a fast slide)
@@ -3131,6 +3119,7 @@ Tech.WAVEDASH_WINDOW = 80 -- ms before landing
 Tech.WAVEDASH_PERFECT = 40
 Tech.WAVEDASH_BURST = 10 -- studs/s added
 Tech.WAVEDASH_BURST_PERFECT = 14
+Tech.WAVEDASH_TURN_KEEP = 0.4 -- share of your speed kept wavedashing straight backwards (100 % straight ahead)
 Tech.WAVE_SLIDE_TIME = 0.45 -- s of slide before you run again (Space hops, Shift carves)
 --   with no direction: the SKY REACH (hands up at the top of a jump)
 Tech.SKY_REACH_HANG = 0.12 -- s you hang
@@ -6595,7 +6584,6 @@ export type StateName =
 	"Grounded"
 	| "Sliding"
 	| "Airborne"
-	| "AirDodging"
 	| "Diving"
 	| "Downed"
 	| "Recovering"
@@ -6666,6 +6654,7 @@ export type State = {
 	kickReadyAt: number,
 
 	-- cuts (from the stick: let go to plant, then snap a new direction)
+	stickOffAt: number?, -- when the stick was let go (nil while it is pushed)
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
@@ -6673,8 +6662,8 @@ export type State = {
 	reachHangUntil: number, -- the Sky Reach hang
 	scrambled: boolean, -- this dive's scramble is spent
 	cutReport: { quality: string, gapMs: number, angle: number, kept: number }?, -- the last cut (debug HUD)
-	crossAt: number?, -- when the stick last crossed CUT_ANGLE from your line
 	lastCutAt: number,
+	skidReadyAt: number, -- no new skid before this
 	cutReadyAt: number,
 
 	-- slides and hops
@@ -6694,6 +6683,7 @@ export type State = {
 
 	-- layout / recovery / sky
 	diveAt: number,
+	landSpeed: number, -- flat speed at the last touchdown (the Tech Roll keeps a share of it)
 	downedUntil: number,
 	recoverUntil: number,
 	skyPerfectUntil: number, -- hands-up reach bonus lasts while this is ahead
@@ -6731,14 +6721,12 @@ TechCore.Transitions = {
 	Grounded = { Sliding = true, Airborne = true, Diving = true, HoldingDisc = true, Marking = true },
 	Sliding = { Grounded = true, Airborne = true, Diving = true, HoldingDisc = true },
 	Airborne = {
-		AirDodging = true,
 		Diving = true,
 		Grounded = true,
 		Sliding = true,
 		HoldingDisc = true,
 		Recovering = true,
 	},
-	AirDodging = { Airborne = true, Grounded = true, Sliding = true, Diving = true, Recovering = true },
 	Diving = { Downed = true, Recovering = true, Grounded = true, HoldingDisc = true },
 	Downed = { Recovering = true },
 	Recovering = { Grounded = true, Marking = true, HoldingDisc = true },
@@ -6751,7 +6739,7 @@ local BASE: { [StateName]: boolean } = { Grounded = true, Airborne = true, Holdi
 -- States that steer and accelerate with the stick on the ground.
 local RUNNING: { [StateName]: boolean } = { Grounded = true, Marking = true }
 -- States in the air.
-local AIR: { [StateName]: boolean } = { Airborne = true, AirDodging = true, Diving = true }
+local AIR: { [StateName]: boolean } = { Airborne = true, Diving = true }
 
 local NO_HELD: { [string]: boolean } = {}
 
@@ -6787,6 +6775,7 @@ function TechCore.new(now: number?): State
 		burstDrained = 0,
 		kickReadyAt = -math.huge,
 
+		stickOffAt = nil,
 		release = nil,
 		lastCut = nil,
 		skid = false,
@@ -6794,8 +6783,8 @@ function TechCore.new(now: number?): State
 		reachHangUntil = -math.huge,
 		scrambled = false,
 		cutReport = nil,
-		crossAt = nil,
 		lastCutAt = -math.huge,
+		skidReadyAt = -math.huge,
 		cutReadyAt = -math.huge,
 
 		slideSince = -math.huge,
@@ -6812,6 +6801,7 @@ function TechCore.new(now: number?): State
 		wavedash = nil,
 
 		diveAt = -math.huge,
+		landSpeed = 0,
 		downedUntil = -math.huge,
 		recoverUntil = -math.huge,
 		skyPerfectUntil = -math.huge,
@@ -6947,6 +6937,13 @@ function TechCore.reset(s: State)
 	table.clear(s.buffer)
 	s.wavedash = nil
 	s.dodgeAvailable = true
+	s.stickOffAt = nil
+	s.release = nil
+	s.lastCut = nil
+	s.skid = false
+	s.wave = false
+	s.reachHangUntil = -math.huge
+	s.storedFlips = 0
 	s.state = baseState(s)
 	s.stateSince = s.now
 end
@@ -7156,14 +7153,21 @@ local function slideHop(s: State)
 	local quality = noteRange(s, "Slide Hop", into * 1000, lo * 1000, hi * 1000)
 	s.hopCount += 1
 	local idx = math.min(s.hopCount, #Config.SLIDE_HOP_BONUS)
-	local bonus = if quality == "Clean"
-		then Config.SLIDE_HOP_BONUS[idx]
+	local bonus = if s.skid
+		then 0 -- a skid is a mistake: hopping out of it earns nothing
+		elseif quality == "Clean" then Config.SLIDE_HOP_BONUS[idx]
 		else math.min(Config.SLIDE_HOP_OFF_WINDOW, Config.SLIDE_HOP_BONUS[idx])
 	local flat = flatOf(s.vel)
 	setFlat(s, s.heading * (flat.Magnitude + bonus))
 	jumpOff(s, Config.JUMP_TAP * math.sqrt(Config.SLIDE_HOP_HEIGHT), false)
 	-- a hop in the window is the "Perfect" hop of the spec
-	emit(s, "SlideHop", if quality == "Clean" then "Perfect" else "Clean", s.heading, tostring(s.hopCount))
+	emit(
+		s,
+		"SlideHop",
+		if quality == "Clean" and bonus > 0 then "Perfect" else "Clean",
+		s.heading,
+		tostring(s.hopCount)
+	)
 end
 
 -- THE DIVE (stage 2): Space again in the air with a direction held. You
@@ -7175,7 +7179,8 @@ local function dive(s: State, dir: Vector3)
 	local speed = flat.Magnitude
 	local angle = if speed > 1 then VecMath.flatAngle(flat / speed, dir) else 0
 	local keep = 1 + (Config.DIVE_TURN_KEEP - 1) * (angle / 180)
-	local out = math.min(speed * keep + Config.DIVE_BOOST, Config.DIVE_MAX_SPEED)
+	-- a dive from a standstill still goes somewhere (DIVE_MIN_SPEED)
+	local out = math.clamp(speed * keep + Config.DIVE_BOOST, Config.DIVE_MIN_SPEED, Config.DIVE_MAX_SPEED)
 	local nv = dir * out
 	s.vel = Vector3.new(nv.X, math.max(s.vel.Y, 0) * Config.DIVE_VY_KEEP + Config.DIVE_UP, nv.Z)
 	s.heading = dir
@@ -7193,8 +7198,8 @@ end
 -- It is spent until you land; a Flip Reset stores one more, Sky Walk adds
 -- extras. Returns whether the press was used.
 local function tryAirAction(s: State, input: Input, env: Env): boolean
-	if not AIR[s.state] or s.state == "Diving" then
-		return false
+	if not AIR[s.state] or s.state == "Diving" or s.holding then
+		return false -- with the disc in your hands you can't change your flight
 	end
 	if not s.dodgeAvailable then
 		if s.storedFlips > 0 then
@@ -7249,8 +7254,10 @@ local function tryTechRoll(s: State, at: number): boolean
 	end
 	local keep = if quality == "Perfect" then Config.TECH_ROLL_KEEP_PERFECT else Config.TECH_ROLL_KEEP
 	local flat = flatOf(s.vel)
-	s.vel = Vector3.new(0, s.vel.Y, 0)
-	setFlat(s, unitOr(flat, s.heading) * (s.takeoffSpeed * keep))
+	-- you roll out with a share of the speed you landed with; holding the
+	-- disc (a layout catch) the roll only gets you up, it never adds speed
+	local out = if s.holding then math.min(flat.Magnitude, s.landSpeed * keep) else s.landSpeed * keep
+	setFlat(s, unitOr(flat, s.heading) * out)
 	s.recoverUntil = s.now + Config.TECH_ROLL_RECOVER
 	s.downedUntil = -math.huge
 	TechCore.enter(s, "Recovering", true)
@@ -7450,6 +7457,7 @@ local function onLand(s: State)
 	s.frame.landed = true
 	s.frame.landingSpeed = math.max(s.frame.landingSpeed, -s.vel.Y)
 	s.vel = Vector3.new(s.vel.X, 0, s.vel.Z)
+	s.landSpeed = flatOf(s.vel).Magnitude
 	s.dodgeAvailable = true
 	s.discResetUsed = false
 	s.extraDodgesLeft = s.extraDodges
@@ -7475,12 +7483,16 @@ local function onLand(s: State)
 		-- FEEL: the Wavedash. A dive pressed just before the ground never
 		-- lays out: you land in a fast slide toward the stick (+boost),
 		-- and can hop (Space) or carve (Shift) out of it.
+		-- Like a dive, turning costs: all your speed straight ahead, down
+		-- to WAVEDASH_TURN_KEEP of it straight back, plus the boost.
 		local flat = flatOf(s.vel)
 		local boost = if wd.perfect then Config.WAVEDASH_BURST_PERFECT else Config.WAVEDASH_BURST
 		local speed = flat.Magnitude
+		local angle = if speed > 1 then VecMath.flatAngle(flat / speed, wd.dir) else 0
+		local keep = 1 + (Config.WAVEDASH_TURN_KEEP - 1) * (angle / 180)
 		s.state = baseState(s)
 		s.stateSince = s.now
-		setFlat(s, wd.dir * (speed + boost))
+		setFlat(s, wd.dir * (speed * keep + boost))
 		s.heading = wd.dir
 		s.wavedashAt = s.now
 		if not s.holding then
@@ -7583,8 +7595,18 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		-- CUT_RELEASE_MAX you only lose PLANT_HOLD_FRICTION, so the next
 		-- direction can be a cut that keeps your speed; let go longer and
 		-- you simply stop (GROUND_FRICTION).
-		if s.release == nil and s.state ~= "Marking" and speed >= Config.CUT_MIN_SPEED and s.now >= s.cutReadyAt then
-			s.release = { at = s.now, speed = speed, dir = s.heading }
+		-- The plant starts at the moment of the let-go (s.stickOffAt), and
+		-- only if that moment is after the cut cooldown: a let-go during
+		-- the cooldown is just a stop.
+		local off = s.stickOffAt or s.now
+		if
+			s.release == nil
+			and s.state ~= "Marking"
+			and speed >= Config.CUT_MIN_SPEED
+			and off >= s.cutReadyAt
+			and s.now - off <= Config.CUT_RELEASE_MAX
+		then
+			s.release = { at = off, speed = speed, dir = s.heading }
 			emit(s, "Plant", "Clean", s.heading)
 		end
 		local r = s.release
@@ -7597,7 +7619,6 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		-- the mark shuffle: quick, instant turns, capped at MARK_SPEED
 		top = math.min(top, Config.MARK_SPEED)
 		s.heading = want
-		s.crossAt = nil
 		local target = top * mag
 		speed = moveToward(math.min(speed, top), target, Config.MARK_ACCEL * dt)
 		return want * speed
@@ -7624,26 +7645,17 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 	end
 	-- Skid: yanking the stick hard round at speed with no plant throws you
 	-- into a skid that eats your speed (the sloppy version of a cut)
-	if speed >= Config.SKID_MIN_SPEED and not s.holding and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE then
+	if
+		speed >= Config.SKID_MIN_SPEED
+		and s.now >= s.skidReadyAt
+		and VecMath.flatAngle(s.heading, want) >= Config.SKID_ANGLE
+	then
 		startSlide(s, nil)
 		s.skid = true
+		s.skidReadyAt = s.now + Config.SKID_COOLDOWN
 		s.cutReport = { quality = "Skid", gapMs = 0, angle = VecMath.flatAngle(s.heading, want), kept = 0 }
 		emit(s, "Skid", "Miss", s.heading)
 		return flat
-	end
-
-	-- the stick crossing 45° from the line (the Perfect Cut reference)
-	if speed >= Config.CUT_MIN_SPEED then
-		local angle = VecMath.flatAngle(s.heading, want)
-		if angle >= Config.CUT_ANGLE then
-			if s.crossAt == nil then
-				s.crossAt = s.now
-			end
-		elseif angle < Config.CUT_RESET_ANGLE then
-			s.crossAt = nil
-		end
-	else
-		s.crossAt = nil
 	end
 
 	-- steer
@@ -7784,6 +7796,13 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		TechCore.enter(s, baseState(s), true)
 	end
 
+	-- the stick's let-go edge (the plant / cut timing reference)
+	if stickDir(input) == nil then
+		s.stickOffAt = s.stickOffAt or s.now
+	else
+		s.stickOffAt = nil
+	end
+
 	-- held edges
 	updateBurst(s, input, dt)
 	local jumpHeld = isHeld(input, "Jump")
@@ -7849,6 +7868,12 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	else
 		-- Recovering
 		flat = brakeFlat(s, Config.GROUND_FRICTION, dt)
+	end
+
+	-- a plant only lasts while the stick is let go on the ground: pushed
+	-- again (a cut took it in runFlat) or off the ground, it is over
+	if s.release and (s.stickOffAt == nil or not s.grounded or not RUNNING[s.state]) then
+		s.release = nil
 	end
 
 	-- walls: never push into one
@@ -14123,7 +14148,7 @@ local function techMode(tech: TechCore.State): string
 		return "Frozen"
 	elseif st == "Marking" then
 		return "Mark"
-	elseif st == "Airborne" or st == "AirDodging" then
+	elseif st == "Airborne" then
 		return "Air"
 	elseif st == "Diving" then
 		return "Dive"
@@ -29724,27 +29749,20 @@ return EffectsController
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
 --[[
-	InputController — one input vocabulary for keyboard/mouse, gamepad and
-	touch. Raw inputs become named actions (Config/Input) that the movement,
-	throw and catch controllers interpret in context. The same physical key
-	may map to several actions; consumers decide which applies (while holding
-	the disc MovementController turns Cut / Dive into the Quick Swing).
+	InputController — the one place raw input becomes actions
+	(docs/CORE_DESIGN.md). Keyboard / mouse, gamepad and touch all map onto
+	the same short list in Config/Input: move, Jump, Burst, Primary,
+	Secondary (+ Menu), and the Ability chord (Jump + Burst together).
+	Nothing else in the game reads a key.
 
 	Movement:
 	  * WASD / arrows count only when they were pressed while no TextBox (chat
 	    included) had focus, so typing never walks the character.
 	  * Gamepad and touch sticks are reshaped (Config/Input Stick): below the
-	    dead zone they read 0, from Full they read 1, linear in between, so small
-	    tilts start at a crawl and pads that never report 1.0 still reach top
-	    speed.
-	Sprint (sprinting()):
-	  * Shift (hold) sprints at once; ToggleSprint turns it into a toggle.
-	  * AutoSprint (setting, default on): once the move input has stayed at
-	    least 0.9 for 0.3 s inside a 35 degree cone, you sprint until the input
-	    drops (dips shorter than Config/Input AutoSprint.Grace are forgiven).
-	    A plant (Cut with no direction held) never drops it: the no-input
-	    moment is part of the technique, so the restart keeps sprint speed.
-	  * Touch keeps its SPRINT toggle and AutoSprintTouch (stick pushed fully).
+	    dead zone they read 0, from Full they read 1, linear in between.
+	The Ability chord: every action in Config/Input.AbilityChord went down
+	within its window. The actions still fire themselves first, so the jump
+	is never delayed.
 
 	Roblox's default character controls are off: StarterPlayer uses the
 	Scriptable movement modes and the ControlModule is disabled again on every
@@ -29774,19 +29792,11 @@ local keyMap: { [string]: { string } } = {}
 local menuOpen = false
 local gamepadStick = Vector2.zero
 local touchStick = Vector2.zero
-local sprintToggle = false
 local scheme = "KBM"
 local controls: any = nil
 
 -- movement keys pressed while not typing (cleared on release / focus loss)
 local moveKeys: { [Enum.KeyCode]: boolean } = {}
-
-local auto = {
-	since = nil :: number?, -- the strong input started (charging)
-	dir = Vector2.zero, -- direction the charge started in
-	weakSince = nil :: number?, -- the input dropped below MinMagnitude
-	active = false,
-}
 
 local MOVE_KEYS: { [Enum.KeyCode]: Vector2 } = {
 	[Enum.KeyCode.W] = Vector2.new(0, 1),
@@ -29798,9 +29808,6 @@ local MOVE_KEYS: { [Enum.KeyCode]: Vector2 } = {
 	[Enum.KeyCode.D] = Vector2.new(1, 0),
 	[Enum.KeyCode.Right] = Vector2.new(1, 0),
 }
-
-local AUTO = InputConfig.AutoSprint
-local AUTO_CONE = math.cos(math.rad(AUTO.MaxAngle))
 
 local function rebuild()
 	keyMap = {}
@@ -29894,9 +29901,6 @@ function InputController.fire(action: string, began: boolean)
 			return
 		end
 		held[action] = true
-		if action == "Sprint" and controllers.SettingsController.get("ToggleSprint") then
-			sprintToggle = not sprintToggle
-		end
 		InputController.ActionBegan:Fire(action, scheme)
 		checkChord(action)
 	else
@@ -29938,10 +29942,6 @@ end
 -- Raw touch stick (x = right, y = forward, magnitude 0..1); shaped here.
 function InputController.setTouchStick(v: Vector2)
 	touchStick = shape(v, InputConfig.Stick.TouchDead, InputConfig.Stick.TouchFull)
-end
-
-function InputController.toggleTouchSprint()
-	sprintToggle = not sprintToggle
 end
 
 local function typing(): boolean
@@ -29986,60 +29986,6 @@ function InputController.moveVector(): Vector3
 	local forward = Vector3.new(-math.sin(yaw), 0, -math.cos(yaw))
 	local right = Vector3.new(math.cos(yaw), 0, -math.sin(yaw))
 	return forward * raw.Y + right * raw.X
-end
-
--- True while the movement sim is in a plant (brake + restart window).
-local function planting(): boolean
-	local mc = controllers and controllers.MovementController
-	return mc ~= nil and mc.sim().plantAt > 0
-end
-
--- AutoSprint state machine (time based, so calling it several times per
--- frame is harmless).
-local function autoSprinting(): boolean
-	local t = os.clock()
-	local raw = InputController.rawMove()
-	local m = raw.Magnitude
-	if m >= AUTO.MinMagnitude then
-		auto.weakSince = nil
-		local d = raw / m
-		local since = auto.since
-		if auto.active then
-			return true
-		elseif since == nil or d:Dot(auto.dir) < AUTO_CONE then
-			auto.since = t
-			auto.dir = d
-		elseif t - since >= AUTO.ChargeTime then
-			auto.active = true
-		end
-	else
-		local weak = auto.weakSince
-		if weak == nil then
-			auto.weakSince = t
-		elseif t - weak > AUTO.Grace and not planting() then
-			auto.active = false
-			auto.since = nil
-		end
-	end
-	return auto.active
-end
-
-function InputController.sprinting(): boolean
-	if menuOpen then
-		return false
-	end
-	local settings = controllers.SettingsController
-	local autoOn = autoSprinting() and settings.get("AutoSprint") == true
-	if scheme == "Touch" then
-		if settings.get("AutoSprintTouch") and touchStick.Magnitude > 0.85 then
-			return true
-		end
-		return sprintToggle or autoOn
-	end
-	if settings.get("ToggleSprint") then
-		return sprintToggle or autoOn
-	end
-	return held.Sprint == true or autoOn
 end
 
 local function disableDefaultControls()
@@ -30288,7 +30234,8 @@ local lastAirAttr: boolean? = nil
 local techRemote: RemoteEvent? = nil
 local pivotRemote: RemoteEvent? = nil
 
-local MOVEMENT_ACTIONS = { Jump = true, Cut = true, Slide = true, Dive = true, Burst = true }
+-- the only press the movement core reads (Burst is a hold; cuts come from the stick)
+local MOVEMENT_ACTIONS = { Jump = true }
 local WALL_RAY = MovementConfig.WallRebound.DetectDistance
 local BLOCK_RAY = 2.5
 local GROUND_RAY_GROUND = 1.2 -- studs past the feet that still count as grounded (ground modes)
@@ -30829,7 +30776,7 @@ local function techPoseMode(): string
 		return if TechCore.flatSpeed(tech) < TECH_PIVOT_SPEED then "Pivot" else "Ground"
 	elseif st == "Marking" then
 		return "Mark"
-	elseif st == "Airborne" or st == "AirDodging" then
+	elseif st == "Airborne" then
 		return "Air"
 	elseif st == "Diving" then
 		return "Dive"
@@ -30899,6 +30846,8 @@ local function techEvent(e: TechCore.TechEvent)
 	end
 	local t = now()
 	if e.tech == "Plant" then
+		-- Mirror Step: planting right as the opponent you guard plants
+		checkMirror()
 		-- the start of a cut or a juke: posed everywhere, scores nothing
 		table.insert(pending, { tech = e.tech, quality = e.quality, dir = e.dir, t = t })
 		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = t, dir = e.dir, chain = false })
@@ -31046,9 +30995,7 @@ local function techFrame(c: Model, h: Humanoid, r: BasePart, dt: number)
 			then {}
 			else {
 				Burst = inputs.isHeld("Burst"),
-				Slide = inputs.isHeld("Slide"),
 				Jump = inputs.isHeld("Jump"),
-				Cut = inputs.isHeld("Cut"),
 			},
 		aim = VecMath.flatUnit(controllers.CameraController.forward()),
 	}, { grounded = groundY ~= nil, wallNormal = wallNormal, timeToLand = ttl }, dt)
@@ -31250,9 +31197,9 @@ end
 -- presses
 ---------------------------------------------------------------------------
 
--- Mirror Step: a Cut within MIRROR_WINDOW of the plant of the opponent you're
--- closest to (within MIRROR_RANGE) mirrors it. If their plant turns out to be
--- a Juke, you bit on the fake.
+-- Mirror Step: your plant (the let-go) within MIRROR_WINDOW of the plant of
+-- the opponent you're closest to (within MIRROR_RANGE) mirrors it: your cut
+-- out of it is Perfect. If their plant turns out to be a Juke, you bit.
 checkMirror = function()
 	local r = root
 	local me = character
@@ -31318,9 +31265,6 @@ local function onAction(action: string)
 		return
 	end
 	if engineOn then
-		if action == "Cut" then
-			checkMirror()
-		end
 		TechCore.press(tech, action)
 	end
 end
@@ -32875,7 +32819,7 @@ return PoseController
 	SettingsController — local settings and key bindings, synced to the
 	player's saved profile (Settings > Controls rebinding writes here).
 
-	Every key in Config/Input DefaultSettings is persisted (AutoSprint, on by
+	Every key in Config/Input DefaultSettings is persisted (every toggle, on or off by
 	default, included); profiles saved before a key existed simply get its
 	default. When a default changes on purpose (Input.SettingsVersion /
 	Input.Migrations) the listed keys are reset once for older profiles.
@@ -35704,11 +35648,11 @@ local function modeChipText(state: Instance, phase: string): string
 end
 
 local function exertionHint(): string
-	local key = keyOf("Sprint")
-	if key ~= "" and not controllers.SettingsController.get("AutoSprint") then
-		return string.format("LOW ENERGY — release %s to recover", key)
+	local key = keyOf("Burst")
+	if key ~= "" then
+		return string.format("SPRINT EMPTY — release %s to refill", key)
 	end
-	return "LOW ENERGY — ease off to a jog to recover"
+	return "SPRINT EMPTY — ease off to refill"
 end
 
 function Hud.update(_dt: number)
@@ -36107,7 +36051,7 @@ return MainMenu
 	mode's preset) and can START MATCH NOW; ranked is always off there. The
 	page refreshes itself while open when the vote state changes.
 
-	Controls: rebinding, sprint options (AutoSprint, ToggleSprint) and a
+	Controls: rebinding (only the core actions of Config/Input) and a
 	technique guide written with the keys you have bound.
 ]]
 
@@ -36197,80 +36141,39 @@ local DRILLS: { any } = {
 }
 
 -- The technique guide, written with the keys currently bound (keyboard).
+-- Only what the core design's inputs do (docs/CORE_DESIGN.md); throwing and
+-- catching lines are added as their stages land.
 local function techGuide(): { string }
 	local function k(action: string): string
 		local label = controllers.SettingsController.keyLabel(action, "keyboard")
 		return if label ~= "" then label else "(unbound)"
 	end
-	local cut, burst, slide, dive, jump = k("Cut"), k("Burst"), k("Slide"), k("Dive"), k("Jump")
+	local burst, jump = k("Burst"), k("Jump")
 	return {
+		"RUN — WASD. You build up speed and carry it: at speed, wide turns keep it and sharp turns cost it.",
 		string.format(
-			"RUN — move to run; sprint starts by itself when you push one way (AutoSprint), or hold %s.",
-			k("Sprint")
+			"SPRINT — hold %s. It drains a meter that refills when you let go. A quick tap is a small shove forward.",
+			burst
+		),
+		"CUT — while running, let go of WASD for a split second, then press the new direction. A clean, short let-go is a Perfect cut that keeps all your speed.",
+		"JUKE — right after a cut, go straight back to your old direction.",
+		"SKID — swing your direction hard round at speed without letting go first and you skid instead, losing speed.",
+		string.format("JUMP — %s. Hold it to jump higher. In the air you can steer only a little.", jump),
+		string.format("DIVE — %s again in the air with a direction held: you lay out that way. One per jump.", jump),
+		string.format("SKY REACH — %s again in the air with no direction: hang a moment with your hands up.", jump),
+		string.format(
+			"WAVEDASH — %s + a direction just before you land: no dive, you hit the ground in a fast slide. %s hops out of it, %s carves it.",
+			jump,
+			jump,
+			burst
 		),
 		string.format(
-			"SNAP CUT — while running, steer to the new direction and tap %s (hold A or D, then %s). A longer straight line before it = Perfect.",
-			cut,
-			cut
-		),
-		string.format(
-			"PLANT — tap %s with S held (or no direction) at speed: you stop dead. Hold a direction to restart; %s, %s or %s just after = a faster restart.",
-			cut,
-			cut,
-			burst,
+			"TECH ROLL — %s right as a dive lands: roll to your feet keeping speed. Later, %s scrambles up.",
+			jump,
 			jump
 		),
-		string.format(
-			"FAKE COMMIT — %s along your line without steering: a jab. Cut away within 0.6 s for a Sold cut (always Perfect).",
-			cut
-		),
-		string.format(
-			"BURST — %s. A short explosive push (1.2 s cooldown). Perfect right after a cut, slide cut or pop-up; free out of a plant.",
-			burst
-		),
-		string.format(
-			"SLIDE / SLIDE CUT — %s while running. %s mid-slide leaves at a new angle; %s bursts out.",
-			slide,
-			cut,
-			burst
-		),
-		string.format(
-			"AIR REDIRECT — %s in the air with a direction held: bend your path once per jump. Near the apex = Perfect.",
-			cut
-		),
-		string.format(
-			"PRECISION LANDING — %s just before touchdown keeps your speed. After a dive it is a Roll-out.",
-			slide
-		),
-		string.format(
-			"LAYOUT — %s. A huge reach. Pop up with %s, %s or %s as the slide stops.",
-			dive,
-			jump,
-			cut,
-			burst
-		),
-		string.format(
-			"WALL REBOUND — %s beside a glowing Rebound wall while airborne (special arenas and the Combo Lab).",
-			jump
-		),
-		string.format(
-			"TIP RESET — in the air, press %s as the disc reaches your hands: it pops up and your air cut and air layout come back (Charged). Wall Rebounds reset too; a Perfect landing or pop-up refunds Burst / Layout.",
-			k("Secondary")
-		),
-		"SIGNATURE MOVES — Reset Grab, Double Tip, Wall Tip, Double Layout, Reset Loop, Self-D, Skyball, The Greatest: hard, and worth thousands (Training lists how).",
-		"CHAINS — techniques within 1.5 s of each other chain. A catch, block or interception within 2 s converts the chain: x2 points and a highlight.",
-		string.format(
-			"WITH THE DISC — WASD steps your free foot around the pivot (the coloured disc under you). %s / %s swing left / right, RMB fakes, %s hops for a high release, hold %s to release low. Fake, swing, release fast = BREAK.",
-			cut,
-			dive,
-			jump,
-			slide
-		),
-		string.format(
-			"MARK — hold RMB near the thrower: shuffle and keep your hands in the lane. %s switches Low / High hands; jump to block a hop.",
-			slide
-		),
-		"REACH — LMB without the disc: extend toward your aim for a moment. Airborne reaches are Aerial Catch Adjustments.",
+		string.format("WALL KICK — %s right after touching a wall in the air.", jump),
+		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end
 
@@ -37328,19 +37231,12 @@ function render.Controls(content: Instance)
 		o += 1
 		return o
 	end
-	section(content, "SPRINT", nextOrder())
-	for _, t in
-		{
-			{ key = "AutoSprint", label = "Auto-sprint (push one way to sprint)" },
-			{ key = "ToggleSprint", label = "Sprint key toggles (instead of hold)" },
-			{ key = "AutoSprintTouch", label = "Auto-sprint on touch (push the stick fully)" },
-		}
-	do
-		toggleRow(content, nextOrder(), t.label, s.get(t.key) == true, function()
-			s.set(t.key, not s.get(t.key))
-			Menu.refresh(true)
-		end)
-	end
+	local rr = row(content, nextOrder(), 44)
+	local reset = Theme.button("RESET TO DEFAULTS", { Parent = rr, Size = UDim2.fromOffset(200, 36) })
+	reset.Activated:Connect(function()
+		s.resetBindings()
+		Menu.refresh(true)
+	end)
 	section(content, "CONTROLS (click a binding, then press the new key/button)", nextOrder())
 	local kb = s.bindings("keyboard")
 	local gp = s.bindings("gamepad")
@@ -37367,12 +37263,6 @@ function render.Controls(content: Instance)
 			{ Parent = r, LayoutOrder = 3, Size = UDim2.fromOffset(150, 28), TextColor3 = C.Muted }
 		)
 	end
-	local rr = row(content, nextOrder(), 44)
-	local reset = Theme.button("RESET TO DEFAULTS", { Parent = rr, Size = UDim2.fromOffset(200, 36) })
-	reset.Activated:Connect(function()
-		s.resetBindings()
-		Menu.refresh(true)
-	end)
 	section(content, "TECHNIQUE GUIDE", nextOrder())
 	for _, line in techGuide() do
 		Theme.label(line, 13, {
