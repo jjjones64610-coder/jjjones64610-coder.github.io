@@ -148,6 +148,20 @@ local function techGuide(): { string }
 		),
 		"WITH THE DISC — you skid to a stop, then only your free foot moves (WASD around the pivot; double-tap to lunge). Throw before the stall count ends.",
 		"AIR THROW — catch it in a jump or a dive and release before you land. Legal, and deadly.",
+		"CATCH — easy ones are automatic: be where the disc is and it snaps into your hands.",
+		string.format(
+			"HARD CATCHES — in a jump, in a dive, with your hands up, or at full sprint you must press %s as the disc arrives. On time: a catch. Dead on: a Perfect Catch. Late or never: it pops out.",
+			k("Primary")
+		),
+		string.format(
+			"BLOCK — get your body into the disc's path with a jump or a dive. Press %s on time and you intercept it; otherwise you knock it down.",
+			k("Primary")
+		),
+		string.format(
+			"MARK — stand near the thrower and you mark by yourself: hands low on the ground, high when you jump. %s swings a hand at the release.",
+			k("Primary")
+		),
+		string.format("PICK UP — %s next to a disc on the ground.", k("Primary")),
 		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end

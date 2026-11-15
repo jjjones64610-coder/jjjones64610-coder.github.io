@@ -139,6 +139,9 @@ local function bodyFor(
 		diveDir = diveDir,
 		sliding = services.MovementService.isSliding(actorId),
 		prone = services.MovementService.isOnGroundAfterLayout(actorId),
+		-- hands up: a Sky Reach the server accepted around this moment
+		skyReach = math.abs(t - services.MovementService.techTime(actorId, "SkyReach"))
+			<= TechConfig.SKY_REACH_TIME + 0.15 + ping,
 	}
 end
 
@@ -195,7 +198,8 @@ local function addClaim(
 	discVel: Vector3,
 	body: Vector3,
 	tip: boolean?,
-	untimed: boolean?
+	untimed: boolean?,
+	timing: number?
 )
 	local discPos = services.DiscService.positionAt(d, t)
 	for _, c in d.claims do
@@ -207,6 +211,7 @@ local function addClaim(
 			if not untimed then
 				c.untimed = false -- any timed press of the touch counts
 			end
+			c.timing = math.max(c.timing or 0, timing or 0)
 			-- a repeated claim: the earliest touch orders it, the deepest
 			-- point of either window is its quality
 			if ev.depth < c.depth - 1e-6 then
@@ -234,6 +239,7 @@ local function addClaim(
 		body = body,
 		tip = tip == true,
 		untimed = untimed == true,
+		timing = timing or 0,
 	})
 	if d.resolveAt == nil then
 		d.resolveAt = now() + C.ResolveDelay
@@ -330,17 +336,25 @@ function CatchingService.claim(
 	if not ev then
 		return false
 	end
+	-- Hard catches (in the air, a layout or Sky Reach zone, a full sprint)
+	-- need the press on time; easy ones are automatic. The press also grades
+	-- the claim for a contest (timing first, then position).
 	local untimed = false
-	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and not actor.isBot then
+	local timing = 0
+	if TechConfig.TIMED_CATCH and not actor.isBot then
 		local closest = ev.t or t
-		local allow = TechConfig.CATCH_WINDOW / 1000 + TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
-		untimed = not (type(pressT) == "number" and pressT == pressT and math.abs(pressT - closest) <= allow)
+		local stand = services.MovementService.standHeight(actorId)
+		local height = body.Y - stand - d.groundY
+		local hard = CatchGeometry.isHard(height, VecMath.flat(bodyVel).Magnitude, ev.zone.kind)
+		local extra = TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
+		timing = CatchGeometry.pressGrade(if type(pressT) == "number" then pressT else nil, closest, hard, extra)
+		untimed = (hard or TechConfig.TIMED_CATCH_STRICT) and timing == 0
 		local last = d.untimedAt and d.untimedAt[actorId]
 		if untimed and last and tNow - last < TechConfig.UNTIMED_RETRY then
 			return false -- the second miss: let it drop
 		end
 	end
-	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body, nil, untimed)
+	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body, nil, untimed, timing)
 	return true
 end
 

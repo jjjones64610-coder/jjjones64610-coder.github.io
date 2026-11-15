@@ -80,7 +80,26 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 3 — The disc and throwing (docs/CORE_DESIGN.md) ← test this now
+### STAGE 4 — Catching and blocking (docs/CORE_DESIGN.md) ← test this now (with stages 1-3)
+On the **TEST FIELD**, throw the disc at least 30 studs. A few seconds after it lands it is thrown back to
+where you stand, cycling through four deliveries (the panel says which): at your chest, high, wide, and
+one to sprint through. Miss it and it comes again. Tune in `Config/Tuning.luau` ("CATCHING" and `Disc.Catch`).
+
+- [ ] **Easy catch:** stand or jog where it is coming: no button, the disc snaps into your hands and you skid to a stop. It should feel generous (SecureRadius, SecureForward).
+- [ ] **The catch ring:** a white ring on the incoming disc closes as it reaches you and turns gold in the Perfect window.
+- [ ] **Perfect Catch:** press LMB as it arrives (±50 ms): "PERFECT CATCH", your sprint meter refills a bit, and for a moment LMB throws at once at 70 % power (Hot Hands).
+- [ ] **Sky catch (HIGH delivery):** jump; in the air a catch is hard: press LMB as the disc reaches your hands. On time = "AIR CATCH" (dead on = "PERFECT AIR CATCH" with a gold flash). No press = it pops up out of your hands ("Bobbled: hands late") and you can grab it again. Try Space again in the air with no direction (Sky Reach): your hands go up and you reach a disc well over your head: "SKY CATCH".
+- [ ] **Layout catch (WIDE delivery):** run, jump, dive at it and press LMB on time: "LAYOUT CATCH". The dive reaches about 5 studs ahead of you. Then Space on the landing to roll up with the disc.
+- [ ] **Sprint catch:** hold Shift and run through the chest delivery at full speed: it needs the LMB press too.
+- [ ] **Pick up:** LMB next to a disc on the ground picks it up.
+- [ ] **Contest and block (needs a second player, or a 3v3 with bots):** jump or dive into a pass meant for someone else. With LMB on time you intercept it; without, you knock it down (BLOCK). When two players reach it together, the better-timed press wins, then the better position.
+- [ ] **Mark (3v3 with bots):** walk up to an opponent holding the disc: you start marking by yourself, hands low and wide. Jump and your hands go high. LMB swings a hand at the release. RMB does nothing without the disc.
+- [ ] **Gone:** the RMB tip and the mark keys.
+
+What to tell me: do easy catches feel generous enough? Is the hard-catch window fair (CATCH_HARD_WINDOW, 130 ms each
+side)? Should a full sprint really count as hard (HARD_CATCH_SPEED)? Is the bobble too punishing?
+
+### STAGE 3 — The disc and throwing (docs/CORE_DESIGN.md)
 **TEST FIELD (MOVEMENT)** now has a disc lying in front of you. Walk to it and press LMB to pick it up.
 After every throw the panel reports the throw, the release quality, the distance and how far it curved;
 the disc comes back in front of you a few seconds after it lands. Tune in `Config/Tuning.luau`, section
@@ -94,7 +113,7 @@ the disc comes back in front of you a few seconds after it lands. Tune in `Confi
 - [ ] **Aim:** hold RMB with the disc: the view tightens and the mouse slows for precise aiming.
 - [ ] **Fake:** while charging, press RMB: the throw is cancelled (a pump fake); you can charge again after a moment.
 - [ ] **No running with it:** pick it up or catch it at speed: you skid to a stop, then WASD only steps your free foot around the pivot (double-tap lunges). The bend keys and the step keys are the same on purpose: step out and bend round.
-- [ ] **Air throw:** throw it high to yourself (a hammer works), run under it, jump, catch it in the air and release before you land. Full power, aims true, a little less spin. Same out of a dive.
+- [ ] **Air throw:** throw it far; when it is thrown back to you HIGH (see stage 4), jump, catch it in the air (LMB on time) and release before you land. Full power, aims true, a little less spin. Same out of a dive. (You can't catch your own throw: that is the rule of the sport.)
 - [ ] **On the run:** a release during the catch skid goes exactly where you aim (there is no random spread any more).
 - [ ] **Nothing else throws:** 1-5, T, the mouse wheel, Q, E, Z, X, F, C, R do nothing.
 

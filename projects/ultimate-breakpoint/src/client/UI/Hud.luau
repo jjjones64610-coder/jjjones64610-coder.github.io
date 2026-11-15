@@ -1027,7 +1027,7 @@ function Hud.update(_dt: number)
 		if (myTeam == "A" or myTeam == "B") and (force == "FH" or force == "BH") then
 			table.insert(parts, "FORCE " .. force)
 		end
-		table.insert(parts, Theme.keyText(keyOf("Slide"), "SWITCH"))
+		table.insert(parts, if stance == "HIGH" then "IN THE AIR" else "JUMP FOR HIGH")
 		refs.markText.Text = table.concat(parts, "  ·  ")
 	end
 

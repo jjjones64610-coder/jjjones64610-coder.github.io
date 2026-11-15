@@ -38,6 +38,7 @@
 
 local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
 local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 
@@ -47,7 +48,7 @@ local M = DiscConfig.Mark
 local CatchGeometry = {}
 
 export type Zone = {
-	kind: string, -- "Secure" | "Reach" | "Dive"
+	kind: string, -- "Secure" | "Reach" | "Dive" | "Sky"
 	a: Vector3,
 	b: Vector3,
 	radius: number,
@@ -62,6 +63,7 @@ export type BodyState = {
 	diveDir: Vector3?,
 	sliding: boolean,
 	prone: boolean?, -- lying flat after a layout (DiveSlide / early Recover)
+	skyReach: boolean?, -- hands up at the top of a jump (the Sky Reach)
 }
 
 local UP = Vector3.new(0, 1, 0)
@@ -76,7 +78,7 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 	if facing.Magnitude < 0.5 then
 		facing = Vector3.new(0, 0, -1)
 	end
-	local chest = body.root + UP * C.ChestHeight + facing * 0.4
+	local chest = body.root + UP * C.ChestHeight + facing * C.SecureForward
 	if body.prone then
 		chest -= UP * Hitbox.ProneDrop
 	elseif body.sliding then
@@ -108,7 +110,41 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 			radius = C.DiveRadius,
 		})
 	end
+
+	if body.skyReach then
+		-- both hands straight up: a ball over the head
+		local hands = body.root + UP * C.TipHeight
+		table.insert(zones, { kind = "Sky", a = hands, b = hands, radius = C.TipRadius })
+	end
 	return zones
+end
+
+-- Is this a HARD catch (Config/Tuning "CATCHING")? `height` is how far the
+-- catcher's feet are off the ground, `flatSpeed` their running speed and
+-- `zoneKind` the zone the disc was touched with. Both sides call it with
+-- the same numbers (the body the client sent with the claim), so the
+-- client's prediction and the server's ruling agree.
+function CatchGeometry.isHard(height: number, flatSpeed: number, zoneKind: string): boolean
+	return height > TechConfig.AIR_CATCH_HEIGHT
+		or flatSpeed >= TechConfig.HARD_CATCH_SPEED
+		or zoneKind == "Dive"
+		or zoneKind == "Sky"
+end
+
+-- How well a catch press at `pressT` was timed against the disc's closest
+-- pass at `closest`: 2 = Perfect, 1 = in the window, 0 = no (usable) press.
+-- `extra` widens both (the server's lag allowance).
+function CatchGeometry.pressGrade(pressT: number?, closest: number, hard: boolean, extra: number?): number
+	if pressT == nil or pressT ~= pressT then
+		return 0
+	end
+	local off = math.abs(pressT - closest)
+	local more = extra or 0
+	if off <= TechConfig.CATCH_PERFECT / 1000 + more * 0.5 then
+		return 2
+	end
+	local window = if hard then TechConfig.CATCH_HARD_WINDOW else TechConfig.CATCH_WINDOW
+	return if off <= window / 1000 + more then 1 else 0
 end
 
 -- The zones a Tip is judged against: the normal zones plus a hands-up
@@ -269,6 +305,7 @@ export type Claim = {
 	depth: number, -- closest approach (bestOverPath)
 	quality: string,
 	relativeSpeed: number, -- disc speed at the claim (running at a disc never makes it harder)
+	timing: number?, -- pressGrade of the catch press: 2 Perfect, 1 on time, 0 / nil none
 }
 
 export type Resolution = {
@@ -299,9 +336,12 @@ function CatchGeometry.resolve(claims: { Claim }): Resolution?
 			table.insert(contenders, c)
 		end
 	end
+	-- a contest goes to the better-timed hands first (a press on time beats
+	-- a body that was merely there), then to the better position (depth)
 	local winner = contenders[1]
 	for _, c in contenders do
-		if c.depth < winner.depth - 1e-6 then
+		local ct, wt = c.timing or 0, winner.timing or 0
+		if ct > wt or (ct == wt and c.depth < winner.depth - 1e-6) then
 			winner = c
 		end
 	end

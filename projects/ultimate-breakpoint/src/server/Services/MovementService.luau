@@ -458,6 +458,12 @@ end
 
 -- Root height above the ground when standing (for placing a pivot or a
 -- teleport on the ground).
+-- Server time of this actor's last accepted `tech` (-inf if none).
+function MovementService.techTime(id: number, tech: string): number
+	local t = tracks[id]
+	return if t then (t.techAt[tech] or -math.huge) else -math.huge
+end
+
 function MovementService.standHeight(id: number): number
 	local t = tracks[id]
 	return if t then t.stand else 3

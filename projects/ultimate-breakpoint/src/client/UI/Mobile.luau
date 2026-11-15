@@ -123,7 +123,7 @@ function Mobile.build(parent: ScreenGui, c: any)
 	refs.buttons = right
 	-- { name / action, position, size, label without disc, label with disc }
 	local defs: { { any } } = {
-		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
+		{ "Primary", UDim2.fromOffset(250, 220), 104, "HANDS", "THROW" },
 		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "" },
 		{ "Burst", UDim2.fromOffset(80, 175), 60, "SPRINT", "" },
 		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "AIM\nFAKE" },
@@ -244,16 +244,6 @@ function Mobile.update()
 				b.BackgroundTransparency = 0.25
 			end
 			b.Visible = text ~= ""
-		end
-	end
-	-- in the air (not holding) Secondary is the Tip Reset
-	local airTip = not holding and not controllers.MovementController.isGrounded()
-	if airTip ~= refs.airTip then
-		refs.airTip = airTip
-		for _, entry in refs.labelled do
-			if entry[4] == "Secondary" and not holding then
-				(entry[1] :: TextButton).Text = if airTip then "TIP" else entry[2]
-			end
 		end
 	end
 	if not refs.discRow.Visible and refs.discHeld ~= false then

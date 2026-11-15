@@ -13,7 +13,7 @@ print("catching")
 
 local ROOT = Vector3.new(0, 3, 0)
 local FWD = Vector3.new(0, 0, -1)
-local CHEST = ROOT + Vector3.new(0, C.ChestHeight, -0.4)
+local CHEST = ROOT + Vector3.new(0, C.ChestHeight, -C.SecureForward)
 
 local function body(extra)
 	local b = { root = ROOT, facing = FWD, reaching = false, diving = false, sliding = false }
@@ -170,6 +170,86 @@ test("earliest touch wins; a near-simultaneous contest goes to the cleaner hand"
 		{ id = 2, team = "B", t = 1.00 + C.ContestWindow * 0.75, depth = 0.20, quality = "Clean", relativeSpeed = 30 },
 	})
 	expect(c.winner.id == 2 and c.contested, "cleaner hand wins the contest")
+end)
+
+test("the catch zone sits in front of the chest, not behind the back", function()
+	local zones = CatchGeometry.zones(body())
+	local ahead = ROOT + Vector3.new(0, C.ChestHeight, -(C.SecureForward + C.SecureRadius - 0.3))
+	local behind = ROOT + Vector3.new(0, C.ChestHeight, C.SecureRadius - 0.3)
+	expect(CatchGeometry.evaluate(zones, ahead) ~= nil, "reaches well in front")
+	expect(CatchGeometry.evaluate(zones, behind) == nil, "but not as far behind you")
+end)
+
+test("sky reach: hands up adds a zone over the head", function()
+	local over = ROOT + Vector3.new(0, C.TipHeight + C.TipRadius - 0.3, 0)
+	expect(CatchGeometry.evaluate(CatchGeometry.zones(body()), over) == nil, "out of reach standing")
+	local ev = CatchGeometry.evaluate(CatchGeometry.zones(body({ skyReach = true })), over)
+	expect(ev ~= nil and ev.zone.kind == "Sky", "caught overhead with the hands up")
+end)
+
+test("hard catches: in the air, layout or sky zone, or at a full sprint", function()
+	local Tech = H.require("Config/Tech")
+	expect(not CatchGeometry.isHard(0, 0, "Secure"), "standing: easy")
+	expect(not CatchGeometry.isHard(0.3, Tech.RUN_TOP_SPEED, "Secure"), "a normal run, feet down: easy")
+	expect(not CatchGeometry.isHard(0, 10, "Reach"), "a standing reach: easy")
+	expect(CatchGeometry.isHard(Tech.AIR_CATCH_HEIGHT + 0.5, 0, "Secure"), "in a jump: hard")
+	expect(CatchGeometry.isHard(0, Tech.HARD_CATCH_SPEED, "Secure"), "at a full sprint: hard")
+	expect(CatchGeometry.isHard(0, 0, "Dive"), "the layout zone: hard")
+	expect(CatchGeometry.isHard(0, 0, "Sky"), "the sky reach zone: hard")
+end)
+
+test("the catch press: Perfect inside ±50 ms, a tighter window for hard catches", function()
+	local Tech = H.require("Config/Tech")
+	local perfect, hardW, easyW = Tech.CATCH_PERFECT / 1000, Tech.CATCH_HARD_WINDOW / 1000, Tech.CATCH_WINDOW / 1000
+	expect(CatchGeometry.pressGrade(nil, 1, true) == 0, "no press")
+	expect(CatchGeometry.pressGrade(1 + perfect * 0.9, 1, true) == 2, "Perfect")
+	expect(CatchGeometry.pressGrade(1 - perfect * 0.9, 1, true) == 2, "Perfect, a hair early")
+	expect(CatchGeometry.pressGrade(1 + hardW * 0.9, 1, true) == 1, "on time for a hard catch")
+	local between = (hardW + easyW) / 2
+	expect(CatchGeometry.pressGrade(1 + between, 1, true) == 0, "too late for a hard catch")
+	expect(CatchGeometry.pressGrade(1 + between, 1, false) == 1, "but fine for an easy one")
+	expect(CatchGeometry.pressGrade(1 + between, 1, true, 0.1) == 1, "the server's lag allowance widens it")
+end)
+
+test("a contest goes to the better-timed hands, then to the better position", function()
+	local t = 1
+	local close = { id = 1, team = "A", t = t, depth = 0.2, quality = "Clean", relativeSpeed = 30, timing = 0 }
+	local timed = {
+		id = 2,
+		team = "B",
+		t = t + C.ContestWindow * 0.5,
+		depth = 0.6,
+		quality = "Clean",
+		relativeSpeed = 30,
+		timing = 1,
+	}
+	local r = CatchGeometry.resolve({ close, timed })
+	expect(r ~= nil and r.winner.id == 2 and r.contested, "the timed press beats the closer body")
+	local perfect = {
+		id = 3,
+		team = "A",
+		t = t + C.ContestWindow * 0.5,
+		depth = 0.7,
+		quality = "Clean",
+		relativeSpeed = 30,
+		timing = 2,
+	}
+	r = CatchGeometry.resolve({ timed, perfect })
+	expect(r ~= nil and r.winner.id == 3, "Perfect beats on time")
+	local deep = { id = 4, team = "B", t = t, depth = 0.1, quality = "Clean", relativeSpeed = 30, timing = 1 }
+	r = CatchGeometry.resolve({ timed, deep })
+	expect(r ~= nil and r.winner.id == 4, "equal timing: the better position")
+	local late = {
+		id = 5,
+		team = "B",
+		t = t + C.ContestWindow * 3,
+		depth = 0.05,
+		quality = "Clean",
+		relativeSpeed = 30,
+		timing = 2,
+	}
+	r = CatchGeometry.resolve({ close, late })
+	expect(r ~= nil and r.winner.id == 1, "outside the contest window the first touch has it")
 end)
 
 test("fingertip under pressure bobbles; clean catches never bobble", function()

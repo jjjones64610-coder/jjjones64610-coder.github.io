@@ -81,6 +81,15 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 4 — catching and blocking (built, awaiting playtest).** Easy
+  catches are automatic in a zone in front of the chest. Hard catches (in
+  the air, with the layout or Sky Reach zone, at a full sprint) need LMB on
+  time: a catch, or dead on a Perfect Catch; without it an attacker bobbles
+  and a defender only blocks. Blocks come from the body (a jump or a dive
+  into the path). A contest goes to the better-timed press, then the better
+  position. Marking is automatic, hands low on the ground and high in a
+  jump. The RMB tip and the mark keys are gone. Layout catch zones, which
+  were reading the old movement engine, work again.
 - **Stage 3 — the disc and throwing (built, awaiting playtest).** LMB
   charges and releases; what you hold at the release shapes the throw
   (nothing: flat backhand; A: backhand bending left; D: forehand bending

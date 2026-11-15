@@ -1742,8 +1742,21 @@ DRILLS.ResetLab = {
 -- Test field (Arena/TestFieldBuilder): free movement and free throws
 ---------------------------------------------------------------------------
 
-local TEST_RETURN = 3.5 -- s a thrown disc lies where it landed before it comes back
-local TEST_AHEAD = 7 -- studs in front of you it comes back to
+local TEST_RETURN = 2.5 -- s a thrown disc lies where it landed before it comes back
+local TEST_AHEAD = 7 -- studs in front of you it is laid down
+local TEST_FEED_MIN = 30 -- studs: a disc lying at least this far away is thrown back to you
+
+-- What comes back, in turn: an easy one, one to jump for, one to dive for.
+local TEST_FEEDS = {
+	{ up = 2.5, side = 0, text = "COMING BACK at your chest: just be there, it catches itself." },
+	{ up = 8.5, side = 0, floaty = true, text = "COMING BACK HIGH: jump, and press LMB as it reaches your hands." },
+	{
+		up = 1.2,
+		side = 9,
+		text = "COMING BACK WIDE: run, jump, dive at it (Space, Space + direction) and press LMB on time.",
+	},
+	{ up = 2.5, side = 0, text = "COMING BACK at your chest: sprint through it (hold Shift) and press LMB on time." },
+}
 
 local function testFieldDrop(s: Session)
 	local r = root(s)
@@ -1761,7 +1774,11 @@ end
 DRILLS.TestField = {
 	start = function(s: Session)
 		testFieldDrop(s)
-		hud(s, "TEST FIELD", "Run, cut, jump, dive. The disc is in front of you: pick it up and throw.")
+		hud(
+			s,
+			"TEST FIELD",
+			"Run, cut, jump, dive. The disc is in front of you: pick it up (LMB) and throw it far. It comes back for you to catch."
+		)
 	end,
 	onThrown = function(s: Session, _d: any, info: any)
 		s.data.throw = {
@@ -1805,7 +1822,28 @@ DRILLS.TestField = {
 	step = function(s: Session)
 		local at = s.data.returnAt
 		local d = s.disc
-		if at and d and now() >= at and d.mode == "Ground" then
+		local r = root(s)
+		if not (at and d and r and now() >= at and d.mode == "Ground") then
+			return
+		end
+		s.data.returnAt = nil
+		local from = services.DiscService.currentPosition(d)
+		local gap = if from then flat(from - r.Position) else Vector3.zero
+		if not from or gap.Magnitude < TEST_FEED_MIN then
+			testFieldDrop(s) -- too close to throw back: laid at your feet
+			return
+		end
+		-- thrown back to where you stand now; you choose how to take it
+		s.data.feed = ((s.data.feed or 0) % #TEST_FEEDS) + 1
+		local feed = TEST_FEEDS[s.data.feed]
+		local away = gap.Unit
+		local right = Vector3.new(-away.Z, 0, away.X)
+		local ground = Vector3.new(r.Position.X, layout.origin.Y, r.Position.Z)
+		local target = ground + Vector3.new(0, feed.up, 0) + right * feed.side
+		local origin = Vector3.new(from.X, layout.origin.Y + 4, from.Z)
+		if launchAt(s, origin, target, "Backhand", 0, feed.floaty) then
+			hud(s, "TEST FIELD", feed.text)
+		else
 			testFieldDrop(s)
 		end
 	end,

@@ -2884,11 +2884,21 @@ Tech.PINCH_PERFECT = 15
 Tech.PINCH_SPEED = 1.3 -- disc speed x this
 Tech.PINCH_SPEED_PERFECT = 1.4
 
--- catching
-Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
--- strict: a touch with no timed press bobbles (the spec). Off: it is still a
--- catch, and a timed press earns the Perfect Catch / Hot Hands bonus.
-Tech.TIMED_CATCH_STRICT = false
+-- CATCHING (stage 4, docs/CORE_DESIGN.md)
+-- Easy catches are automatic: the disc entering your catch zone (in front of
+-- your chest, Disc.Catch below) while you stand or run is yours.
+-- HARD catches need your hands on time: press Throw (LMB) as the disc
+-- arrives. A catch is hard when you are in the air (a jump or a dive), when
+-- it is made with the layout or Sky Reach zone, or at sprint speed. With no
+-- press in the window an attacker bobbles it (it pops up, catchable again)
+-- and a defender only blocks it; with the press it is a catch / interception.
+Tech.TIMED_CATCH = true -- (bots catch on contact)
+Tech.TIMED_CATCH_STRICT = false -- true: every catch needs the press, not only hard ones
+Tech.CATCH_WINDOW = 180 -- ± ms a press counts for an easy catch (it only earns the Perfect)
+Tech.CATCH_HARD_WINDOW = 130 -- FEEL: ± ms the press must be within for a hard catch
+Tech.CATCH_PERFECT = 50 -- ± ms: a Perfect Catch (Burst back, Hot Hands, the big effect)
+Tech.HARD_CATCH_SPEED = 34 -- studs/s: running at least this fast makes a catch hard (a full sprint)
+Tech.AIR_CATCH_HEIGHT = 0.75 -- studs your feet are off the ground for a catch to count as in the air
 -- against a human thrower a bot defender gets its hands on a throw only this
 -- often (rolled once per throw): bots read flights perfectly
 Tech.BOT_INTERCEPT_CHANCE = 0.55
@@ -2897,8 +2907,6 @@ Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
 Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
 Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
-Tech.CATCH_WINDOW = 180 -- ± ms
-Tech.CATCH_PERFECT = 50 -- ± ms
 
 -- disc (later step: 5)
 Tech.DISC_GRAVITY = 60
@@ -3143,7 +3151,8 @@ local Disc = {
 	-- Catch geometry (studs, relative to the root part centre).
 	Catch = {
 		ChestHeight = 1.0,
-		SecureRadius = 2.4, -- passive catch zone around the chest
+		SecureRadius = 2.6, -- FEEL: the automatic catch zone, a ball in front of your chest ...
+		SecureForward = 0.9, -- ... centred this far in front of you (the disc snaps into your hands, not your back)
 		CleanFraction = 0.8, -- min depth (over QualityWindow) inside this fraction = clean catch
 		QualityWindow = 0.1, -- a claim's quality is its minimum depth over this long after first contact
 		QualitySamples = 12, -- ... sampled every 1/120 s: first contact + this many steps
@@ -3158,7 +3167,7 @@ local Disc = {
 		ShoulderWidth = 1.0,
 		BobbleSpeed = 95 * TEMPO, -- fingertip catch of a disc faster than this bobbles (disc speed only)
 		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
-		ContestWindow = 0.04, -- claims this close in time are contested
+		ContestWindow = 0.06, -- touches this close in time are a contest: timing, then position, decides it
 		ResolveDelay = 0.04, -- server waits this long to collect competing claims
 		MaxRewind = 0.3, -- max seconds a claim can be backdated (lag compensation)
 		ClaimThrottle = 0.03, -- client: min seconds between claims for one disc (a Denied clears it)
@@ -8238,6 +8247,7 @@ return Net
 
 local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
+local TechConfig = require(Shared.Config.Tech)
 local Hitbox = require(Shared.Config.Hitbox)
 local VecMath = require(Shared.Util.VecMath)
 
@@ -8247,7 +8257,7 @@ local M = DiscConfig.Mark
 local CatchGeometry = {}
 
 export type Zone = {
-	kind: string, -- "Secure" | "Reach" | "Dive"
+	kind: string, -- "Secure" | "Reach" | "Dive" | "Sky"
 	a: Vector3,
 	b: Vector3,
 	radius: number,
@@ -8262,6 +8272,7 @@ export type BodyState = {
 	diveDir: Vector3?,
 	sliding: boolean,
 	prone: boolean?, -- lying flat after a layout (DiveSlide / early Recover)
+	skyReach: boolean?, -- hands up at the top of a jump (the Sky Reach)
 }
 
 local UP = Vector3.new(0, 1, 0)
@@ -8276,7 +8287,7 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 	if facing.Magnitude < 0.5 then
 		facing = Vector3.new(0, 0, -1)
 	end
-	local chest = body.root + UP * C.ChestHeight + facing * 0.4
+	local chest = body.root + UP * C.ChestHeight + facing * C.SecureForward
 	if body.prone then
 		chest -= UP * Hitbox.ProneDrop
 	elseif body.sliding then
@@ -8308,7 +8319,41 @@ function CatchGeometry.zones(body: BodyState): { Zone }
 			radius = C.DiveRadius,
 		})
 	end
+
+	if body.skyReach then
+		-- both hands straight up: a ball over the head
+		local hands = body.root + UP * C.TipHeight
+		table.insert(zones, { kind = "Sky", a = hands, b = hands, radius = C.TipRadius })
+	end
 	return zones
+end
+
+-- Is this a HARD catch (Config/Tuning "CATCHING")? `height` is how far the
+-- catcher's feet are off the ground, `flatSpeed` their running speed and
+-- `zoneKind` the zone the disc was touched with. Both sides call it with
+-- the same numbers (the body the client sent with the claim), so the
+-- client's prediction and the server's ruling agree.
+function CatchGeometry.isHard(height: number, flatSpeed: number, zoneKind: string): boolean
+	return height > TechConfig.AIR_CATCH_HEIGHT
+		or flatSpeed >= TechConfig.HARD_CATCH_SPEED
+		or zoneKind == "Dive"
+		or zoneKind == "Sky"
+end
+
+-- How well a catch press at `pressT` was timed against the disc's closest
+-- pass at `closest`: 2 = Perfect, 1 = in the window, 0 = no (usable) press.
+-- `extra` widens both (the server's lag allowance).
+function CatchGeometry.pressGrade(pressT: number?, closest: number, hard: boolean, extra: number?): number
+	if pressT == nil or pressT ~= pressT then
+		return 0
+	end
+	local off = math.abs(pressT - closest)
+	local more = extra or 0
+	if off <= TechConfig.CATCH_PERFECT / 1000 + more * 0.5 then
+		return 2
+	end
+	local window = if hard then TechConfig.CATCH_HARD_WINDOW else TechConfig.CATCH_WINDOW
+	return if off <= window / 1000 + more then 1 else 0
 end
 
 -- The zones a Tip is judged against: the normal zones plus a hands-up
@@ -8469,6 +8514,7 @@ export type Claim = {
 	depth: number, -- closest approach (bestOverPath)
 	quality: string,
 	relativeSpeed: number, -- disc speed at the claim (running at a disc never makes it harder)
+	timing: number?, -- pressGrade of the catch press: 2 Perfect, 1 on time, 0 / nil none
 }
 
 export type Resolution = {
@@ -8499,9 +8545,12 @@ function CatchGeometry.resolve(claims: { Claim }): Resolution?
 			table.insert(contenders, c)
 		end
 	end
+	-- a contest goes to the better-timed hands first (a press on time beats
+	-- a body that was merely there), then to the better position (depth)
 	local winner = contenders[1]
 	for _, c in contenders do
-		if c.depth < winner.depth - 1e-6 then
+		local ct, wt = c.timing or 0, winner.timing or 0
+		if ct > wt or (ct == wt and c.depth < winner.depth - 1e-6) then
 			winner = c
 		end
 	end
@@ -16052,6 +16101,9 @@ local function bodyFor(
 		diveDir = diveDir,
 		sliding = services.MovementService.isSliding(actorId),
 		prone = services.MovementService.isOnGroundAfterLayout(actorId),
+		-- hands up: a Sky Reach the server accepted around this moment
+		skyReach = math.abs(t - services.MovementService.techTime(actorId, "SkyReach"))
+			<= TechConfig.SKY_REACH_TIME + 0.15 + ping,
 	}
 end
 
@@ -16108,7 +16160,8 @@ local function addClaim(
 	discVel: Vector3,
 	body: Vector3,
 	tip: boolean?,
-	untimed: boolean?
+	untimed: boolean?,
+	timing: number?
 )
 	local discPos = services.DiscService.positionAt(d, t)
 	for _, c in d.claims do
@@ -16120,6 +16173,7 @@ local function addClaim(
 			if not untimed then
 				c.untimed = false -- any timed press of the touch counts
 			end
+			c.timing = math.max(c.timing or 0, timing or 0)
 			-- a repeated claim: the earliest touch orders it, the deepest
 			-- point of either window is its quality
 			if ev.depth < c.depth - 1e-6 then
@@ -16147,6 +16201,7 @@ local function addClaim(
 		body = body,
 		tip = tip == true,
 		untimed = untimed == true,
+		timing = timing or 0,
 	})
 	if d.resolveAt == nil then
 		d.resolveAt = now() + C.ResolveDelay
@@ -16243,17 +16298,25 @@ function CatchingService.claim(
 	if not ev then
 		return false
 	end
+	-- Hard catches (in the air, a layout or Sky Reach zone, a full sprint)
+	-- need the press on time; easy ones are automatic. The press also grades
+	-- the claim for a contest (timing first, then position).
 	local untimed = false
-	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and not actor.isBot then
+	local timing = 0
+	if TechConfig.TIMED_CATCH and not actor.isBot then
 		local closest = ev.t or t
-		local allow = TechConfig.CATCH_WINDOW / 1000 + TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
-		untimed = not (type(pressT) == "number" and pressT == pressT and math.abs(pressT - closest) <= allow)
+		local stand = services.MovementService.standHeight(actorId)
+		local height = body.Y - stand - d.groundY
+		local hard = CatchGeometry.isHard(height, VecMath.flat(bodyVel).Magnitude, ev.zone.kind)
+		local extra = TechConfig.CATCH_LAG_ALLOWANCE / 1000 + ping
+		timing = CatchGeometry.pressGrade(if type(pressT) == "number" then pressT else nil, closest, hard, extra)
+		untimed = (hard or TechConfig.TIMED_CATCH_STRICT) and timing == 0
 		local last = d.untimedAt and d.untimedAt[actorId]
 		if untimed and last and tNow - last < TechConfig.UNTIMED_RETRY then
 			return false -- the second miss: let it drop
 		end
 	end
-	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body, nil, untimed)
+	addClaim(d, actorId, actor.team, t, ev, velocityOf(d, samples), body, nil, untimed, timing)
 	return true
 end
 
@@ -20673,6 +20736,12 @@ end
 
 -- Root height above the ground when standing (for placing a pivot or a
 -- teleport on the ground).
+-- Server time of this actor's last accepted `tech` (-inf if none).
+function MovementService.techTime(id: number, tech: string): number
+	local t = tracks[id]
+	return if t then (t.techAt[tech] or -math.huge) else -math.huge
+end
+
 function MovementService.standHeight(id: number): number
 	local t = tracks[id]
 	return if t then t.stand else 3
@@ -25352,8 +25421,21 @@ DRILLS.ResetLab = {
 -- Test field (Arena/TestFieldBuilder): free movement and free throws
 ---------------------------------------------------------------------------
 
-local TEST_RETURN = 3.5 -- s a thrown disc lies where it landed before it comes back
-local TEST_AHEAD = 7 -- studs in front of you it comes back to
+local TEST_RETURN = 2.5 -- s a thrown disc lies where it landed before it comes back
+local TEST_AHEAD = 7 -- studs in front of you it is laid down
+local TEST_FEED_MIN = 30 -- studs: a disc lying at least this far away is thrown back to you
+
+-- What comes back, in turn: an easy one, one to jump for, one to dive for.
+local TEST_FEEDS = {
+	{ up = 2.5, side = 0, text = "COMING BACK at your chest: just be there, it catches itself." },
+	{ up = 8.5, side = 0, floaty = true, text = "COMING BACK HIGH: jump, and press LMB as it reaches your hands." },
+	{
+		up = 1.2,
+		side = 9,
+		text = "COMING BACK WIDE: run, jump, dive at it (Space, Space + direction) and press LMB on time.",
+	},
+	{ up = 2.5, side = 0, text = "COMING BACK at your chest: sprint through it (hold Shift) and press LMB on time." },
+}
 
 local function testFieldDrop(s: Session)
 	local r = root(s)
@@ -25371,7 +25453,11 @@ end
 DRILLS.TestField = {
 	start = function(s: Session)
 		testFieldDrop(s)
-		hud(s, "TEST FIELD", "Run, cut, jump, dive. The disc is in front of you: pick it up and throw.")
+		hud(
+			s,
+			"TEST FIELD",
+			"Run, cut, jump, dive. The disc is in front of you: pick it up (LMB) and throw it far. It comes back for you to catch."
+		)
 	end,
 	onThrown = function(s: Session, _d: any, info: any)
 		s.data.throw = {
@@ -25415,7 +25501,28 @@ DRILLS.TestField = {
 	step = function(s: Session)
 		local at = s.data.returnAt
 		local d = s.disc
-		if at and d and now() >= at and d.mode == "Ground" then
+		local r = root(s)
+		if not (at and d and r and now() >= at and d.mode == "Ground") then
+			return
+		end
+		s.data.returnAt = nil
+		local from = services.DiscService.currentPosition(d)
+		local gap = if from then flat(from - r.Position) else Vector3.zero
+		if not from or gap.Magnitude < TEST_FEED_MIN then
+			testFieldDrop(s) -- too close to throw back: laid at your feet
+			return
+		end
+		-- thrown back to where you stand now; you choose how to take it
+		s.data.feed = ((s.data.feed or 0) % #TEST_FEEDS) + 1
+		local feed = TEST_FEEDS[s.data.feed]
+		local away = gap.Unit
+		local right = Vector3.new(-away.Z, 0, away.X)
+		local ground = Vector3.new(r.Position.X, layout.origin.Y, r.Position.Z)
+		local target = ground + Vector3.new(0, feed.up, 0) + right * feed.side
+		local origin = Vector3.new(from.X, layout.origin.Y + 4, from.Z)
+		if launchAt(s, origin, target, "Backhand", 0, feed.floaty) then
+			hud(s, "TEST FIELD", feed.text)
+		else
 			testFieldDrop(s)
 		end
 	end,
@@ -27021,61 +27128,44 @@ return CameraController
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
 --[[
-	CatchController — catching, reaching and marking for the local player.
+	CatchController — catching, blocking and marking for the local player
+	(docs/CORE_DESIGN.md, stage 4). One button: Primary (LMB) is your hands.
 
-	Catching. Contact is detected here, where your body is exactly where you
-	see it and the disc is at the shared server time. Every frame the disc's
-	path since the last frame (keyed by FlightId, so a new segment never
-	sweeps from the old one's last point) is swept against your catch zones
-	(CatchGeometry, the module the server validates with). On first contact
-	the controller keeps tracking for up to ClaimTrackTime, or until the disc
-	starts moving away from your zone core (its closest approach), then
-	claims: Catch(discId, tFirst, zoneKind, reachDir, rootPos, rootVel) with
-	your body as it was at first contact. On the claim (except a defender's
-	rim touch deeper than BlockDepth, which the server rules a Block and is
-	not predicted):
-	  * Claimed(discId, zoneKind) fires (MovementController starts the catch
-	    slow-down) and the disc eases into your hand (DiscRenderer)
-	  * the catch sound and a small burst play at once for a confident claim
-	    (depth < LOCAL_FX_DEPTH), once per flight segment; recentLocalCatch()
-	    lets the effects skip the server's copy of your own catch
-	The server always answers (CatchResult). Denied, or the disc going to
-	someone else, fires Denied(discId): MovementController cancels the
-	slow-down, the disc eases back onto its flight, and the throttle is
-	cleared so a disc still inside your zones is claimed again at once. A
-	claim with no answer yet is never repeated sooner than ClaimThrottle.
+	EASY CATCHES ARE AUTOMATIC. Every frame the disc's path since the last
+	frame is swept against your catch zones (CatchGeometry, the module the
+	server validates with): a ball in front of your chest, plus a reach
+	toward your aim after a press, a long layout zone while you dive, and a
+	hands-up zone during a Sky Reach. On contact the controller tracks to the
+	disc's closest approach, then claims it; the disc eases into your hands
+	at once (DiscRenderer) and the server confirms.
 
-	Reach (Primary while not holding, and not while a claimed catch awaits
-	the server's answer): opens a 0.28 s window where your hand
-	extends toward your aim. A light assist bends the reach toward a disc that
-	is close and roughly where you are looking. Primary next to a disc lying
-	on the ground asks the server to pick it up instead (Action "Pickup").
+	HARD CATCHES NEED YOUR HANDS ON TIME. A catch is hard when you are in
+	the air (a jump or a dive), when the disc is taken with the layout or
+	Sky Reach zone, or at full sprint (CatchGeometry.isHard). Press Primary
+	as the disc arrives: within CATCH_HARD_WINDOW it is a catch, within
+	CATCH_PERFECT a Perfect Catch (Burst back, Hot Hands for an instant
+	release, the big effect). With no press an attacker bobbles it (it pops
+	up and can be caught again) and a defender only knocks it down: a block.
+	The catch ring on the disc closes as it reaches your hands and turns
+	gold in the Perfect window. A press on an easy catch still earns the
+	Perfect.
 
-	Tip Reset (Secondary in the air, not holding): taps the disc up through
-	your hands. Judged here on the disc's closest pass within Reset.TipWindow
-	of the press against your tip zones (the normal zones plus a hands-up
-	sphere); a hit sends a claim of kind "Tip" with the press time, gives you
-	the reset at once (MovementController.tipReset) and predicts the disc's
-	pop so you can chase it. The server re-judges it and pops the disc for
-	everyone (a Denied tip just eases the disc back onto its flight). A press
-	with no disc close enough says so.
+	BLOCKS come from your body: get any of your zones into the disc's path
+	with a well-timed jump or dive. On time it is an interception, otherwise
+	a block. When two players touch the disc together, the better-timed
+	press wins it, then the better position (CatchGeometry.resolve).
 
-	Timed catch (TechConfig.TIMED_CATCH): Catch is Primary. A claim carries
-	the time you pressed it. At the closest approach with no press yet, the
-	claim waits up to CATCH_WINDOW for a late press. Only a press inside the
-	window predicts the catch (slow-down, disc in hand); otherwise the claim
-	still goes out and the server bobbles it (you get one re-press). The
-	grade (Perfect within ±40 ms) goes to the debug readout; a confirmed
-	Perfect Catch refunds Burst, scores a PerfectCatch and opens Hot Hands
-	(hotHands()) for HOT_HANDS_TIME. The catch ring (DiscRenderer-free, a
-	ring on the disc) closes as the disc nears your hands.
+	Primary also: picks up a disc lying next to you; opens a short reach
+	toward your aim (the extra zone above); and, on the mark, swings a hand
+	at the release (DefenseService).
 
-	Marking: hold Secondary within Marking.Range of an opposing holder (their
-	pivot) for the mark shuffle (MovementController.setMarking) with your
-	hands up, replicated as MarkStance(on, stance). The Slide key toggles High
-	/ Low while marking. A Cut / Dive / Burst ends the mark inside the sim;
-	press Secondary again to re-mark. Moving well out of range drops the
-	mark until you come back in.
+	MARKING is automatic: within Marking.Range of an opposing thrower's pivot
+	you shuffle with your hands out. The stance follows your body: on the
+	ground it is Low and wide; jump and it is High. No mark keys.
+
+	The server always answers a claim (CatchResult). Denied, or the disc
+	going to someone else, fires Denied(discId): the slow-down is cancelled
+	and the disc eases back onto its flight.
 ]]
 
 local Players = game:GetService("Players")
@@ -27098,7 +27188,6 @@ local Net = require(Shared.Net)
 
 local C = DiscConfig.Catch
 local MK = MovementConfig.Marking
-local RS = MovementConfig.Reset
 
 local CatchController = {}
 
@@ -27106,7 +27195,7 @@ CatchController.Reached = Signal.new() -- (dir)
 CatchController.Claimed = Signal.new() -- (discId, zoneKind)
 CatchController.Denied = Signal.new() -- (discId)
 CatchController.Caught = Signal.new() -- (discId, interception) the server confirmed your catch
-CatchController.Tipped = Signal.new() -- (discId, defender, quality) you tipped a disc (predicted)
+CatchController.Tipped = Signal.new() -- (kept for listeners; the tip press is gone with its key)
 
 local LOCAL_FX_DEPTH = 0.85 -- claims this deep play the catch feedback at once
 local LOCAL_FX_RECENT = 1.2 -- recentLocalCatch(): feedback played this recently
@@ -27123,8 +27212,7 @@ local player = Players.LocalPlayer
 local reachAt = -math.huge
 local reachDir = Vector3.new(0, 0, -1)
 
--- marking
-local markHeld = false -- Secondary is held (and armed: a technique disarms it)
+-- marking (automatic)
 local marking = false
 local markStance = "Low"
 
@@ -27144,12 +27232,14 @@ type Contact = {
 	fxDone: boolean, -- local catch feedback already played for this segment
 	settled: boolean, -- the server decided this segment (caught / lost): no more claims
 	closestT: number?, -- timed catch: when the disc was closest (claim held for a late press)
+	hard: boolean, -- a hard catch (CatchGeometry.isHard): needs the press
 	grade: string?, -- the timed grade of the claim that went out
 }
 local contacts: { [string]: Contact } = {}
 local lastLocalFx = -math.huge -- os.clock() of the last local catch feedback
 local catchPressAt = -math.huge -- Net.now() of the last Catch press
 local grades: { [string]: string } = {} -- disc id -> grade of our pending claim
+local kinds: { [string]: string } = {} -- disc id -> zone of our pending claim
 local hotHandsUntil = -math.huge -- os.clock()
 local CATCH_W = TechConfig.CATCH_WINDOW / 1000
 
@@ -27347,36 +27437,28 @@ local function holderDistance(): number?
 end
 
 local function updateMarking()
-	if marking and not controllers.MovementController.isMarking() then
-		-- a technique ended the mark inside the sim: press Secondary again
-		markHeld = false
-		setMarking(false)
-		return
-	end
-	if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
+	local mc = controllers.MovementController
+	if controllers.ThrowController.isHolding() or mc.holdingDisc() then
 		setMarking(false)
 		return
 	end
 	local d = holderDistance()
-	-- on the tech engine you mark automatically near an opposing thrower
-	-- (holding Secondary still works); the classic engine needs the hold
-	local auto = controllers.MovementController.engine() == "Tech" and controllers.MovementController.isGrounded()
-	if not markHeld and not auto then
-		setMarking(false)
-		return
-	end
 	if marking then
 		if d == nil or d > MK.Range + MARK_DROP then
 			setMarking(false)
 		end
-	elseif d ~= nil and d <= MK.Range then
+	elseif d ~= nil and d <= MK.Range and mc.isGrounded() then
 		setMarking(true)
 	end
-end
-
-local function toggleStance()
-	markStance = if markStance == "High" then "Low" else "High"
-	sendStance()
+	-- the stance follows the body: hands low and wide on the ground, high
+	-- in a jump
+	if marking then
+		local want = if mc.isGrounded() then "Low" else "High"
+		if want ~= markStance then
+			markStance = want
+			sendStance()
+		end
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -27384,162 +27466,22 @@ end
 ---------------------------------------------------------------------------
 
 local function bodyState(root: BasePart): CatchGeometry.BodyState
-	local sim = controllers.MovementController.sim()
-	local diving = sim.mode == "Dive" or sim.mode == "DiveSlide"
+	local mc = controllers.MovementController
+	local tech: TechCore.State = mc.techState()
+	local st = tech.state
+	local facing = VecMath.flatUnit(root.CFrame.LookVector)
+	local diving = st == "Diving" or st == "Downed"
 	return {
-		root = Hitbox.root(root.Position, controllers.MovementController.standHeight()),
-		facing = VecMath.flatUnit(root.CFrame.LookVector),
+		root = Hitbox.root(root.Position, mc.standHeight()),
+		facing = facing,
 		reaching = CatchController.reachActive(),
 		reachDir = reachDir,
 		diving = diving,
-		diveDir = sim.diveDir,
-		sliding = sim.mode == "Slide",
-		prone = sim.mode == "DiveSlide" or sim.mode == "Recover",
+		diveDir = if diving then VecMath.flatUnit(tech.heading) else facing,
+		sliding = st == "Sliding",
+		prone = st == "Downed" or (st == "Recovering" and tech.now < tech.recoverUntil),
+		skyReach = TechCore.reachBonus(tech) > 0,
 	}
-end
-
----------------------------------------------------------------------------
--- tip reset
----------------------------------------------------------------------------
-
-local TIP_SAMPLE = 1 / 120
-
--- Every flying disc's path over [t0, t1] as this client displays it, with
--- what is needed to predict a tip: { id, folder, samples, sim, launchTime }.
-type TipCandidate = {
-	id: string,
-	folder: Configuration,
-	samples: { CatchGeometry.PathSample },
-	sim: DiscPhysics.State,
-	launchTime: number,
-	wind: DiscPhysics.Wind,
-	groundY: number,
-	flightId: number,
-}
-
-local function tipCandidates(t0: number, t1: number): { TipCandidate }
-	local list: { TipCandidate } = {}
-	for _, folder in controllers.DiscRenderer.folders() do
-		local id = folder:GetAttribute("Id")
-		if type(id) == "string" and canClaim(folder) then
-			local sim, launchTime, wind, groundY, landed, flightId = controllers.DiscRenderer.flight(id)
-			local mine = folder:GetAttribute("ThrowerId") == player.UserId and folder:GetAttribute("Touched") ~= true
-			if sim and not landed and not mine and t1 > launchTime + DiscConfig.Throw.NoCatchTime then
-				local samples: { CatchGeometry.PathSample } = {}
-				local from = math.max(t0, launchTime + DiscConfig.Throw.NoCatchTime)
-				local n = math.clamp(math.ceil((t1 - from) / TIP_SAMPLE), 1, 64)
-				for k = 0, n do
-					local tk = from + (t1 - from) * k / n
-					local x, y, z = DiscPhysics.positionAt(sim, tk - launchTime)
-					table.insert(samples, { t = tk, pos = Vector3.new(x, y, z) })
-				end
-				table.insert(list, {
-					id = id,
-					folder = folder,
-					samples = samples,
-					sim = sim,
-					launchTime = launchTime,
-					wind = wind,
-					groundY = groundY,
-					flightId = flightId,
-				})
-			end
-		end
-	end
-	return list
-end
-
--- Would a tip press right now touch a disc? (HUD context hint)
-function CatchController.tipReady(): boolean
-	local root = controllers.MovementController.root()
-	if not root or controllers.MovementController.isGrounded() or controllers.ThrowController.isHolding() then
-		return false
-	end
-	local t = now()
-	local zones = CatchGeometry.tipZones(bodyState(root))
-	for _, cand in tipCandidates(t - RS.TipWindow, t + RS.TipWindow) do
-		if CatchGeometry.bestTip(zones, cand.samples, t, RS.TipPerfect) then
-			return true
-		end
-	end
-	return false
-end
-
--- Secondary in the air: try to tip the disc passing your hands.
-local function attemptTip()
-	local root = controllers.MovementController.root()
-	if not root then
-		return
-	end
-	local t = now()
-	local zones = CatchGeometry.tipZones(bodyState(root))
-	local best: CatchGeometry.Evaluation? = nil
-	local bestQ = "Clean"
-	local bestCand: TipCandidate? = nil
-	for _, cand in tipCandidates(t - RS.TipWindow, t + RS.TipWindow) do
-		local ev, q = CatchGeometry.bestTip(zones, cand.samples, t, RS.TipPerfect)
-		if ev and (best == nil or math.abs((ev.t or t) - t) < math.abs(((best :: any).t or t) - t)) then
-			best, bestQ, bestCand = ev, q, cand
-		end
-	end
-	-- hands up either way (the swipe reads even on a miss)
-	local facing = VecMath.flatUnit(root.CFrame.LookVector)
-	local c = player.Character
-	if c then
-		c:SetAttribute("UB_LocalReach", t)
-		c:SetAttribute("UB_LocalReachDir", (facing + Vector3.new(0, 1.6, 0)).Unit)
-	end
-	if not best or not bestCand then
-		controllers.MovementController.Feedback:Fire({ kind = "Context", text = "NO DISC TO TIP" })
-		return
-	end
-	local ev = best :: CatchGeometry.Evaluation
-	local cand = bestCand :: TipCandidate
-	local ok = controllers.MovementController.tipReset(bestQ, facing)
-	if not ok then
-		return -- the sim said why (two tips already, cooldown)
-	end
-	local myTeam = c and c:GetAttribute("UBTeam")
-	local throwerTeam = cand.folder:GetAttribute("ThrowerTeam")
-	local defender = type(throwerTeam) == "string"
-		and throwerTeam ~= ""
-		and throwerTeam ~= myTeam
-		and cand.folder:GetAttribute("Pull") ~= true
-	Net.event("Catch"):FireServer(cand.id, t, "Tip", facing, root.Position, root.AssemblyLinearVelocity)
-	-- no catch claims on the segment you just tipped: the next touch is on
-	-- the popped disc (the server's new segment)
-	contacts[cand.id] = {
-		flightId = cand.flightId,
-		lastPos = root.Position,
-		lastT = t,
-		tFirst = nil,
-		kind = "Tip",
-		bestDepth = 1,
-		lastDepth = 1,
-		body = root.Position,
-		bodyVel = root.AssemblyLinearVelocity,
-		retry = false,
-		awaiting = false,
-		sentAt = os.clock(),
-		fxDone = true,
-		settled = true,
-	}
-	-- predict the pop so the chase starts now (the server's segment blends in)
-	local at = ev.t or t
-	local st = DiscPhysics.copy(cand.sim)
-	DiscPhysics.advanceTo(st, at - cand.launchTime, cand.wind, cand.groundY - 100)
-	local x, y, z = DiscPhysics.positionAt(cand.sim, at - cand.launchTime)
-	local pos = Vector3.new(x, math.max(y, cand.groundY + 0.6), z)
-	local popped = DiscPhysics.fromVectors(
-		pos,
-		CatchGeometry.tipVelocity(DiscPhysics.velocity(st), facing),
-		Vector3.new(0, 1, 0),
-		C.TipSpin
-	)
-	controllers.DiscRenderer.predictTip(cand.id, popped, at)
-	controllers.AudioController.playAt("Tip", pos)
-	controllers.EffectsController.burst(pos, Color3.fromRGB(90, 230, 255), if bestQ == "Perfect" then 18 else 10, 12)
-	CatchController.Tipped:Fire(cand.id, defender, bestQ)
 end
 
 -- Deepest evaluation along this frame's disc path, and the time of the
@@ -27599,27 +27541,32 @@ local function sendClaim(folder: Configuration, id: string, c: Contact, discPos:
 	c.awaiting = true
 	c.retry = false
 	local pressT: number? = nil
+	local hard = false
 	if TechConfig.TIMED_CATCH then
 		local closest = c.closestT or now()
 		local offset = catchPressAt - closest
 		local tech = controllers.MovementController.techState()
-		if math.abs(offset) <= CATCH_W then
+		hard = c.hard
+		local window = if hard then TechConfig.CATCH_HARD_WINDOW else TechConfig.CATCH_WINDOW
+		local grade = CatchGeometry.pressGrade(catchPressAt, closest, hard)
+		if grade > 0 then
 			pressT = catchPressAt
-			local timing =
-				TechCore.noteTiming(tech, "Catch", offset * 1000, TechConfig.CATCH_WINDOW, TechConfig.CATCH_PERFECT)
-			c.grade = timing.quality
+			TechCore.noteTiming(tech, "Catch", offset * 1000, window, TechConfig.CATCH_PERFECT)
+			c.grade = if grade == 2 then "Perfect" else "Clean"
 		else
 			c.grade = "Miss"
 			if catchPressAt > closest - 1 then
-				TechCore.noteTiming(tech, "Catch", offset * 1000, TechConfig.CATCH_WINDOW, TechConfig.CATCH_PERFECT)
+				TechCore.noteTiming(tech, "Catch", offset * 1000, window, TechConfig.CATCH_PERFECT)
 			end
 		end
 		grades[id] = c.grade :: string
+		kinds[id] = c.kind
 		c.closestT = nil
 	end
 	Net.event("Catch"):FireServer(id, tFirst, c.kind, reachDir, c.body, c.bodyVel, pressT)
-	if TechConfig.TIMED_CATCH and TechConfig.TIMED_CATCH_STRICT and pressT == nil then
-		-- strict: no timed press means the server bobbles it, so predict nothing
+	if TechConfig.TIMED_CATCH and (hard or TechConfig.TIMED_CATCH_STRICT) and pressT == nil then
+		-- a hard catch with no press on time: the server bobbles it (or, on
+		-- defence, rules a block), so predict nothing
 		return
 	end
 	if likelyBlock(folder, c) then
@@ -27666,6 +27613,7 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 			sentAt = -math.huge,
 			fxDone = false,
 			settled = false,
+			hard = false,
 		}
 		return
 	end
@@ -27708,10 +27656,18 @@ local function stepDisc(folder: Configuration, root: BasePart, zones: { CatchGeo
 				c.closestT = tNow
 			end
 			local closest = c.closestT :: number
-			-- strict waits the whole window for a late press; otherwise only
-			-- the Perfect part (a touch is a catch anyway)
-			local wait = if TechConfig.TIMED_CATCH_STRICT then CATCH_W else TechConfig.CATCH_PERFECT / 1000
-			if catchPressAt < closest - CATCH_W and tNow < closest + wait then
+			-- is it a hard catch? (the same numbers go to the server)
+			local groundY = folder:GetAttribute("GroundY")
+			local height = c.body.Y
+				- controllers.MovementController.standHeight()
+				- (if type(groundY) == "number" then groundY else 0)
+			c.hard = CatchGeometry.isHard(height, VecMath.flat(c.bodyVel).Magnitude, c.kind)
+			-- a hard catch waits its whole window for a late press; an easy
+			-- one only the Perfect part (the touch is a catch anyway)
+			local need = c.hard or TechConfig.TIMED_CATCH_STRICT
+			local window = if c.hard then TechConfig.CATCH_HARD_WINDOW / 1000 else CATCH_W
+			local wait = if need then window else TechConfig.CATCH_PERFECT / 1000
+			if catchPressAt < closest - window and tNow < closest + wait then
 				return
 			end
 		end
@@ -27857,19 +27813,39 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 	end
 	local grade = grades[discId]
 	grades[discId] = nil
+	local kind = kinds[discId]
+	kinds[discId] = nil
+	local hard = c ~= nil and c.hard
 	if accepted ~= true then
 		controllers.DiscRenderer.cancelCatchPrediction(discId)
 		CatchController.Denied:Fire(discId)
-		if result == "Bobble" and TechConfig.TIMED_CATCH_STRICT then
-			controllers.TechFeedback.play("Bobble", "Miss")
+		if result == "Bobble" then
+			controllers.TechFeedback.play(if hard then "Bobbled: hands late" else "Bobble", "Miss")
+		elseif result == "Block" then
+			controllers.TechFeedback.play("Block", "Clean")
 		end
 	else
 		if grade == "Perfect" then
 			-- Perfect Catch: Burst back, a scored tech, and Hot Hands
 			hotHandsUntil = os.clock() + TechConfig.HOT_HANDS_TIME
 			TechCore.addBurst(controllers.MovementController.techState(), TechConfig.PERFECT_BURST_REFUND)
-			controllers.TechFeedback.play("Perfect Catch", "Perfect")
 			controllers.MovementController.addTech("PerfectCatch", "Perfect", Vector3.zero)
+		end
+		-- the reward: hard catches are named, Perfect ones hit like a highlight
+		local name = if kind == "Dive"
+			then "Layout Catch"
+			elseif kind == "Sky" then "Sky Catch"
+			elseif hard and not controllers.MovementController.isGrounded() then "Air Catch"
+			elseif hard then "Sprint Catch"
+			else "Catch"
+		if grade == "Perfect" then
+			controllers.TechFeedback.play("Perfect " .. name, "Perfect")
+			if hard then
+				controllers.AnimeFX.impactFrame(Color3.fromRGB(255, 215, 80))
+				controllers.CameraController.kick(0.5)
+			end
+		elseif hard then
+			controllers.TechFeedback.play(name, "Clean")
 		end
 		local folder = controllers.DiscRenderer.folderOf(discId)
 		local me = player.Character
@@ -27893,8 +27869,11 @@ function CatchController.Start()
 		if controllers.ThrowController.isHolding() or controllers.MovementController.holdingDisc() then
 			return
 		end
-		if action == "Primary" and marking and controllers.MovementController.engine() == "Tech" then
-			-- Hand Block: swing the arm toward your aim (DefenseService)
+		if action == "Primary" then
+			catchPressAt = now() -- your hands, whatever else the press does
+		end
+		if action == "Primary" and marking then
+			-- on the mark: swing a hand toward your aim (DefenseService)
 			local aim = VecMath.flatUnit(controllers.CameraController.getAimDirection())
 			Net.event("Action"):FireServer("HandBlock", aim)
 			reachAt = now()
@@ -27907,25 +27886,9 @@ function CatchController.Start()
 			return
 		end
 		if action == "Primary" then
-			catchPressAt = now()
 			if not requestPickup() then
 				CatchController.reach()
 			end
-		elseif action == "Secondary" then
-			if not controllers.MovementController.isGrounded() then
-				attemptTip()
-				return
-			end
-			markHeld = true
-			updateMarking()
-		elseif action == "Slide" and marking then
-			toggleStance()
-		end
-	end)
-	controllers.InputController.ActionEnded:Connect(function(action)
-		if action == "Secondary" then
-			markHeld = false
-			setMarking(false)
 		end
 	end)
 	Net.event("CatchResult").OnClientEvent:Connect(onResult)
@@ -27934,7 +27897,6 @@ function CatchController.Start()
 			marking = false
 			sendStance()
 		end
-		markHeld = false
 		markStance = "Low"
 		reachAt = -math.huge
 		table.clear(contacts)
@@ -35712,7 +35674,7 @@ function Hud.update(_dt: number)
 		if (myTeam == "A" or myTeam == "B") and (force == "FH" or force == "BH") then
 			table.insert(parts, "FORCE " .. force)
 		end
-		table.insert(parts, Theme.keyText(keyOf("Slide"), "SWITCH"))
+		table.insert(parts, if stance == "HIGH" then "IN THE AIR" else "JUMP FOR HIGH")
 		refs.markText.Text = table.concat(parts, "  ·  ")
 	end
 
@@ -36098,6 +36060,20 @@ local function techGuide(): { string }
 		),
 		"WITH THE DISC — you skid to a stop, then only your free foot moves (WASD around the pivot; double-tap to lunge). Throw before the stall count ends.",
 		"AIR THROW — catch it in a jump or a dive and release before you land. Legal, and deadly.",
+		"CATCH — easy ones are automatic: be where the disc is and it snaps into your hands.",
+		string.format(
+			"HARD CATCHES — in a jump, in a dive, with your hands up, or at full sprint you must press %s as the disc arrives. On time: a catch. Dead on: a Perfect Catch. Late or never: it pops out.",
+			k("Primary")
+		),
+		string.format(
+			"BLOCK — get your body into the disc's path with a jump or a dive. Press %s on time and you intercept it; otherwise you knock it down.",
+			k("Primary")
+		),
+		string.format(
+			"MARK — stand near the thrower and you mark by yourself: hands low on the ground, high when you jump. %s swings a hand at the release.",
+			k("Primary")
+		),
+		string.format("PICK UP — %s next to a disc on the ground.", k("Primary")),
 		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end
@@ -37534,7 +37510,7 @@ function Mobile.build(parent: ScreenGui, c: any)
 	refs.buttons = right
 	-- { name / action, position, size, label without disc, label with disc }
 	local defs: { { any } } = {
-		{ "Primary", UDim2.fromOffset(250, 220), 104, "THROW\nREACH", "THROW" },
+		{ "Primary", UDim2.fromOffset(250, 220), 104, "HANDS", "THROW" },
 		{ "Jump", UDim2.fromOffset(150, 250), 70, "JUMP", "" },
 		{ "Burst", UDim2.fromOffset(80, 175), 60, "SPRINT", "" },
 		{ "Secondary", UDim2.fromOffset(310, 120), 58, "", "AIM\nFAKE" },
@@ -37655,16 +37631,6 @@ function Mobile.update()
 				b.BackgroundTransparency = 0.25
 			end
 			b.Visible = text ~= ""
-		end
-	end
-	-- in the air (not holding) Secondary is the Tip Reset
-	local airTip = not holding and not controllers.MovementController.isGrounded()
-	if airTip ~= refs.airTip then
-		refs.airTip = airTip
-		for _, entry in refs.labelled do
-			if entry[4] == "Secondary" and not holding then
-				(entry[1] :: TextButton).Text = if airTip then "TIP" else entry[2]
-			end
 		end
 	end
 	if not refs.discRow.Visible and refs.discHeld ~= false then

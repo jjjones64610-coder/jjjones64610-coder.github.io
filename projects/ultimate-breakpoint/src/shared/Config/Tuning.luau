@@ -170,11 +170,21 @@ Tech.PINCH_PERFECT = 15
 Tech.PINCH_SPEED = 1.3 -- disc speed x this
 Tech.PINCH_SPEED_PERFECT = 1.4
 
--- catching
-Tech.TIMED_CATCH = true -- humans press Catch on time (bots catch on contact)
--- strict: a touch with no timed press bobbles (the spec). Off: it is still a
--- catch, and a timed press earns the Perfect Catch / Hot Hands bonus.
-Tech.TIMED_CATCH_STRICT = false
+-- CATCHING (stage 4, docs/CORE_DESIGN.md)
+-- Easy catches are automatic: the disc entering your catch zone (in front of
+-- your chest, Disc.Catch below) while you stand or run is yours.
+-- HARD catches need your hands on time: press Throw (LMB) as the disc
+-- arrives. A catch is hard when you are in the air (a jump or a dive), when
+-- it is made with the layout or Sky Reach zone, or at sprint speed. With no
+-- press in the window an attacker bobbles it (it pops up, catchable again)
+-- and a defender only blocks it; with the press it is a catch / interception.
+Tech.TIMED_CATCH = true -- (bots catch on contact)
+Tech.TIMED_CATCH_STRICT = false -- true: every catch needs the press, not only hard ones
+Tech.CATCH_WINDOW = 180 -- ± ms a press counts for an easy catch (it only earns the Perfect)
+Tech.CATCH_HARD_WINDOW = 130 -- FEEL: ± ms the press must be within for a hard catch
+Tech.CATCH_PERFECT = 50 -- ± ms: a Perfect Catch (Burst back, Hot Hands, the big effect)
+Tech.HARD_CATCH_SPEED = 34 -- studs/s: running at least this fast makes a catch hard (a full sprint)
+Tech.AIR_CATCH_HEIGHT = 0.75 -- studs your feet are off the ground for a catch to count as in the air
 -- against a human thrower a bot defender gets its hands on a throw only this
 -- often (rolled once per throw): bots read flights perfectly
 Tech.BOT_INTERCEPT_CHANCE = 0.55
@@ -183,8 +193,6 @@ Tech.UNTIMED_RETRY = 1.0 -- s: a second untimed touch inside this drops the disc
 Tech.HOT_HANDS_TIME = 0.4 -- s after a Perfect Catch
 Tech.HOT_HANDS_POWER = 0.7
 Tech.CATCH_RADIUS = 2.5
-Tech.CATCH_WINDOW = 180 -- ± ms
-Tech.CATCH_PERFECT = 50 -- ± ms
 
 -- disc (later step: 5)
 Tech.DISC_GRAVITY = 60
@@ -429,7 +437,8 @@ local Disc = {
 	-- Catch geometry (studs, relative to the root part centre).
 	Catch = {
 		ChestHeight = 1.0,
-		SecureRadius = 2.4, -- passive catch zone around the chest
+		SecureRadius = 2.6, -- FEEL: the automatic catch zone, a ball in front of your chest ...
+		SecureForward = 0.9, -- ... centred this far in front of you (the disc snaps into your hands, not your back)
 		CleanFraction = 0.8, -- min depth (over QualityWindow) inside this fraction = clean catch
 		QualityWindow = 0.1, -- a claim's quality is its minimum depth over this long after first contact
 		QualitySamples = 12, -- ... sampled every 1/120 s: first contact + this many steps
@@ -444,7 +453,7 @@ local Disc = {
 		ShoulderWidth = 1.0,
 		BobbleSpeed = 95 * TEMPO, -- fingertip catch of a disc faster than this bobbles (disc speed only)
 		BlockDepth = 0.9, -- a defender's touch is a Block only this deep at the rim; else an interception
-		ContestWindow = 0.04, -- claims this close in time are contested
+		ContestWindow = 0.06, -- touches this close in time are a contest: timing, then position, decides it
 		ResolveDelay = 0.04, -- server waits this long to collect competing claims
 		MaxRewind = 0.3, -- max seconds a claim can be backdated (lag compensation)
 		ClaimThrottle = 0.03, -- client: min seconds between claims for one disc (a Denied clears it)
