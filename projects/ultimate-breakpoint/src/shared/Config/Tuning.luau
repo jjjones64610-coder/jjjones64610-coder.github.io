@@ -517,4 +517,86 @@ local Disc = {
 
 Tech.Disc = Disc
 
+---------------------------------------------------------------------------
+-- GAME FEEL (stage 7): every effect a play triggers, in one table. The
+-- client's GameFeel module is the only thing that plays them. Turn the whole
+-- game up or down with Intensity, one kind of effect with its channel, or
+-- one event with its own row.
+---------------------------------------------------------------------------
+
+Tech.Feel = {
+	Intensity = 1, -- FEEL: master dial for everything below (0 = off, 2 = double)
+	-- channels (each x Intensity)
+	Flash = 1, -- impact frames (the black-and-white tinted flash)
+	HitStop = 1, -- the freeze on big plays
+	Shake = 1, -- camera shake
+	Kick = 1, -- the camera's FOV punch
+	Particles = 1, -- bursts, rings and dust
+
+	-- An event's row: flash 0..1 (how strong the impact frame is), hitStop
+	-- (seconds you freeze; only your own plays), shake (camera, studs),
+	-- kick (degrees of FOV punch), burst (particles), ring (studs: a ring of
+	-- light on the ground), dust (ground particles), ghosts (afterimages).
+	Events = {
+		PerfectRelease = { flash = 0.5, kick = 1.5, burst = 16, ring = 5 },
+		PerfectCatch = { flash = 0.6, hitStop = 0.04, kick = 1.5, burst = 18 },
+		AirCatch = { shake = 0.15, burst = 14 },
+		PerfectAirCatch = { flash = 0.9, hitStop = 0.06, shake = 0.2, kick = 2, burst = 24, ring = 6 },
+		LayoutCatch = { hitStop = 0.04, shake = 0.3, burst = 22, dust = 12 },
+		PerfectLayoutCatch = { flash = 1, hitStop = 0.08, shake = 0.4, kick = 2.5, burst = 32, ring = 8, ghosts = 2 },
+		SkyCatch = { hitStop = 0.04, shake = 0.2, burst = 18 },
+		PerfectSkyCatch = { flash = 1, hitStop = 0.08, shake = 0.3, kick = 2.5, burst = 30, ring = 8 },
+		SprintCatch = { burst = 12 },
+		PerfectSprintCatch = { flash = 0.7, hitStop = 0.05, kick = 2, burst = 20 },
+		Block = { flash = 0.8, hitStop = 0.07, shake = 0.35, kick = 2, burst = 24, ring = 6 },
+		Interception = { flash = 1, hitStop = 0.08, shake = 0.35, kick = 2.5, burst = 28, ring = 8 },
+		Bobble = { shake = 0.1, burst = 10 },
+		Goal = { flash = 1, hitStop = 0.1, shake = 0.45, kick = 3, burst = 40, ring = 14 },
+		Dive = { kick = 1.5, shake = 0.1 },
+		DiveLand = { shake = 0.3, dust = 22 },
+		Land = { shake = 0.06, dust = 5 },
+		TechRoll = { kick = 1, dust = 8 },
+		PerfectCut = { kick = 1, burst = 8 },
+		Skid = { dust = 10 },
+		Wavedash = { kick = 1.5, dust = 14 },
+		AbilityCast = { flash = 0.8, hitStop = 0.03, shake = 0.3, kick = 2.5, burst = 20, ring = 12 },
+		PassChain = { flash = 0.5, kick = 1 },
+	} :: { [string]: { [string]: number } },
+
+	-- the camera
+	SpeedFov = 6, -- FEEL: extra degrees of field of view at a full sprint ...
+	SpeedFovFrom = 30, -- ... starting at this speed (a run) ...
+	SpeedFovTo = 42, -- ... and full at this one
+	MaxKick = 3, -- the largest FOV punch, degrees
+	MaxHitStop = 0.1, -- s: no freeze is ever longer
+
+	-- speed lines at the edge of the screen
+	LinesFrom = 33, -- studs/s they start at (past a plain run)
+	LinesFull = 44,
+	LineCount = 28,
+
+	-- the colour grade (on top of each arena's own lighting)
+	Saturation = 0.22, -- FEEL: the anime pop (0 = the arena as built)
+	Contrast = 0.06,
+
+	-- OUTLINES. Roblox draws at most 31 Highlights at once, so they are
+	-- handed out: the disc first, then the player holding it, you, anyone
+	-- using an ability, then the players nearest your camera, up to Budget.
+	Outlines = {
+		Budget = 20,
+		Refresh = 0.25, -- s between re-deals
+		Color = Color3.fromRGB(16, 18, 26), -- the ink line
+		DiscColor = Color3.fromRGB(255, 255, 255),
+		HolderColor = Color3.fromRGB(255, 215, 80),
+		AbilityFill = 0.78, -- fill transparency of an ability's glow
+	},
+
+	-- the trail behind a sprinting player
+	Trail = {
+		FromSpeed = 34, -- studs/s it switches on at
+		Lifetime = 0.28,
+		Width = 2.6,
+	},
+}
+
 return Tech

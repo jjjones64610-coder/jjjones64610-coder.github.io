@@ -735,6 +735,12 @@ function DiscRenderer.flight(id: string): (DiscPhysics.State?, number, DiscPhysi
 	return v.sim, v.launchTime, v.wind, v.groundY, over, v.simFlight
 end
 
+-- The disc's visible body part (GameFeel outlines it).
+function DiscRenderer.bodyOf(id: string): BasePart?
+	local v = visuals[id]
+	return if v and v.visible then v.body else nil
+end
+
 function DiscRenderer.folderOf(id: string): Configuration?
 	local v = visuals[id]
 	return if v then v.folder else nil

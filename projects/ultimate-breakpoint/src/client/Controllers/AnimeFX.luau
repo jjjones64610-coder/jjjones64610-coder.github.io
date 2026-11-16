@@ -31,9 +31,10 @@ local AnimeFX = {}
 local controllers: any
 local player = Players.LocalPlayer
 
-local LINE_COUNT = 28
-local LINE_START = 25 -- studs/s where speed lines begin
-local LINE_FULL = 42
+local Feel = require(ReplicatedStorage:WaitForChild("Shared").Config.Tech).Feel
+local LINE_COUNT = Feel.LineCount
+local LINE_START = Feel.LinesFrom -- studs/s where speed lines begin
+local LINE_FULL = Feel.LinesFull
 local GHOST_LIFE = 0.32
 local GHOST_MAX_PARTS = 16
 local IMPACT_TIME = 0.07
@@ -267,8 +268,10 @@ end
 -- impact frame
 ---------------------------------------------------------------------------
 
-function AnimeFX.impactFrame(tint: Color3)
-	if not enabled() then
+-- `strength` 0..1 (default 1): how hard the frame hits (GameFeel scales it).
+function AnimeFX.impactFrame(tint: Color3, strength: number?)
+	local k = math.clamp(strength or 1, 0, 1.5)
+	if not enabled() or k <= 0 then
 		return
 	end
 	local cc = impact
@@ -281,13 +284,13 @@ function AnimeFX.impactFrame(tint: Color3)
 		impact = made
 	end
 	local e = cc :: ColorCorrectionEffect
-	e.Contrast = 0.9
-	e.Saturation = -1
-	e.Brightness = 0.05
-	e.TintColor = tint
+	e.Contrast = 0.9 * math.min(k, 1)
+	e.Saturation = -math.min(k, 1)
+	e.Brightness = 0.05 * k
+	e.TintColor = Color3.new(1, 1, 1):Lerp(tint, math.min(k, 1))
 	e.Enabled = true
 	controllers.AudioController.play("Impact", 0.06)
-	task.delay(IMPACT_TIME, function()
+	task.delay(IMPACT_TIME * (0.6 + 0.4 * k), function()
 		e.Enabled = false
 	end)
 	pulseUntil = os.clock() + 0.25

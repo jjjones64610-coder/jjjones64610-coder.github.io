@@ -181,7 +181,7 @@ local function onFeedback(kind: string, payload: any)
 		if mine then
 			controllers.TechFeedback.play(text, if n >= 4 then "Perfect" else "Clean")
 			if n >= 4 then
-				controllers.AnimeFX.impactFrame(Theme.teamColor(payload.team))
+				controllers.GameFeel.play("PassChain", { own = true, color = Theme.teamColor(payload.team) })
 			end
 		else
 			Hud.feedback(text, Theme.teamColor(payload.team), 2)

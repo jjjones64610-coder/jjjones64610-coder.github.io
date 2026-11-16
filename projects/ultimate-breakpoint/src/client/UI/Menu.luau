@@ -1186,11 +1186,11 @@ function render.Settings(content: Instance)
 	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },
-		{ key = "CameraShake", label = "Camera shake (subtle)" },
+		{ key = "CameraShake", label = "Camera shake" },
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
 		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
-		{ key = "AnimeEffects", label = "Anime effects (speed lines, afterimages, impact frames)" },
+		{ key = "AnimeEffects", label = "Anime effects (outlines, impact frames, hit-stop, speed lines, trails)" },
 		{ key = "TechDebug", label = "Tech debug HUD (speed, state, timing in ms)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },

@@ -1028,6 +1028,13 @@ local function frame(dtRaw: number)
 	local dt = math.min(dtRaw, 1 / 15)
 	sim.now = now() - dt -- keep the sim clock on server time
 
+	-- hit-stop (GameFeel): for a few frames after a big play your body holds
+	-- still; the core does not advance, so it resumes with the same velocity
+	if engineOn and controllers.GameFeel.frozen() then
+		r.AssemblyLinearVelocity = Vector3.zero
+		return
+	end
+
 	if jumpPowerArmed then
 		jumpPowerArmed = false
 		h.JumpPower = 0

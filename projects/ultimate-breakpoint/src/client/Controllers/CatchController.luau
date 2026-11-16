@@ -696,6 +696,7 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			controllers.TechFeedback.play(if hard then "Bobbled: hands late" else "Bobble", "Miss")
 		elseif result == "Block" then
 			controllers.TechFeedback.play("Block", "Clean")
+			controllers.GameFeel.play("Block", { own = true, color = Color3.fromRGB(255, 90, 100) })
 		end
 	else
 		if grade == "Perfect" then
@@ -711,14 +712,21 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			elseif hard and not controllers.MovementController.isGrounded() then "Air Catch"
 			elseif hard then "Sprint Catch"
 			else "Catch"
-		if grade == "Perfect" then
+		local perfect = grade == "Perfect"
+		if perfect then
 			controllers.TechFeedback.play("Perfect " .. name, "Perfect")
-			if hard then
-				controllers.AnimeFX.impactFrame(Color3.fromRGB(255, 215, 80))
-				controllers.CameraController.kick(0.5)
-			end
 		elseif hard then
 			controllers.TechFeedback.play(name, "Clean")
+		end
+		-- how it looks is GameFeel's business (Config/Tuning Feel.Events)
+		local event = string.gsub(name, " ", "")
+		if event == "Catch" then
+			event = if perfect then "PerfectCatch" else ""
+		elseif perfect then
+			event = "Perfect" .. event
+		end
+		if event ~= "" then
+			controllers.GameFeel.play(event, { own = true, model = player.Character })
 		end
 		local folder = controllers.DiscRenderer.folderOf(discId)
 		local me = player.Character
@@ -727,6 +735,10 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			and type(throwerTeam) == "string"
 			and throwerTeam ~= ""
 			and throwerTeam ~= me:GetAttribute("UBTeam")
+		if interception then
+			controllers.TechFeedback.play("Interception", "Perfect")
+			controllers.GameFeel.play("Interception", { own = true, model = me })
+		end
 		CatchController.Caught:Fire(discId, interception)
 	end
 end

@@ -13,7 +13,8 @@
 	  * Every cast is an anime power-up for everyone who sees it: rings of
 	    light, an aura flare and a cast pose (PoseController); for you, an
 	    impact frame and a camera punch too.
-	  * Everyone with an active ability glows in its colour (a Highlight).
+	  * Everyone with an active ability glows in its colour (GameFeel tints
+	    their outline) with flames rising off them.
 	  * A small bar over the sprint meter: it fills as the cooldown runs
 	    down and shows the chord when the ability is ready.
 
@@ -73,20 +74,8 @@ local function castFx(c: Model, def: Abilities.Def, own: boolean)
 	if not root then
 		return
 	end
-	local pos = root.Position
-	controllers.AnimeFX.impactBurst(pos, def.color, if own then 11 else 7)
-	controllers.AnimeFX.shockwave(pos - Vector3.new(0, 2.8, 0), def.color, if own then 12 else 8)
+	controllers.GameFeel.play("AbilityCast", { pos = root.Position, color = def.color, model = c, own = own })
 	controllers.AnimeFX.auraFlare(c, 1.2)
-	task.delay(0.12, function()
-		if root.Parent then
-			controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), Color3.new(1, 1, 1), 6)
-		end
-	end)
-	if own then
-		controllers.AnimeFX.impactFrame(def.color)
-		controllers.CameraController.kick(0.6)
-		controllers.CameraController.shake(0.35, 0.3)
-	end
 end
 
 local function onStamp(c: Model)
@@ -135,20 +124,8 @@ local function refreshAuras()
 		local untilT = m:GetAttribute("UBAbilityUntil")
 		local def = Abilities.get(m:GetAttribute("UBAbility"))
 		local active = def ~= nil and type(untilT) == "number" and t < untilT and def.duration > 0
-		local aura = m:FindFirstChild("UBAura") :: Highlight?
+		-- (the glow itself is GameFeel's outline; here only the flames)
 		if active and def then
-			if not aura then
-				local h = Instance.new("Highlight")
-				h.Name = "UBAura"
-				h.FillTransparency = 0.75
-				h.OutlineTransparency = 0
-				h.DepthMode = Enum.HighlightDepthMode.Occluded
-				h.Parent = m
-				aura = h
-			end
-			local a = aura :: Highlight
-			a.FillColor = def.color
-			a.OutlineColor = def.color
 			-- anime aura flames rising off the body (ForgeGUI texture)
 			local root = m:FindFirstChild("HumanoidRootPart")
 			local tex = Art.vfx("Aura")
@@ -168,8 +145,7 @@ local function refreshAuras()
 					NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1) })
 				e.Parent = root
 			end
-		elseif aura then
-			aura:Destroy()
+		else
 			local root = m:FindFirstChild("HumanoidRootPart")
 			local flames = root and root:FindFirstChild("UBAuraFlames")
 			if flames then

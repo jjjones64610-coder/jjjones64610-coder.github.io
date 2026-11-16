@@ -3451,6 +3451,88 @@ local Disc = {
 
 Tech.Disc = Disc
 
+---------------------------------------------------------------------------
+-- GAME FEEL (stage 7): every effect a play triggers, in one table. The
+-- client's GameFeel module is the only thing that plays them. Turn the whole
+-- game up or down with Intensity, one kind of effect with its channel, or
+-- one event with its own row.
+---------------------------------------------------------------------------
+
+Tech.Feel = {
+	Intensity = 1, -- FEEL: master dial for everything below (0 = off, 2 = double)
+	-- channels (each x Intensity)
+	Flash = 1, -- impact frames (the black-and-white tinted flash)
+	HitStop = 1, -- the freeze on big plays
+	Shake = 1, -- camera shake
+	Kick = 1, -- the camera's FOV punch
+	Particles = 1, -- bursts, rings and dust
+
+	-- An event's row: flash 0..1 (how strong the impact frame is), hitStop
+	-- (seconds you freeze; only your own plays), shake (camera, studs),
+	-- kick (degrees of FOV punch), burst (particles), ring (studs: a ring of
+	-- light on the ground), dust (ground particles), ghosts (afterimages).
+	Events = {
+		PerfectRelease = { flash = 0.5, kick = 1.5, burst = 16, ring = 5 },
+		PerfectCatch = { flash = 0.6, hitStop = 0.04, kick = 1.5, burst = 18 },
+		AirCatch = { shake = 0.15, burst = 14 },
+		PerfectAirCatch = { flash = 0.9, hitStop = 0.06, shake = 0.2, kick = 2, burst = 24, ring = 6 },
+		LayoutCatch = { hitStop = 0.04, shake = 0.3, burst = 22, dust = 12 },
+		PerfectLayoutCatch = { flash = 1, hitStop = 0.08, shake = 0.4, kick = 2.5, burst = 32, ring = 8, ghosts = 2 },
+		SkyCatch = { hitStop = 0.04, shake = 0.2, burst = 18 },
+		PerfectSkyCatch = { flash = 1, hitStop = 0.08, shake = 0.3, kick = 2.5, burst = 30, ring = 8 },
+		SprintCatch = { burst = 12 },
+		PerfectSprintCatch = { flash = 0.7, hitStop = 0.05, kick = 2, burst = 20 },
+		Block = { flash = 0.8, hitStop = 0.07, shake = 0.35, kick = 2, burst = 24, ring = 6 },
+		Interception = { flash = 1, hitStop = 0.08, shake = 0.35, kick = 2.5, burst = 28, ring = 8 },
+		Bobble = { shake = 0.1, burst = 10 },
+		Goal = { flash = 1, hitStop = 0.1, shake = 0.45, kick = 3, burst = 40, ring = 14 },
+		Dive = { kick = 1.5, shake = 0.1 },
+		DiveLand = { shake = 0.3, dust = 22 },
+		Land = { shake = 0.06, dust = 5 },
+		TechRoll = { kick = 1, dust = 8 },
+		PerfectCut = { kick = 1, burst = 8 },
+		Skid = { dust = 10 },
+		Wavedash = { kick = 1.5, dust = 14 },
+		AbilityCast = { flash = 0.8, hitStop = 0.03, shake = 0.3, kick = 2.5, burst = 20, ring = 12 },
+		PassChain = { flash = 0.5, kick = 1 },
+	} :: { [string]: { [string]: number } },
+
+	-- the camera
+	SpeedFov = 6, -- FEEL: extra degrees of field of view at a full sprint ...
+	SpeedFovFrom = 30, -- ... starting at this speed (a run) ...
+	SpeedFovTo = 42, -- ... and full at this one
+	MaxKick = 3, -- the largest FOV punch, degrees
+	MaxHitStop = 0.1, -- s: no freeze is ever longer
+
+	-- speed lines at the edge of the screen
+	LinesFrom = 33, -- studs/s they start at (past a plain run)
+	LinesFull = 44,
+	LineCount = 28,
+
+	-- the colour grade (on top of each arena's own lighting)
+	Saturation = 0.22, -- FEEL: the anime pop (0 = the arena as built)
+	Contrast = 0.06,
+
+	-- OUTLINES. Roblox draws at most 31 Highlights at once, so they are
+	-- handed out: the disc first, then the player holding it, you, anyone
+	-- using an ability, then the players nearest your camera, up to Budget.
+	Outlines = {
+		Budget = 20,
+		Refresh = 0.25, -- s between re-deals
+		Color = Color3.fromRGB(16, 18, 26), -- the ink line
+		DiscColor = Color3.fromRGB(255, 255, 255),
+		HolderColor = Color3.fromRGB(255, 215, 80),
+		AbilityFill = 0.78, -- fill transparency of an ability's glow
+	},
+
+	-- the trail behind a sprinting player
+	Trail = {
+		FromSpeed = 34, -- studs/s it switches on at
+		Lifetime = 0.28,
+		Width = 2.6,
+	},
+}
+
 return Tech
 ]]></string>
           </Properties>
@@ -26010,7 +26092,8 @@ end)
 	  * Every cast is an anime power-up for everyone who sees it: rings of
 	    light, an aura flare and a cast pose (PoseController); for you, an
 	    impact frame and a camera punch too.
-	  * Everyone with an active ability glows in its colour (a Highlight).
+	  * Everyone with an active ability glows in its colour (GameFeel tints
+	    their outline) with flames rising off them.
 	  * A small bar over the sprint meter: it fills as the cooldown runs
 	    down and shows the chord when the ability is ready.
 
@@ -26070,20 +26153,8 @@ local function castFx(c: Model, def: Abilities.Def, own: boolean)
 	if not root then
 		return
 	end
-	local pos = root.Position
-	controllers.AnimeFX.impactBurst(pos, def.color, if own then 11 else 7)
-	controllers.AnimeFX.shockwave(pos - Vector3.new(0, 2.8, 0), def.color, if own then 12 else 8)
+	controllers.GameFeel.play("AbilityCast", { pos = root.Position, color = def.color, model = c, own = own })
 	controllers.AnimeFX.auraFlare(c, 1.2)
-	task.delay(0.12, function()
-		if root.Parent then
-			controllers.AnimeFX.shockwave(root.Position - Vector3.new(0, 2.8, 0), Color3.new(1, 1, 1), 6)
-		end
-	end)
-	if own then
-		controllers.AnimeFX.impactFrame(def.color)
-		controllers.CameraController.kick(0.6)
-		controllers.CameraController.shake(0.35, 0.3)
-	end
 end
 
 local function onStamp(c: Model)
@@ -26132,20 +26203,8 @@ local function refreshAuras()
 		local untilT = m:GetAttribute("UBAbilityUntil")
 		local def = Abilities.get(m:GetAttribute("UBAbility"))
 		local active = def ~= nil and type(untilT) == "number" and t < untilT and def.duration > 0
-		local aura = m:FindFirstChild("UBAura") :: Highlight?
+		-- (the glow itself is GameFeel's outline; here only the flames)
 		if active and def then
-			if not aura then
-				local h = Instance.new("Highlight")
-				h.Name = "UBAura"
-				h.FillTransparency = 0.75
-				h.OutlineTransparency = 0
-				h.DepthMode = Enum.HighlightDepthMode.Occluded
-				h.Parent = m
-				aura = h
-			end
-			local a = aura :: Highlight
-			a.FillColor = def.color
-			a.OutlineColor = def.color
 			-- anime aura flames rising off the body (ForgeGUI texture)
 			local root = m:FindFirstChild("HumanoidRootPart")
 			local tex = Art.vfx("Aura")
@@ -26165,8 +26224,7 @@ local function refreshAuras()
 					NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1) })
 				e.Parent = root
 			end
-		elseif aura then
-			aura:Destroy()
+		else
 			local root = m:FindFirstChild("HumanoidRootPart")
 			local flames = root and root:FindFirstChild("UBAuraFlames")
 			if flames then
@@ -26321,9 +26379,10 @@ local AnimeFX = {}
 local controllers: any
 local player = Players.LocalPlayer
 
-local LINE_COUNT = 28
-local LINE_START = 25 -- studs/s where speed lines begin
-local LINE_FULL = 42
+local Feel = require(ReplicatedStorage:WaitForChild("Shared").Config.Tech).Feel
+local LINE_COUNT = Feel.LineCount
+local LINE_START = Feel.LinesFrom -- studs/s where speed lines begin
+local LINE_FULL = Feel.LinesFull
 local GHOST_LIFE = 0.32
 local GHOST_MAX_PARTS = 16
 local IMPACT_TIME = 0.07
@@ -26557,8 +26616,10 @@ end
 -- impact frame
 ---------------------------------------------------------------------------
 
-function AnimeFX.impactFrame(tint: Color3)
-	if not enabled() then
+-- `strength` 0..1 (default 1): how hard the frame hits (GameFeel scales it).
+function AnimeFX.impactFrame(tint: Color3, strength: number?)
+	local k = math.clamp(strength or 1, 0, 1.5)
+	if not enabled() or k <= 0 then
 		return
 	end
 	local cc = impact
@@ -26571,13 +26632,13 @@ function AnimeFX.impactFrame(tint: Color3)
 		impact = made
 	end
 	local e = cc :: ColorCorrectionEffect
-	e.Contrast = 0.9
-	e.Saturation = -1
-	e.Brightness = 0.05
-	e.TintColor = tint
+	e.Contrast = 0.9 * math.min(k, 1)
+	e.Saturation = -math.min(k, 1)
+	e.Brightness = 0.05 * k
+	e.TintColor = Color3.new(1, 1, 1):Lerp(tint, math.min(k, 1))
 	e.Enabled = true
 	controllers.AudioController.play("Impact", 0.06)
-	task.delay(IMPACT_TIME, function()
+	task.delay(IMPACT_TIME * (0.6 + 0.4 * k), function()
 		e.Enabled = false
 	end)
 	pulseUntil = os.clock() + 0.25
@@ -26979,8 +27040,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
-local MovementConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Movement"))
-
 local DiscConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Disc"))
 
 local CameraController = {}
@@ -27016,10 +27075,12 @@ local FLOOR_CLEARANCE = 1.2
 local WALL_RADIUS = 0.5
 local WALL_OUT_RATE = 6
 local FOCUS_Y_RATE = 12
-local SPEED_FOV = 2.5 -- extra degrees at top speed
-local SPEED_FOV_FROM = MovementConfig.SprintSpeed - 6 -- 22 with the current tuning
-local SPEED_FOV_TO = MovementConfig.SprintSpeed + 4 -- 32
-local MAX_KICK = 2
+-- the speed push and the punches come from Config/Tuning Feel
+local Feel = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Tech")).Feel
+local SPEED_FOV = Feel.SpeedFov * Feel.Intensity -- extra degrees at a full sprint
+local SPEED_FOV_FROM = Feel.SpeedFovFrom
+local SPEED_FOV_TO = Feel.SpeedFovTo
+local MAX_KICK = Feel.MaxKick
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -27974,6 +28035,7 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			controllers.TechFeedback.play(if hard then "Bobbled: hands late" else "Bobble", "Miss")
 		elseif result == "Block" then
 			controllers.TechFeedback.play("Block", "Clean")
+			controllers.GameFeel.play("Block", { own = true, color = Color3.fromRGB(255, 90, 100) })
 		end
 	else
 		if grade == "Perfect" then
@@ -27989,14 +28051,21 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			elseif hard and not controllers.MovementController.isGrounded() then "Air Catch"
 			elseif hard then "Sprint Catch"
 			else "Catch"
-		if grade == "Perfect" then
+		local perfect = grade == "Perfect"
+		if perfect then
 			controllers.TechFeedback.play("Perfect " .. name, "Perfect")
-			if hard then
-				controllers.AnimeFX.impactFrame(Color3.fromRGB(255, 215, 80))
-				controllers.CameraController.kick(0.5)
-			end
 		elseif hard then
 			controllers.TechFeedback.play(name, "Clean")
+		end
+		-- how it looks is GameFeel's business (Config/Tuning Feel.Events)
+		local event = string.gsub(name, " ", "")
+		if event == "Catch" then
+			event = if perfect then "PerfectCatch" else ""
+		elseif perfect then
+			event = "Perfect" .. event
+		end
+		if event ~= "" then
+			controllers.GameFeel.play(event, { own = true, model = player.Character })
 		end
 		local folder = controllers.DiscRenderer.folderOf(discId)
 		local me = player.Character
@@ -28005,6 +28074,10 @@ local function onResult(discId: any, accepted: any, result: any, flightId: any)
 			and type(throwerTeam) == "string"
 			and throwerTeam ~= ""
 			and throwerTeam ~= me:GetAttribute("UBTeam")
+		if interception then
+			controllers.TechFeedback.play("Interception", "Perfect")
+			controllers.GameFeel.play("Interception", { own = true, model = me })
+		end
 		CatchController.Caught:Fire(discId, interception)
 	end
 end
@@ -28919,6 +28992,12 @@ function DiscRenderer.flight(id: string): (DiscPhysics.State?, number, DiscPhysi
 	-- a disc held up by a marker's hands is not catchable either
 	local over = v.landed or now() - v.launchTime >= v.stopAt
 	return v.sim, v.launchTime, v.wind, v.groundY, over, v.simFlight
+end
+
+-- The disc's visible body part (GameFeel outlines it).
+function DiscRenderer.bodyOf(id: string): BasePart?
+	local v = visuals[id]
+	return if v and v.visible then v.body else nil
 end
 
 function DiscRenderer.folderOf(id: string): Configuration?
@@ -29868,10 +29947,21 @@ function EffectsController.Start()
 		end
 	end)
 
+	-- movement moments with a row in Feel.Events (the per-tech colours and
+	-- shapes stay in EffectsController.tech / AnimeFX.tech)
+	local FEEL_OF: { [string]: string } =
+		{ Layout = "Dive", TechRoll = "TechRoll", Skid = "Skid", Wavedash = "Wavedash" }
 	controllers.MovementController.Tech:Connect(function(e)
 		local c = player.Character
 		if c then
 			EffectsController.tech(c, e.tech, e.quality, e.dir)
+			local event = FEEL_OF[e.tech]
+			if e.tech == "Cut" and e.quality == "Perfect" then
+				event = "PerfectCut"
+			end
+			if event then
+				controllers.GameFeel.play(event, { own = true, model = c, dir = e.dir })
+			end
 		end
 	end)
 	controllers.MovementController.Landed:Connect(function(fromDive, speed)
@@ -29879,11 +29969,10 @@ function EffectsController.Start()
 		if root then
 			local feet = root.Position - Vector3.new(0, 2.9, 0)
 			if fromDive then
-				EffectsController.dust(feet, 22)
-				controllers.CameraController.shake(0.12, 0.2)
+				controllers.GameFeel.play("DiveLand", { pos = feet + Vector3.new(0, 2.9, 0), own = true })
 				controllers.AudioController.play("Layout", 0.1)
 			elseif speed > 8 then
-				EffectsController.dust(feet, 5)
+				controllers.GameFeel.play("Land", { pos = feet + Vector3.new(0, 2.9, 0), own = true })
 				controllers.AudioController.play("Land", 0.2)
 			end
 		end
@@ -29891,7 +29980,7 @@ function EffectsController.Start()
 	controllers.ThrowController.Released:Connect(function(launch)
 		controllers.AudioController.play(if launch.quality == "Perfect" then "PerfectRelease" else "Throw", 0.08)
 		if launch.quality == "Perfect" then
-			EffectsController.burst(launch.releasePos, Theme.Colors.Perfect, 10, 10)
+			controllers.GameFeel.play("PerfectRelease", { pos = launch.releasePos, own = true })
 		end
 	end)
 
@@ -29907,15 +29996,13 @@ function EffectsController.Start()
 				EffectsController.burst(pos, color, if zone == "Dive" then 26 else 12, 10)
 				controllers.AudioController.playAt(if quality == "Clean" then "CleanCatch" else "Catch", pos)
 			end
-			if mine and zone == "Dive" then
-				controllers.CameraController.shake(0.15, 0.25)
-			end
 		elseif kind == "Block" or kind == "HandBlock" then
-			EffectsController.burst(pos, Theme.Colors.Bad, 22, 16)
+			-- (your own block already played its screen effects: CatchController)
+			controllers.GameFeel.play("Block", { pos = pos, color = Theme.Colors.Bad })
 			controllers.AudioController.playAt("Block", pos)
 			EffectsController.cheer(1.2)
 		elseif kind == "Bobble" then
-			EffectsController.burst(pos, Theme.Colors.Gold, 14, 9)
+			controllers.GameFeel.play("Bobble", { pos = pos, color = Theme.Colors.Gold, own = mine })
 			controllers.AudioController.playAt("Bobble", pos)
 		elseif kind == "Tip" then
 			-- your own tip already played its burst and sound (CatchController)
@@ -29946,6 +30033,8 @@ function EffectsController.Start()
 					25
 				)
 			end
+			-- everyone sees the rings; the scorer gets the full hit
+			controllers.GameFeel.play("Goal", { pos = pos, color = color, own = data.scorer == player.UserId })
 			EffectsController.cheer(3)
 			controllers.AudioController.play("Goal")
 		elseif kind == "Turnover" then
@@ -30009,6 +30098,334 @@ return EffectsController
             </Properties>
           </Item>
           <Item class="ModuleScript" referent="93">
+            <Properties>
+              <string name="Name">GameFeel</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	GameFeel — the one module that plays effects for gameplay events
+	(docs/CORE_DESIGN.md, stage 7). Gameplay code says WHAT happened:
+
+	    controllers.GameFeel.play("PerfectLayoutCatch", { pos = p, own = true })
+
+	and this module decides how it looks, from Config/Tuning Feel.Events
+	(impact frame, hit-stop, camera shake and punch, particle burst, ground
+	ring, dust, afterimages), scaled by Feel.Intensity and the per-channel
+	dials. Nothing else calls the effect primitives for a gameplay moment, so
+	the whole game can be turned up or down in one place.
+
+	It also owns the always-on anime layer:
+	  * Hit-stop: frozen() is true for a few frames after a big play of your
+	    own; MovementController and PoseController hold still while it is
+	    (your body and pose freeze, the world goes on: time can't stop for
+	    one player in a shared game).
+	  * Outlines: Roblox renders at most 31 Highlights, so they are dealt
+	    out every Feel.Outlines.Refresh: the disc, its holder, you, anyone
+	    using an ability, then the players nearest the camera, up to
+	    Feel.Outlines.Budget. An active ability tints its owner's outline
+	    and fill (so a model never needs two Highlights).
+	  * Sprint trails: a team-coloured ribbon behind anyone past
+	    Feel.Trail.FromSpeed.
+	  * The colour grade: extra saturation and contrast on top of the
+	    arena's own lighting.
+
+	Screen effects (flash, hit-stop, shake, kick) only play for your own
+	events (ctx.own); world effects (burst, ring, dust, ghosts) play for
+	everyone's.
+]]
+
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local TechConfig = require(Shared.Config.Tech)
+local Abilities = require(Shared.Abilities)
+local Actors = require(Shared.Actors)
+local Net = require(Shared.Net)
+local Theme = require(script.Parent.Parent.UI.Theme)
+
+local Feel = TechConfig.Feel
+local OUT = Feel.Outlines
+
+local GameFeel = {}
+
+export type Context = {
+	pos: Vector3?, -- where it happened (defaults to your feet)
+	color: Color3?, -- defaults to the Perfect gold
+	model: Model?, -- whose body (afterimages)
+	dir: Vector3?,
+	own: boolean?, -- your own play: screen effects too
+}
+
+local controllers: any
+local player = Players.LocalPlayer
+local freezeUntil = -math.huge
+
+local function enabled(): boolean
+	return controllers.SettingsController.get("AnimeEffects") ~= false
+end
+
+-- True during a hit-stop (your body and pose hold still).
+function GameFeel.frozen(): boolean
+	return os.clock() < freezeUntil
+end
+
+-- Freezes your body and pose for `seconds` (scaled, capped at MaxHitStop).
+function GameFeel.hitStop(seconds: number)
+	local s = math.min(seconds * Feel.HitStop * Feel.Intensity, Feel.MaxHitStop)
+	if s > 0 and enabled() then
+		freezeUntil = math.max(freezeUntil, os.clock() + s)
+	end
+end
+
+-- Plays the effects of `event` (a row of Config/Tuning Feel.Events).
+function GameFeel.play(event: string, ctx: Context?)
+	local row = Feel.Events[event]
+	if not row or not enabled() then
+		return
+	end
+	local c: Context = ctx or {}
+	local k = Feel.Intensity
+	local color = c.color or Theme.Colors.Perfect
+	local root = controllers.MovementController.root()
+	local pos = c.pos
+	if not pos and root then
+		pos = root.Position
+	end
+	local fx = controllers.EffectsController
+	local anime = controllers.AnimeFX
+	local cam = controllers.CameraController
+
+	-- the world: everyone's plays
+	if pos then
+		local p = pos :: Vector3
+		local particles = k * Feel.Particles
+		if (row.burst or 0) > 0 and particles > 0 then
+			anime.impactBurst(p, color, math.max(4, row.burst * particles * 0.4))
+			fx.burst(p, color, math.floor(row.burst * particles + 0.5), 14)
+		end
+		if (row.ring or 0) > 0 and particles > 0 then
+			anime.shockwave(p - Vector3.new(0, 2.8, 0), color, row.ring)
+		end
+		if (row.dust or 0) > 0 and particles > 0 then
+			fx.dust(p - Vector3.new(0, 2.9, 0), math.floor(row.dust * particles + 0.5))
+		end
+	end
+	if (row.ghosts or 0) > 0 and c.model then
+		anime.afterimage(c.model, color, row.ghosts)
+	end
+
+	-- the screen: only your own
+	if not c.own then
+		return
+	end
+	if (row.flash or 0) > 0 then
+		anime.impactFrame(color, row.flash * Feel.Flash * k)
+	end
+	if (row.hitStop or 0) > 0 then
+		GameFeel.hitStop(row.hitStop)
+	end
+	if (row.shake or 0) > 0 then
+		cam.shake(row.shake * Feel.Shake * k, 0.3)
+	end
+	if (row.kick or 0) > 0 then
+		cam.kick(row.kick * Feel.Kick * k)
+	end
+end
+
+---------------------------------------------------------------------------
+-- outlines (the Highlight budget) and sprint trails
+---------------------------------------------------------------------------
+
+local outlined: { [Instance]: Highlight } = {}
+
+local function outline(target: Instance, lineColor: Color3, fill: Color3?, fillTransparency: number)
+	local h = outlined[target]
+	if not h or h.Parent ~= target then
+		local made = Instance.new("Highlight")
+		made.Name = "UBOutline"
+		made.DepthMode = Enum.HighlightDepthMode.Occluded
+		made.OutlineTransparency = 0
+		made.Parent = target
+		outlined[target] = made
+		h = made
+	end
+	local hl = h :: Highlight
+	hl.OutlineColor = lineColor
+	hl.FillColor = fill or lineColor
+	hl.FillTransparency = fillTransparency
+end
+
+local function sprintTrail(model: Model, root: BasePart)
+	local trail = root:FindFirstChild("UBSpeedTrail") :: Trail?
+	local v = root.AssemblyLinearVelocity
+	local fast = Vector3.new(v.X, 0, v.Z).Magnitude >= Feel.Trail.FromSpeed and enabled()
+	if not trail then
+		if not fast then
+			return
+		end
+		local a0 = Instance.new("Attachment")
+		a0.Name = "UBSpeedTrailTop"
+		a0.Position = Vector3.new(0, Feel.Trail.Width / 2, 0)
+		a0.Parent = root
+		local a1 = Instance.new("Attachment")
+		a1.Name = "UBSpeedTrailBottom"
+		a1.Position = Vector3.new(0, -Feel.Trail.Width / 2, 0)
+		a1.Parent = root
+		local made = Instance.new("Trail")
+		made.Name = "UBSpeedTrail"
+		made.Attachment0 = a0
+		made.Attachment1 = a1
+		made.Lifetime = Feel.Trail.Lifetime
+		made.MinLength = 0.1
+		made.FaceCamera = true
+		made.LightEmission = 0.7
+		made.Transparency =
+			NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.45), NumberSequenceKeypoint.new(1, 1) })
+		made.WidthScale = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) })
+		made.Parent = root
+		trail = made
+	end
+	local t = trail :: Trail
+	t.Color = ColorSequence.new(Theme.teamColor(model:GetAttribute("UBTeam") :: string?))
+	t.Enabled = fast
+end
+
+-- Deals the Highlights out, most important first.
+local function dealOutlines()
+	local t = Net.now()
+	local keep: { [Instance]: boolean } = {}
+	local used = 0
+	local budget = if enabled() then math.min(OUT.Budget, 31) else 0
+	local function take(target: Instance?, lineColor: Color3, fill: Color3?, fillTransparency: number)
+		if target and not keep[target] and used < budget then
+			used += 1
+			keep[target] = true
+			outline(target, lineColor, fill, fillTransparency)
+		end
+	end
+	local function takeModel(model: Model)
+		local def = Abilities.active(model, t)
+		if def and def.duration > 0 then
+			take(model, def.color, def.color, OUT.AbilityFill)
+		else
+			take(model, OUT.Color, nil, 1)
+		end
+	end
+
+	-- 1. every disc, and whoever holds one
+	local holders: { [number]: boolean } = {}
+	for _, folder in controllers.DiscRenderer.folders() do
+		local id = folder:GetAttribute("Id")
+		if type(id) == "string" then
+			take(controllers.DiscRenderer.bodyOf(id), OUT.DiscColor, nil, 1)
+		end
+		local hid = folder:GetAttribute("HolderId")
+		if folder:GetAttribute("Mode") == "Held" and type(hid) == "number" and hid ~= 0 then
+			holders[hid] = true
+		end
+	end
+	local models = Actors.characters()
+	for _, m in models do
+		local id = Actors.idOf(m)
+		if id and holders[id] then
+			local def = Abilities.active(m, t)
+			if def and def.duration > 0 then
+				take(m, def.color, def.color, OUT.AbilityFill)
+			else
+				take(m, OUT.HolderColor, nil, 1)
+			end
+		end
+	end
+	-- 2. you, then anyone using an ability
+	if player.Character then
+		takeModel(player.Character)
+	end
+	for _, m in models do
+		local def = Abilities.active(m, t)
+		if def and def.duration > 0 then
+			takeModel(m)
+		end
+	end
+	-- 3. the players nearest the camera
+	local cam = workspace.CurrentCamera
+	local camPos = if cam then cam.CFrame.Position else Vector3.zero
+	local rest: { { model: Model, dist: number } } = {}
+	for _, m in models do
+		local r = m:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if r then
+			sprintTrail(m, r)
+			if not keep[m] then
+				table.insert(rest, { model = m, dist = (r.Position - camPos).Magnitude })
+			end
+		end
+	end
+	table.sort(rest, function(a, b)
+		return a.dist < b.dist
+	end)
+	for _, e in rest do
+		if used >= budget then
+			break
+		end
+		takeModel(e.model)
+	end
+	-- everything that lost its place gives the Highlight back
+	for target, h in outlined do
+		if not keep[target] or not target.Parent then
+			h:Destroy()
+			outlined[target] = nil
+		end
+	end
+end
+
+---------------------------------------------------------------------------
+
+local function applyGrade()
+	local grade = Lighting:FindFirstChild("UBAnimeGrade") :: ColorCorrectionEffect?
+	if not grade then
+		local made = Instance.new("ColorCorrectionEffect")
+		made.Name = "UBAnimeGrade"
+		made.Parent = Lighting
+		grade = made
+	end
+	local g = grade :: ColorCorrectionEffect
+	local on = enabled()
+	g.Saturation = if on then Feel.Saturation * Feel.Intensity else 0
+	g.Contrast = if on then Feel.Contrast * Feel.Intensity else 0
+end
+
+function GameFeel.Init(c: any)
+	controllers = c
+end
+
+function GameFeel.Start()
+	applyGrade()
+	controllers.SettingsController.Changed:Connect(function(key)
+		if key == "AnimeEffects" or key == "All" then
+			applyGrade()
+		end
+	end)
+	local acc = 0
+	RunService.Heartbeat:Connect(function(dt)
+		acc += dt
+		if acc >= OUT.Refresh then
+			acc = 0
+			local ok, err = pcall(function()
+				dealOutlines()
+			end)
+			if not ok then
+				warn("[GameFeel] outlines: " .. tostring(err))
+			end
+		end
+	end)
+end
+
+return GameFeel
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30369,7 +30786,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="94">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31402,6 +31819,13 @@ local function frame(dtRaw: number)
 	local dt = math.min(dtRaw, 1 / 15)
 	sim.now = now() - dt -- keep the sim clock on server time
 
+	-- hit-stop (GameFeel): for a few frames after a big play your body holds
+	-- still; the core does not advance, so it resumes with the same velocity
+	if engineOn and controllers.GameFeel.frozen() then
+		r.AssemblyLinearVelocity = Vector3.zero
+		return
+	end
+
 	if jumpPowerArmed then
 		jumpPowerArmed = false
 		h.JumpPower = 0
@@ -31625,7 +32049,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31765,7 +32189,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -32994,6 +33418,9 @@ local function changed(rig: Rig): boolean
 end
 
 local function step(dt: number)
+	if controllers.GameFeel.frozen() then
+		return -- hit-stop: every pose holds its frame
+	end
 	local camPos = workspace.CurrentCamera.CFrame.Position
 	local seen: { [Model]: boolean } = {}
 	for _, model in Actors.characters() do
@@ -33075,7 +33502,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33238,7 +33665,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -33410,7 +33837,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -33558,7 +33985,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34014,7 +34441,7 @@ local function release()
 	local used = Abilities.applyThrow(player.Character, now(), params :: any)
 	if used then
 		controllers.TechFeedback.play(used.name, "Perfect")
-		controllers.AnimeFX.impactFrame(used.color)
+		controllers.GameFeel.play("AbilityCast", { own = true, color = used.color })
 	end
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then
@@ -34273,7 +34700,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34459,7 +34886,7 @@ local function onFeedback(kind: string, payload: any)
 		if mine then
 			controllers.TechFeedback.play(text, if n >= 4 then "Perfect" else "Clean")
 			if n >= 4 then
-				controllers.AnimeFX.impactFrame(Theme.teamColor(payload.team))
+				controllers.GameFeel.play("PassChain", { own = true, color = Theme.teamColor(payload.team) })
 			end
 		else
 			Hud.feedback(text, Theme.teamColor(payload.team), 2)
@@ -34734,7 +35161,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="102">
+        <Item class="LocalScript" referent="103">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -34761,6 +35188,7 @@ local ORDER = {
 	"EffectsController",
 	"TechFeedback",
 	"AnimeFX",
+	"GameFeel",
 	"AbilityController",
 	"MusicController",
 	"TechDrills",
@@ -34789,11 +35217,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="103">
+        <Item class="Folder" referent="104">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="104">
+          <Item class="ModuleScript" referent="105">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -35838,7 +36266,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="105">
+          <Item class="ModuleScript" referent="106">
             <Properties>
               <string name="Name">MainMenu</string>
               <string name="Source"><![CDATA[--!strict
@@ -36059,7 +36487,7 @@ return MainMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="106">
+          <Item class="ModuleScript" referent="107">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -37250,11 +37678,11 @@ function render.Settings(content: Instance)
 	end
 	local toggles = {
 		{ key = "InvertY", label = "Invert camera Y" },
-		{ key = "CameraShake", label = "Camera shake (subtle)" },
+		{ key = "CameraShake", label = "Camera shake" },
 		{ key = "ShowComboFeed", label = "Combo chain (counter and end card)" },
 		{ key = "ShowTechLabels", label = "Technique labels" },
 		{ key = "ShowHitboxes", label = "Show hitboxes (everyone has the same fixed body)" },
-		{ key = "AnimeEffects", label = "Anime effects (speed lines, afterimages, impact frames)" },
+		{ key = "AnimeEffects", label = "Anime effects (outlines, impact frames, hit-stop, speed lines, trails)" },
 		{ key = "TechDebug", label = "Tech debug HUD (speed, state, timing in ms)" },
 		{ key = "TrajectoryPreview", label = "Throw preview arc" },
 		{ key = "LeftHanded", label = "Left-handed thrower" },
@@ -37539,7 +37967,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="107">
+          <Item class="ModuleScript" referent="108">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -37804,7 +38232,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="108">
+          <Item class="ModuleScript" referent="109">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -38183,7 +38611,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="109">
+          <Item class="ModuleScript" referent="110">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -38448,7 +38876,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="110">
+          <Item class="ModuleScript" referent="111">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -38769,7 +39197,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="111">
+          <Item class="ModuleScript" referent="112">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -39241,12 +39669,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="112">
+  <Item class="Teams" referent="113">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="113">
+  <Item class="Workspace" referent="114">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

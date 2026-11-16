@@ -816,10 +816,21 @@ function EffectsController.Start()
 		end
 	end)
 
+	-- movement moments with a row in Feel.Events (the per-tech colours and
+	-- shapes stay in EffectsController.tech / AnimeFX.tech)
+	local FEEL_OF: { [string]: string } =
+		{ Layout = "Dive", TechRoll = "TechRoll", Skid = "Skid", Wavedash = "Wavedash" }
 	controllers.MovementController.Tech:Connect(function(e)
 		local c = player.Character
 		if c then
 			EffectsController.tech(c, e.tech, e.quality, e.dir)
+			local event = FEEL_OF[e.tech]
+			if e.tech == "Cut" and e.quality == "Perfect" then
+				event = "PerfectCut"
+			end
+			if event then
+				controllers.GameFeel.play(event, { own = true, model = c, dir = e.dir })
+			end
 		end
 	end)
 	controllers.MovementController.Landed:Connect(function(fromDive, speed)
@@ -827,11 +838,10 @@ function EffectsController.Start()
 		if root then
 			local feet = root.Position - Vector3.new(0, 2.9, 0)
 			if fromDive then
-				EffectsController.dust(feet, 22)
-				controllers.CameraController.shake(0.12, 0.2)
+				controllers.GameFeel.play("DiveLand", { pos = feet + Vector3.new(0, 2.9, 0), own = true })
 				controllers.AudioController.play("Layout", 0.1)
 			elseif speed > 8 then
-				EffectsController.dust(feet, 5)
+				controllers.GameFeel.play("Land", { pos = feet + Vector3.new(0, 2.9, 0), own = true })
 				controllers.AudioController.play("Land", 0.2)
 			end
 		end
@@ -839,7 +849,7 @@ function EffectsController.Start()
 	controllers.ThrowController.Released:Connect(function(launch)
 		controllers.AudioController.play(if launch.quality == "Perfect" then "PerfectRelease" else "Throw", 0.08)
 		if launch.quality == "Perfect" then
-			EffectsController.burst(launch.releasePos, Theme.Colors.Perfect, 10, 10)
+			controllers.GameFeel.play("PerfectRelease", { pos = launch.releasePos, own = true })
 		end
 	end)
 
@@ -855,15 +865,13 @@ function EffectsController.Start()
 				EffectsController.burst(pos, color, if zone == "Dive" then 26 else 12, 10)
 				controllers.AudioController.playAt(if quality == "Clean" then "CleanCatch" else "Catch", pos)
 			end
-			if mine and zone == "Dive" then
-				controllers.CameraController.shake(0.15, 0.25)
-			end
 		elseif kind == "Block" or kind == "HandBlock" then
-			EffectsController.burst(pos, Theme.Colors.Bad, 22, 16)
+			-- (your own block already played its screen effects: CatchController)
+			controllers.GameFeel.play("Block", { pos = pos, color = Theme.Colors.Bad })
 			controllers.AudioController.playAt("Block", pos)
 			EffectsController.cheer(1.2)
 		elseif kind == "Bobble" then
-			EffectsController.burst(pos, Theme.Colors.Gold, 14, 9)
+			controllers.GameFeel.play("Bobble", { pos = pos, color = Theme.Colors.Gold, own = mine })
 			controllers.AudioController.playAt("Bobble", pos)
 		elseif kind == "Tip" then
 			-- your own tip already played its burst and sound (CatchController)
@@ -894,6 +902,8 @@ function EffectsController.Start()
 					25
 				)
 			end
+			-- everyone sees the rings; the scorer gets the full hit
+			controllers.GameFeel.play("Goal", { pos = pos, color = color, own = data.scorer == player.UserId })
 			EffectsController.cheer(3)
 			controllers.AudioController.play("Goal")
 		elseif kind == "Turnover" then

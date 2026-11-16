@@ -81,6 +81,14 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 7 — effects, camera feel, anime pass (built, awaiting playtest).**
+  One client module, `GameFeel`, plays every gameplay effect from one
+  table, `Config/Tuning` → `Tech.Feel` (a row per event, a dial per kind of
+  effect, one master Intensity). It also owns hit-stop (your own body and
+  pose freeze for up to 0.1 s; the world goes on), the Highlight budget
+  (disc, holder, you, ability users, then the nearest players, 20 of
+  Roblox's 31), sprint trails and the colour grade. Speed lines and the
+  speed FOV were retuned to the new speeds.
 - **Stage 6 — abilities (built, awaiting playtest).** `src/shared/Abilities`
   holds one module per ability; the framework there discovers them, and a
   new ability is one new file (it then appears in the Locker and Shop with

@@ -451,7 +451,7 @@ local function release()
 	local used = Abilities.applyThrow(player.Character, now(), params :: any)
 	if used then
 		controllers.TechFeedback.play(used.name, "Perfect")
-		controllers.AnimeFX.impactFrame(used.color)
+		controllers.GameFeel.play("AbilityCast", { own = true, color = used.color })
 	end
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then

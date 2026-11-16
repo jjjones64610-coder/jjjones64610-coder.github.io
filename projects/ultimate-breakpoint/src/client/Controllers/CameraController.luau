@@ -24,8 +24,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
-local MovementConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Movement"))
-
 local DiscConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Disc"))
 
 local CameraController = {}
@@ -61,10 +59,12 @@ local FLOOR_CLEARANCE = 1.2
 local WALL_RADIUS = 0.5
 local WALL_OUT_RATE = 6
 local FOCUS_Y_RATE = 12
-local SPEED_FOV = 2.5 -- extra degrees at top speed
-local SPEED_FOV_FROM = MovementConfig.SprintSpeed - 6 -- 22 with the current tuning
-local SPEED_FOV_TO = MovementConfig.SprintSpeed + 4 -- 32
-local MAX_KICK = 2
+-- the speed push and the punches come from Config/Tuning Feel
+local Feel = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Tech")).Feel
+local SPEED_FOV = Feel.SpeedFov * Feel.Intensity -- extra degrees at a full sprint
+local SPEED_FOV_FROM = Feel.SpeedFovFrom
+local SPEED_FOV_TO = Feel.SpeedFovTo
+local MAX_KICK = Feel.MaxKick
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude

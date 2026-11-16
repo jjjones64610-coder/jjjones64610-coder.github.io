@@ -80,7 +80,28 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 6 — Abilities (docs/CORE_DESIGN.md) ← test this now (with stages 1-5)
+### STAGE 7 — Effects, camera feel, the anime pass (docs/CORE_DESIGN.md) ← test this now (with stages 1-6)
+Every effect a play triggers is one row in `Config/Tuning.luau` → `Tech.Feel.Events`, played by one module
+(`GameFeel`). `Feel.Intensity` turns the whole game up or down; `Flash`, `HitStop`, `Shake`, `Kick`,
+`Particles` turn one kind. Settings → "Anime effects" switches the layer off for a player.
+
+- [ ] **Outlines:** every player near you and the disc have a dark ink outline; the disc's is white, the holder's gold, a player using an ability glows in its colour. In a 7v7 (14 players + the disc) nobody near the camera is missing one (the budget is 20 of Roblox's 31).
+- [ ] **Colour:** the field and jerseys look brighter and more saturated than before (Saturation, Contrast).
+- [ ] **Speed:** past a normal run the view widens (up to +6°), speed lines appear at the screen edge (from 33 studs/s, so not while jogging) and a team-coloured ribbon trails behind anyone sprinting.
+- [ ] **Perfect release:** a flash, a small camera punch, a burst and a ring at the release point.
+- [ ] **Big catches:** a Perfect layout or sky catch freezes you for a few frames (hit-stop), flashes gold, shakes and punches the camera. A plain air or layout catch is smaller. An easy catch has none of it.
+- [ ] **Block / interception:** flash, hit-stop and shake for the defender; everyone sees the burst.
+- [ ] **Dive and landing:** a small punch on the dive, a shake and dust on the belly landing; a normal landing is a light thud.
+- [ ] **Goal:** the biggest hit for the scorer; rings and confetti for everyone.
+- [ ] **Hit-stop feels right:** your body and pose hold for a blink, then carry on at the same speed. The world does not stop (it can't, in a shared game). If it feels like lag, lower `HitStop`.
+- [ ] **Dials work:** set `Feel.Intensity = 0`: no play effects at all. Set it to 2: everything bigger.
+
+What to tell me: which plays feel under- or over-sold? Is the hit-stop a highlight or a hitch? Outlines too heavy?
+
+Known: the disc already had its team-coloured trail and spin stripe; arenas keep their own lighting under the grade.
+New sounds for these moments wait on ForgeGUI being reconnected (existing sounds are reused).
+
+### STAGE 6 — Abilities (docs/CORE_DESIGN.md)
 You have one ability, chosen in **Menu → Locker** (buy more in the Shop). Fire it by pressing **Space and
 Shift together** (within 40 ms). A bar over the sprint meter shows the cooldown and the chord when ready.
 On the TEST FIELD the cooldown is 2 s so you can practise. Each ability's numbers are at the top of its own

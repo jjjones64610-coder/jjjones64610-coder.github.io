@@ -1224,6 +1224,9 @@ local function changed(rig: Rig): boolean
 end
 
 local function step(dt: number)
+	if controllers.GameFeel.frozen() then
+		return -- hit-stop: every pose holds its frame
+	end
 	local camPos = workspace.CurrentCamera.CFrame.Position
 	local seen: { [Model]: boolean } = {}
 	for _, model in Actors.characters() do
