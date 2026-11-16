@@ -60,7 +60,7 @@ local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
-local Abilities = require(Shared.Config.Abilities)
+local Abilities = require(Shared.Abilities)
 
 local T = DiscConfig.Throw
 local HD = MovementConfig.Holding
@@ -447,10 +447,11 @@ local function release()
 	updateShape() -- what you hold on the release frame is what counts
 	state.charging = false
 	local params = currentParams(hold)
-	params.tempest = Abilities.activeOn(player.Character, "TempestThrow", now()) or nil
-	if params.tempest then
-		controllers.TechFeedback.play("TEMPEST", "Perfect")
-		controllers.AnimeFX.impactFrame(Abilities.List.TempestThrow.color)
+	-- your ability shapes the throw (the server applies the same hook)
+	local used = Abilities.applyThrow(player.Character, now(), params :: any)
+	if used then
+		controllers.TechFeedback.play(used.name, "Perfect")
+		controllers.AnimeFX.impactFrame(used.color)
 	end
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then
@@ -469,7 +470,6 @@ local function release()
 		step = params.step,
 		pivot = params.pivot,
 		pinch = params.pinch,
-		tempest = params.tempest,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})

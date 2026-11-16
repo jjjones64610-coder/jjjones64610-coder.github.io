@@ -338,15 +338,11 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 		end
 	end
 
-	-- Tempest Throw: only while armed, and it is spent by this throw
-	local body = actor.character
-	if Abilities.activeOn(body, "TempestThrow", Net.now()) then
-		p.tempest = true
-		if body then
-			body:SetAttribute("UBAbilityUntil", Net.now())
-		end
-	else
-		p.tempest = nil
+	-- the thrower's ability shapes the throw (after the shape check, so an
+	-- ability may go past what plain inputs can do); some are spent by it
+	local used = Abilities.applyThrow(actor.character, Net.now(), p :: any)
+	if used and used.spendOnThrow then
+		services.AbilityService.spend(actorId)
 	end
 
 	local launch = ThrowModel.launch(p, prep.rootPos, prep.velocity)

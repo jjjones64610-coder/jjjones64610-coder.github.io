@@ -301,9 +301,7 @@ function CatchingService.claim(
 		end
 	end
 	local slack = if actor.isBot then 0 else CatchGeometry.slack(ping, serverVel.Magnitude)
-	if Abilities.activeOn(actor.character, "MagnetHands", Net.now()) then
-		slack += Abilities.MagnetReach
-	end
+	slack += Abilities.catchReach(actor.character, Net.now())
 	if _kind == "Tip" then
 		-- airborne only: the client says it is in the air (its jump reached
 		-- us before this claim), or our own lagging view agrees

@@ -46,6 +46,29 @@ function makeNode(path: string)
 		__index = function(_self, key)
 			if key == "Parent" then
 				return makeNode(dirname(path))
+			elseif key == "Name" then
+				return string.match(path, "([^/]+)$")
+			elseif key == "IsA" then
+				return function(_node, class: string)
+					return class == "ModuleScript" and fs.isFile(path .. ".luau")
+				end
+			elseif key == "GetChildren" then
+				-- the folder's modules (a folder module is "<dir>/init")
+				return function()
+					local dir = if string.match(path, "/init$") then dirname(path) else path
+					local out = {}
+					if fs.isDir(dir) then
+						local names = fs.readDir(dir)
+						table.sort(names)
+						for _, name in names do
+							local base = string.match(name, "^(.*)%.luau$")
+							if base and base ~= "init" then
+								table.insert(out, makeNode(dir .. "/" .. base))
+							end
+						end
+					end
+					return out
+				end
 			end
 			return makeNode(path .. "/" .. tostring(key))
 		end,
@@ -115,7 +138,8 @@ function requireModule(node)
 	local source = fs.readFile(file)
 	local fn = luau.load(source, {
 		debugName = file,
-		environment = makeEnv(makeNode(string.gsub(file, "%.luau?$", ""))),
+		-- (a folder module's `script` is the folder itself, as in Roblox)
+		environment = makeEnv(makeNode((string.gsub((string.gsub(file, "%.luau?$", "")), "/init$", "")))),
 	})
 	local result = fn()
 	cache[file] = result

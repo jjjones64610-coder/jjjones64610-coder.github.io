@@ -212,7 +212,6 @@ Tech.PIVOT_LUNGE_RECOVER = 0.25
 -- defense and rules
 Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
-Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
 Tech.MARK_SPEED = 20 -- studs/s: the mark shuffle (spec 30: 14)
 Tech.MARK_ACCEL = 160 -- studs/s²: it starts and stops on a dime

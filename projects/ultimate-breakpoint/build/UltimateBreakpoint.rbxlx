@@ -25,6 +25,335 @@
       </Properties>
       <Item class="ModuleScript" referent="4">
         <Properties>
+          <string name="Name">Abilities</string>
+          <string name="Source"><![CDATA[--!strict
+--[[
+	Abilities — the framework (docs/CORE_DESIGN.md, stage 6).
+
+	TO ADD AN ABILITY: drop one ModuleScript in this folder that returns a
+	Def (AbilityTypes.Def; copy any module here as a start). Nothing else changes: it is found here, appears in the
+	Locker and the Shop, gets its cooldown, its aura colour, its server
+	checks and its effect. Each module holds its own numbers.
+
+	The rules every ability follows:
+	  * one per player, chosen before the match (Locker), fired with the
+	    Ability chord (Config/Input.AbilityChord: Jump + Sprint together)
+	  * a cooldown, never a meter; they add to movement and throwing, they
+	    never replace skill and never win the play by themselves
+	  * the server decides when it fires (AbilityService: ownership, cooldown,
+	    canUse) and stamps the character; the owner's client applies the
+	    movement part to its own TechCore; throw and catch parts are applied
+	    by the same hook on the client (prediction) and the server (truth)
+
+	What a Def can do (all optional; mix freely):
+	  canUse(ctx)        may it fire right now? (false + a short reason)
+	  start(tech, move)  the movement effect, on the owner's own TechCore:
+	                     use TechCore.modify / TechCore.airBurst (generic
+	                     hooks; never edit TechCore for one ability)
+	  throw(params)      changes the throw released while it is active
+	  spendOnThrow       ... and that throw ends it
+	  catchReach         studs of extra catch reach while it is active
+	  airAction          the server allows one more air action this airtime
+]]
+
+local Types = require(script.Parent.AbilityTypes)
+
+local Abilities = {}
+
+export type Context = Types.Context
+export type ThrowParams = Types.ThrowParams
+export type Def = Types.Def
+
+local list: { [string]: Def } = {}
+local order: { string } = {}
+
+for _, child in script:GetChildren() do
+	if child:IsA("ModuleScript") then
+		local def = (require :: any)(child) :: Def
+		assert(
+			type(def) == "table" and def.id == child.Name,
+			"ability module " .. child.Name .. " must return a Def with id = its name"
+		)
+		list[def.id] = def
+		table.insert(order, def.id)
+	end
+end
+table.sort(order, function(a, b)
+	if list[a].order ~= list[b].order then
+		return list[a].order < list[b].order
+	end
+	return a < b
+end)
+
+Abilities.List = list
+Abilities.Order = order
+-- the one everyone owns (the cheapest; price 0)
+Abilities.Default = order[1]
+
+function Abilities.get(id: any): Def?
+	if type(id) ~= "string" then
+		return nil
+	end
+	return list[id]
+end
+
+-- The ability running on `model` at time `t` (Net.now()), read from the
+-- attributes AbilityService stamps. Both sides use it.
+function Abilities.active(model: Instance?, t: number): Def?
+	if not model then
+		return nil
+	end
+	local untilT = model:GetAttribute("UBAbilityUntil")
+	if type(untilT) ~= "number" or t >= untilT then
+		return nil
+	end
+	return Abilities.get(model:GetAttribute("UBAbility"))
+end
+
+function Abilities.activeOn(model: Instance?, id: string, t: number): boolean
+	local def = Abilities.active(model, t)
+	return def ~= nil and def.id == id
+end
+
+-- Extra catch reach (studs) `model` has at time `t`.
+function Abilities.catchReach(model: Instance?, t: number): number
+	local def = Abilities.active(model, t)
+	return if def and def.catchReach then def.catchReach else 0
+end
+
+-- Applies the active ability's throw hook to `p`. Returns the ability when
+-- it changed the throw (the caller ends it if def.spendOnThrow).
+function Abilities.applyThrow(model: Instance?, t: number, p: ThrowParams): Def?
+	local def = Abilities.active(model, t)
+	if def and def.throw then
+		def.throw(p)
+		return def
+	end
+	return nil
+end
+
+return Abilities
+]]></string>
+        </Properties>
+        <Item class="ModuleScript" referent="5">
+          <Properties>
+            <string name="Name">AirBurst</string>
+            <string name="Source"><![CDATA[--!strict
+-- AIR BURST — "a short directional air burst". In the air: a shove the way
+-- you are holding and your air action back, so one jump can hold two moves
+-- (burst, then dive; or dive early, burst, Sky Reach). Useless on the ground.
+local Types = require(script.Parent.Parent.AbilityTypes)
+local TechCore = require(script.Parent.Parent.Movement.TechCore)
+
+local SPEED = 12 -- FEEL: studs/s added toward the stick
+local LIFT = 8 -- FEEL: studs/s of upward kick
+
+local def: Types.Def = {
+	id = "AirBurst",
+	name = "AIR BURST",
+	desc = "In the air: a burst the way you hold, and your air action back.",
+	color = Color3.fromRGB(180, 255, 255),
+	icon = "AirBurst",
+	price = 0,
+	order = 1,
+	cooldown = 14,
+	duration = 0,
+	airAction = true,
+	canUse = function(ctx: Types.Context): (boolean, string?)
+		if ctx.holding then
+			return false, "NOT WITH THE DISC"
+		elseif ctx.grounded == true then
+			return false, "ONLY IN THE AIR"
+		end
+		return true, nil
+	end,
+	start = function(tech: TechCore.State, move: Vector3)
+		TechCore.airBurst(tech, move, SPEED, LIFT)
+	end,
+}
+
+return def
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="6">
+          <Properties>
+            <string name="Name">Curveball</string>
+            <string name="Source"><![CDATA[--!strict
+-- CURVEBALL — "a throw with extra curve". Arm it, and the next throw you
+-- bend (A or D at the release) bends twice as hard: round a mark or a
+-- poach that a normal bend can't clear. A flat throw gets nothing.
+local Types = require(script.Parent.Parent.AbilityTypes)
+
+local BEND = 2 -- FEEL: the bend x this
+
+local def: Types.Def = {
+	id = "Curveball",
+	name = "CURVEBALL",
+	desc = "Your next bent throw (within 6 s) curves twice as hard.",
+	color = Color3.fromRGB(60, 230, 200),
+	icon = "Curveball",
+	price = 1800,
+	order = 3,
+	cooldown = 16,
+	duration = 6,
+	spendOnThrow = true,
+	throw = function(p: Types.ThrowParams)
+		p.bank = math.clamp(p.bank * BEND, -1, 1)
+	end,
+}
+
+return def
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="7">
+          <Properties>
+            <string name="Name">Focus</string>
+            <string name="Source"><![CDATA[--!strict
+-- FOCUS — the closest Roblox allows to "a moment of slowed time while
+-- aiming" (time can't slow for one player in a multiplayer game). For a few
+-- seconds you hang in the air (low gravity) and your release is forgiving:
+-- letting go anywhere near the Snap point leaves as a Perfect release. It
+-- helps you make the hard throw; it does not make it for you.
+local Types = require(script.Parent.Parent.AbilityTypes)
+local TechCore = require(script.Parent.Parent.Movement.TechCore)
+
+local GRAVITY = 0.35 -- FEEL: gravity x this while it lasts (the hang)
+local SNAP_ASSIST = 0.09 -- FEEL: s either side of the Snap point that still counts (normally 0.025)
+
+local def: Types.Def = {
+	id = "Focus",
+	name = "FOCUS",
+	desc = "For 3 s you hang in the air and your next release snaps to Perfect if it is close.",
+	color = Color3.fromRGB(255, 215, 80),
+	icon = "Focus",
+	price = 2200,
+	order = 4,
+	cooldown = 22,
+	duration = 3,
+	spendOnThrow = true,
+	start = function(tech: TechCore.State, _move: Vector3)
+		TechCore.modify(tech, 3, { gravity = GRAVITY })
+	end,
+	throw = function(p: Types.ThrowParams)
+		p.snapAssist = SNAP_ASSIST
+	end,
+}
+
+return def
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="8">
+          <Properties>
+            <string name="Name">MagnetHands</string>
+            <string name="Source"><![CDATA[--!strict
+-- MAGNET HANDS — for a few seconds your catch zones reach a little further.
+-- A hard catch still needs your hands on time; this only widens where.
+local Types = require(script.Parent.Parent.AbilityTypes)
+
+local def: Types.Def = {
+	id = "MagnetHands",
+	name = "MAGNET HANDS",
+	desc = "For 5 s your hands reach 2 studs further for the disc.",
+	color = Color3.fromRGB(255, 90, 220),
+	icon = "MagnetHands",
+	price = 2000,
+	order = 5,
+	cooldown = 20,
+	duration = 5,
+	catchReach = 2,
+}
+
+return def
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="9">
+          <Properties>
+            <string name="Name">Surge</string>
+            <string name="Source"><![CDATA[--!strict
+-- SURGE — "a brief speed surge". For a moment your top speed and
+-- acceleration go up: enough to win one step on a defender, not a race.
+local Types = require(script.Parent.Parent.AbilityTypes)
+local TechCore = require(script.Parent.Parent.Movement.TechCore)
+
+local TOP_SPEED = 7 -- FEEL: studs/s added to your top speed
+local ACCEL = 1.4 -- FEEL: acceleration x this
+
+local def: Types.Def = {
+	id = "Surge",
+	name = "SURGE",
+	desc = "For 2.5 s: +7 top speed and quicker off the mark.",
+	color = Color3.fromRGB(255, 110, 60),
+	icon = "Surge",
+	price = 1500,
+	order = 2,
+	cooldown = 18,
+	duration = 2.5,
+	canUse = function(ctx: Types.Context): (boolean, string?)
+		if ctx.holding then
+			return false, "NOT WITH THE DISC"
+		end
+		return true, nil
+	end,
+	start = function(tech: TechCore.State, _move: Vector3)
+		TechCore.modify(tech, 2.5, { topSpeed = TOP_SPEED, accel = ACCEL })
+	end,
+}
+
+return def
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="10">
+        <Properties>
+          <string name="Name">AbilityTypes</string>
+          <string name="Source"><![CDATA[--!strict
+-- The shape of an ability module (src/shared/Abilities: one file each).
+-- Kept beside the folder so the modules and the framework can both use it.
+local TechCore = require(script.Parent.Movement.TechCore)
+
+export type Context = {
+	grounded: boolean?, -- nil when unknown (the server's view lags a jump)
+	holding: boolean, -- holding the disc
+}
+
+-- (the throw parameters a hook may change; ThrowModel.Params has more)
+export type ThrowParams = {
+	throwType: string,
+	bank: number,
+	holdTime: number,
+	snapAssist: number?,
+	[string]: any,
+}
+
+export type Def = {
+	id: string, -- the module's name
+	name: string, -- shown on the HUD (upper case)
+	desc: string, -- one line for the Locker / Shop
+	color: Color3, -- aura and effects
+	icon: string, -- Config/Art.Ui key
+	price: number, -- coins in the Shop (0 = everyone starts with it)
+	order: number, -- position in lists
+	cooldown: number, -- s from firing until it is ready again
+	duration: number, -- s the effect (and the aura) lasts; 0 = instant
+	canUse: ((ctx: Context) -> (boolean, string?))?,
+	start: ((tech: TechCore.State, move: Vector3) -> ())?,
+	throw: ((p: ThrowParams) -> ())?,
+	spendOnThrow: boolean?,
+	catchReach: number?,
+	airAction: boolean?,
+}
+
+return {}
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="11">
+        <Properties>
           <string name="Name">Actors</string>
           <string name="Source"><![CDATA[--!strict
 --[[
@@ -157,11 +486,11 @@ return Actors
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="5">
+      <Item class="Folder" referent="12">
         <Properties>
           <string name="Name">Animation</string>
         </Properties>
-        <Item class="ModuleScript" referent="6">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">Locomotion</string>
             <string name="Source"><![CDATA[--!strict
@@ -439,131 +768,20 @@ return Locomotion
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="7">
+      <Item class="Folder" referent="14">
         <Properties>
           <string name="Name">Config</string>
         </Properties>
-        <Item class="ModuleScript" referent="8">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">Abilities</string>
             <string name="Source"><![CDATA[--!strict
---[[
-	Abilities — one per player, picked from the same pool (Menu → Settings →
-	Ability), so everyone has the same tools (docs/tech-spec.md pillar 6: no
-	stat upgrades). The FLOW meter only fills through skill: Perfect techs,
-	catches, blocks and goals. Full meter + Ability key = one use.
-
-	The server owns the meter (AbilityService, from validated events) and
-	says when an ability fires; the client applies the effect to its own
-	movement (TechCore) and everyone sees the aura.
-]]
-
-local Abilities = {}
-
-Abilities.MeterMax = 100
-
--- FLOW gained (server, from accepted events)
-Abilities.Gain = {
-	PerfectTech = 8,
-	CleanTech = 1,
-	catches = 4,
-	completions = 3,
-	assists = 8,
-	blocks = 15,
-	interceptions = 15,
-	goals = 18,
-	callahans = 40,
-	greatests = 40,
-	passChain = 3, -- x the chain length, to the thrower and the catcher
-}
-
-export type Def = {
-	id: string,
-	name: string,
-	desc: string,
-	duration: number, -- s the effect lasts (0 = instant)
-	color: Color3,
-}
-
-Abilities.Order = { "FlashStep", "Zone", "SkyWalk", "Overdrive", "MagnetHands", "TempestThrow" }
-
-Abilities.List = {
-	FlashStep = {
-		id = "FlashStep",
-		name = "FLASH STEP",
-		desc = "Vanish 18 studs the way you're moving and surge +8 speed.",
-		duration = 2,
-		color = Color3.fromRGB(90, 230, 255),
-	},
-	Zone = {
-		id = "Zone",
-		name = "THE ZONE",
-		desc = "For 8 s every Perfect timing window is twice as wide.",
-		duration = 8,
-		color = Color3.fromRGB(255, 215, 80),
-	},
-	SkyWalk = {
-		id = "SkyWalk",
-		name = "SKY WALK",
-		desc = "For 8 s: three extra Air Dodges every airtime and floatier jumps.",
-		duration = 8,
-		color = Color3.fromRGB(180, 255, 255),
-	},
-	Overdrive = {
-		id = "Overdrive",
-		name = "OVERDRIVE",
-		desc = "For 7 s Burst never drains and your top speed is +6.",
-		duration = 7,
-		color = Color3.fromRGB(255, 110, 60),
-	},
-	MagnetHands = {
-		id = "MagnetHands",
-		name = "MAGNET HANDS",
-		desc = "For 8 s the disc snaps to your hands from 2.5 studs further.",
-		duration = 8,
-		color = Color3.fromRGB(255, 90, 220),
-	},
-	TempestThrow = {
-		id = "TempestThrow",
-		name = "TEMPEST THROW",
-		desc = "Your next throw (within 10 s) flies 35 % faster and holds its line.",
-		duration = 10,
-		color = Color3.fromRGB(60, 230, 200),
-	},
-} :: { [string]: Def }
-
-Abilities.FlashDistance = 18 -- studs
-Abilities.FlashSurge = 8 -- studs/s added on arrival (overspeed decays it)
-Abilities.ZoneScale = 2 -- Perfect windows x this
-Abilities.SkyWalkDodges = 3
-Abilities.SkyWalkGravity = 0.75 -- gravity x this
-Abilities.OverdriveTop = 6 -- extra top speed while Burst is held
-Abilities.MagnetReach = 2.5 -- studs of extra catch reach
-Abilities.TempestSpeed = 1.35 -- disc speed x this
-Abilities.TempestSpin = 1.3 -- spin x this (holds its line)
-
-function Abilities.get(id: any): Def?
-	if type(id) ~= "string" then
-		return nil
-	end
-	return Abilities.List[id]
-end
-
--- Is ability `id` running on `model` at time `t` (Net.now())? Read from the
--- attributes AbilityService stamps; both sides use it.
-function Abilities.activeOn(model: Instance?, id: string, t: number): boolean
-	if not model then
-		return false
-	end
-	local untilT = model:GetAttribute("UBAbilityUntil")
-	return model:GetAttribute("UBAbility") == id and type(untilT) == "number" and t < untilT
-end
-
-return Abilities
+-- Alias: abilities are modules in src/shared/Abilities (one file each).
+return require(script.Parent.Parent.Abilities)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="9">
+        <Item class="ModuleScript" referent="16">
           <Properties>
             <string name="Name">Arenas</string>
             <string name="Source"><![CDATA[--!strict
@@ -890,7 +1108,7 @@ return Arenas
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="10">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">Art</string>
             <string name="Source"><![CDATA[--!strict
@@ -937,12 +1155,13 @@ Art.Ui = {
 	Logo = "111364135042535",
 	Coin = "126354451655390",
 	MenuBackground = "77694382940410", -- the store thumbnail
-	FlashStep = "120616402487903",
-	Zone = "72311911062044",
-	SkyWalk = "97193595800423",
-	Overdrive = "91517007108188",
+	-- ability icons (an ability module names its key in `icon`); these were
+	-- drawn for earlier abilities and are reused until new ones are made
+	AirBurst = "97193595800423",
+	Surge = "91517007108188",
+	Curveball = "80509612591405",
+	Focus = "72311911062044",
 	MagnetHands = "102624158698647",
-	TempestThrow = "80509612591405",
 	Emote = "89850613445736",
 	Trail = "103052506400160",
 	Aura = "106340578522274",
@@ -975,7 +1194,7 @@ return Art
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="11">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Audio</string>
             <string name="Source"><![CDATA[--!strict
@@ -1050,7 +1269,7 @@ return Audio
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Disc</string>
             <string name="Source"><![CDATA[--!strict
@@ -1059,7 +1278,7 @@ return require(script.Parent.Tuning).Disc
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">Hitbox</string>
             <string name="Source"><![CDATA[--!strict
@@ -1124,7 +1343,7 @@ return Hitbox
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">Input</string>
             <string name="Source"><![CDATA[--!strict
@@ -1279,7 +1498,7 @@ Input.DefaultSettings = {
 	ShowComboFeed = true,
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
-	Ability = "FlashStep", -- Config/Abilities id
+	Ability = "AirBurst", -- an id from src/shared/Abilities
 	AnimeEffects = true, -- speed lines, afterimages, impact frames, slash arcs
 	TechDebug = false, -- the tech debug HUD (speed, state, burst, timing in ms); always on in Studio
 	LeftHanded = false,
@@ -1295,7 +1514,7 @@ return Input
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Modes</string>
             <string name="Source"><![CDATA[--!strict
@@ -1560,7 +1779,7 @@ return Modes
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">Movement</string>
             <string name="Source"><![CDATA[--!strict
@@ -2050,7 +2269,7 @@ return Movement
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">Music</string>
             <string name="Source"><![CDATA[--!strict
@@ -2079,7 +2298,7 @@ return Music
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">Progression</string>
             <string name="Source"><![CDATA[--!strict
@@ -2420,7 +2639,7 @@ return Progression
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">Shop</string>
             <string name="Source"><![CDATA[--!strict
@@ -2439,21 +2658,22 @@ return Progression
 	the shop's Robux buttons switch on. Nothing else to change.
 ]]
 
+local Abilities = require(script.Parent.Parent.Abilities)
+
 local Shop = {}
 
 Shop.CoinsPerXp = 0.25 -- coins for every XP point earned
 Shop.VipCoinMult = 1.5
 Shop.StartingCoins = 250
 
--- Abilities and their prices (Flash Step is everyone's to start).
-Shop.Abilities = {
-	{ id = "FlashStep", name = "Flash Step", price = 0 },
-	{ id = "Zone", name = "The Zone", price = 1500 },
-	{ id = "Overdrive", name = "Overdrive", price = 2000 },
-	{ id = "SkyWalk", name = "Sky Walk", price = 2500 },
-	{ id = "MagnetHands", name = "Magnet Hands", price = 1800 },
-	{ id = "TempestThrow", name = "Tempest Throw", price = 2200 },
-} :: { any }
+-- Abilities and their prices, straight from the ability modules
+-- (src/shared/Abilities: each one names its own price; 0 = everyone's to start).
+local abilityItems: { any } = {}
+for _, id in Abilities.Order do
+	local def = Abilities.List[id]
+	table.insert(abilityItems, { id = def.id, name = def.name, price = def.price, color = def.color })
+end
+Shop.Abilities = abilityItems
 
 export type Product = { id: string, productId: number, coins: number, robux: number, name: string }
 
@@ -2481,7 +2701,7 @@ return Shop
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -2663,7 +2883,7 @@ return Signatures
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">Teams</string>
             <string name="Source"><![CDATA[--!strict
@@ -2700,7 +2920,7 @@ return Teams
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="22">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">Tech</string>
             <string name="Source"><![CDATA[--!strict
@@ -2709,7 +2929,7 @@ return require(script.Parent.Tuning)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="23">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">Tuning</string>
             <string name="Source"><![CDATA[--!strict
@@ -2926,7 +3146,6 @@ Tech.PIVOT_LUNGE_RECOVER = 0.25
 -- defense and rules
 Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
-Tech.POINT_BLOCK_FLOW = 20
 Tech.MIRROR_WINDOW = 120 -- ms
 Tech.MARK_SPEED = 20 -- studs/s: the mark shuffle (spec 30: 14)
 Tech.MARK_ACCEL = 160 -- studs/s²: it starts and stops on a dime
@@ -3237,11 +3456,11 @@ return Tech
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="24">
+      <Item class="Folder" referent="31">
         <Properties>
           <string name="Name">Disc</string>
         </Properties>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">DiscPhysics</string>
             <string name="Source"><![CDATA[--!strict
@@ -3574,7 +3793,7 @@ return DiscPhysics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">Solver</string>
             <string name="Source"><![CDATA[--!strict
@@ -3799,7 +4018,7 @@ return Solver
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">ThrowModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -3836,7 +4055,6 @@ local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
-local Abilities = require(Shared.Config.Abilities)
 local DiscPhysics = require(script.Parent.DiscPhysics)
 
 local T = DiscConfig.Throw
@@ -3858,7 +4076,7 @@ export type Params = {
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
-	tempest: boolean?, -- Tempest Throw is armed (Config/Abilities): faster, more spin
+	snapAssist: number?, -- s: a release this close to the Snap point counts as on it (abilities)
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -4077,7 +4295,6 @@ function ThrowModel.sanitize(raw: any): Params?
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
-		tempest = raw.tempest == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -4136,7 +4353,12 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 	local mirror = if p.leftHanded then -1 else 1
 	local pivoting = p.pivot ~= nil and not p.groundThrow
 
-	local power, quality, spinFactor = ThrowModel.charge(p.holdTime, p.throwType)
+	local hold = p.holdTime
+	local assist = p.snapAssist
+	if assist and math.abs(hold - T.SnapPoint * T.ChargeTime) <= assist then
+		hold = T.SnapPoint * T.ChargeTime -- close enough: it leaves as a Snap
+	end
+	local power, quality, spinFactor = ThrowModel.charge(hold, p.throwType)
 	if p.offBalance then
 		power = math.min(power, T.OffBalancePowerCap)
 		spinFactor *= T.OffBalanceSpin
@@ -4184,10 +4406,6 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 	elseif p.pinch == "Clean" then
 		speed *= TechConfig.PINCH_SPEED
 	end
-	if p.tempest then
-		speed *= Abilities.TempestSpeed
-		spinFactor *= Abilities.TempestSpin
-	end
 
 	-- A release on the move (the catch skid, or in the air) aims exactly
 	-- where you point: it costs spin (MovingSpinPenalty) and carries some of
@@ -4228,11 +4446,11 @@ return ThrowModel
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="28">
+      <Item class="Folder" referent="35">
         <Properties>
           <string name="Name">Movement</string>
         </Properties>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">MovementSim</string>
             <string name="Source"><![CDATA[--!strict
@@ -6571,7 +6789,7 @@ return MovementSim
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">TechCore</string>
             <string name="Source"><![CDATA[--!strict
@@ -6752,15 +6970,11 @@ export type State = {
 	recoverUntil: number,
 	skyPerfectUntil: number, -- hands-up reach bonus lasts while this is ahead
 
-	-- abilities (Config/Abilities)
-	windowScale: number, -- Perfect windows x this (The Zone)
-	zoneUntil: number,
-	extraDodges: number, -- Sky Walk: extra dodges per airtime
-	extraDodgesLeft: number,
-	skyWalkUntil: number,
-	overdriveUntil: number,
-	overdriveTop: number, -- extra top speed during Overdrive
-	skyWalkGravity: number, -- gravity x this during Sky Walk
+	-- a timed modifier from outside (abilities: TechCore.modify)
+	modUntil: number,
+	modTopSpeed: number, -- added to the top speed
+	modAccel: number, -- acceleration x this
+	modGravity: number, -- gravity x this
 
 	-- defense
 	mirrorArmed: boolean, -- the next cut mirrors your matchup's (Mirror Step)
@@ -6870,14 +7084,10 @@ function TechCore.new(now: number?): State
 		recoverUntil = -math.huge,
 		skyPerfectUntil = -math.huge,
 
-		windowScale = 1,
-		zoneUntil = -math.huge,
-		extraDodges = 0,
-		extraDodgesLeft = 0,
-		skyWalkUntil = -math.huge,
-		overdriveUntil = -math.huge,
-		overdriveTop = 0,
-		skyWalkGravity = 1,
+		modUntil = -math.huge,
+		modTopSpeed = 0,
+		modAccel = 1,
+		modGravity = 1,
 
 		mirrorArmed = false,
 
@@ -7053,8 +7263,7 @@ function TechCore.noteTiming(
 	t: number?
 ): Timing
 	local a = math.abs(offsetMs)
-	local scale = if s.now < s.zoneUntil then s.windowScale else 1
-	local pw = if perfectMs then perfectMs * scale else nil
+	local pw = perfectMs
 	local ww = math.max(windowMs, pw or 0)
 	local quality = if pw and a <= pw then "Perfect" elseif a <= ww then "Clean" else "Miss"
 	local timing: Timing = {
@@ -7074,11 +7283,6 @@ end
 -- edge of the Perfect window (or the window), so "12 ms late" means 12 ms
 -- past the Perfect part.
 local function noteRange(s: State, name: string, ms: number, lo: number, hi: number, plo: number?, phi: number?): string
-	-- The Zone widens the Perfect part around its middle (inside the window)
-	if plo and phi and s.now < s.zoneUntil and s.windowScale ~= 1 then
-		local mid, half = (plo + phi) / 2, (phi - plo) / 2 * s.windowScale
-		plo, phi = math.max(lo, mid - half), math.min(hi, mid + half)
-	end
 	local quality = "Miss"
 	if ms >= lo and ms <= hi then
 		quality = if plo and phi and ms >= plo and ms <= phi then "Perfect" else "Clean"
@@ -7269,8 +7473,6 @@ local function tryAirAction(s: State, input: Input, env: Env): boolean
 		if s.storedFlips > 0 then
 			s.storedFlips -= 1
 			emit(s, "ResetFlip", "Perfect", stickDir(input) or Vector3.yAxis, tostring(s.flipResetsAir))
-		elseif s.now < s.skyWalkUntil and s.extraDodgesLeft > 0 then
-			s.extraDodgesLeft -= 1
 		else
 			return false
 		end
@@ -7524,7 +7726,6 @@ local function onLand(s: State)
 	s.landSpeed = flatOf(s.vel).Magnitude
 	s.dodgeAvailable = true
 	s.discResetUsed = false
-	s.extraDodgesLeft = s.extraDodges
 	s.skyPerfectUntil = -math.huge
 	s.storedFlips = 0
 	s.flipResetsAir = 0
@@ -7815,11 +8016,7 @@ local function updateBurst(s: State, input: Input, dt: number)
 		and s.burst > 0
 		and (RUNNING[s.state] or s.state == "Sliding")
 		and stickDir(input) ~= nil
-	if s.now < s.overdriveUntil then
-		s.burst = 100
-		s.burstLocked = false
-		active = held and (RUNNING[s.state] or s.state == "Sliding") and stickDir(input) ~= nil
-	elseif active then
+	if active then
 		local d = math.min(s.burst, Config.BURST_DRAIN * dt)
 		s.burst -= d
 		s.burstDrained += d
@@ -7832,10 +8029,11 @@ local function updateBurst(s: State, input: Input, dt: number)
 	end
 	local boosting = active and s.state ~= "Sliding"
 	s.topSpeed = if boosting then Config.BURST_TOP_SPEED else Config.RUN_TOP_SPEED
-	if boosting and s.now < s.overdriveUntil then
-		s.topSpeed += s.overdriveTop
-	end
 	s.accel = if boosting then Config.BURST_ACCEL else Config.RUN_ACCEL
+	if s.now < s.modUntil then
+		s.topSpeed += s.modTopSpeed
+		s.accel *= s.modAccel
+	end
 end
 
 -- One fixed step of `dt` (normally TechCore.STEP).
@@ -7963,8 +8161,8 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 		if s.state == "Diving" then
 			g *= Config.DIVE_GRAVITY_MULT
 		end
-		if s.now < s.skyWalkUntil then
-			g *= s.skyWalkGravity
+		if s.now < s.modUntil then
+			g *= s.modGravity
 		end
 		vy -= g * dt
 		-- holding Jump after a jump adds up to a full jump
@@ -8007,55 +8205,41 @@ function TechCore.advance(s: State, input: Input, env: Env, frameDt: number): Fr
 	return s.frame
 end
 
--- Adds `amount` studs/s along your line at once (Flash Step's surge);
--- overspeed decay brings it back down.
-function TechCore.surge(s: State, amount: number)
+---------------------------------------------------------------------------
+-- hooks for abilities (src/shared/Abilities): generic, so a new ability
+-- never needs a change in here
+---------------------------------------------------------------------------
+
+export type Modifier = {
+	topSpeed: number?, -- studs/s added to the top speed
+	accel: number?, -- acceleration x this
+	gravity: number?, -- gravity x this (in the air)
+}
+
+-- Applies `mod` for `duration` seconds of sim time (one at a time: a new
+-- one replaces the old).
+function TechCore.modify(s: State, duration: number, mod: Modifier)
+	s.modUntil = s.now + duration
+	s.modTopSpeed = mod.topSpeed or 0
+	s.modAccel = mod.accel or 1
+	s.modGravity = mod.gravity or 1
+end
+
+-- In the air: a burst of `speed` toward `dir` (the stick; your line when it
+-- is let go) with `lift` upward, and the air action back. Returns false on
+-- the ground or in a dive (nothing happens).
+function TechCore.airBurst(s: State, dir: Vector3, speed: number, lift: number): boolean
+	if s.grounded or s.state == "Diving" or s.holding then
+		return false
+	end
 	local flat = flatOf(s.vel)
-	setFlat(s, flat + unitOr(flat, s.heading) * amount)
-end
-
--- Starts an ability's movement effect (Config/Abilities): "Zone",
--- "SkyWalk" or "Overdrive" for `duration` seconds of sim time. Flash Step
--- moves the body, so the caller does it (see flashStep).
-function TechCore.startAbility(s: State, id: string, duration: number, scale: number?, dodges: number?)
-	local untilT = s.now + duration
-	if id == "Zone" then
-		s.zoneUntil = untilT
-		s.windowScale = scale or 2
-	elseif id == "SkyWalk" then
-		s.skyWalkUntil = untilT
-		s.extraDodges = dodges or 2
-		s.extraDodgesLeft = s.extraDodges
-		s.skyWalkGravity = scale or 1
-	elseif id == "Overdrive" then
-		s.overdriveUntil = untilT
-		s.burst = 100
-		s.burstLocked = false
-		s.overdriveTop = scale or 0
-	end
-	emit(s, "Ability", "Clean", s.heading, id)
-end
-
--- The ends of the timed abilities are checked here so Sky Walk stops
--- granting dodges the moment it runs out.
-function TechCore.abilityActive(s: State): string?
-	if s.now < s.zoneUntil then
-		return "Zone"
-	elseif s.now < s.skyWalkUntil then
-		return "SkyWalk"
-	elseif s.now < s.overdriveUntil then
-		return "Overdrive"
-	end
-	return nil
-end
-
--- Flash Step: the flat direction to blink (the stick, else your line).
-function TechCore.flashDirection(s: State, move: Vector3): Vector3
-	local m = flatOf(move)
-	if m.Magnitude > 0.05 then
-		return m.Unit
-	end
-	return s.heading
+	local d = unitOr(dir, s.heading)
+	local nv = flat + d * speed
+	s.vel = Vector3.new(nv.X, math.max(s.vel.Y, 0) + lift, nv.Z)
+	s.takeoffSpeed = math.max(s.takeoffSpeed, nv.Magnitude)
+	s.dodgeAvailable = true
+	emit(s, "AirBurst", "Clean", d)
+	return true
 end
 
 function TechCore.flatSpeed(s: State): number
@@ -8067,7 +8251,7 @@ return TechCore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="31">
+      <Item class="ModuleScript" referent="38">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--!strict
@@ -8205,11 +8389,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="32">
+      <Item class="Folder" referent="39">
         <Properties>
           <string name="Name">Rules</string>
         </Properties>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">CatchGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -8709,7 +8893,7 @@ return CatchGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">ComboEvaluator</string>
             <string name="Source"><![CDATA[--!strict
@@ -9085,7 +9269,7 @@ return ComboEvaluator
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">FieldGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -9358,7 +9542,7 @@ return FieldGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">MatchPlan</string>
             <string name="Source"><![CDATA[--!strict
@@ -9901,7 +10085,7 @@ return MatchPlan
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">Rating</string>
             <string name="Source"><![CDATA[--!strict
@@ -10119,7 +10303,7 @@ return Rating
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">RulesEngine</string>
             <string name="Source"><![CDATA[--!strict
@@ -10603,7 +10787,7 @@ return RulesEngine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">Signatures</string>
             <string name="Source"><![CDATA[--!strict
@@ -10932,11 +11116,11 @@ return Signatures
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="40">
+      <Item class="Folder" referent="47">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">Rng</string>
             <string name="Source"><![CDATA[--!strict
@@ -10983,7 +11167,7 @@ return Rng
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">Signal</string>
             <string name="Source"><![CDATA[--!strict
@@ -11031,7 +11215,7 @@ return Signal
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">VecMath</string>
             <string name="Source"><![CDATA[--!strict
@@ -11145,19 +11329,19 @@ return VecMath
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="44">
+  <Item class="ServerScriptService" referent="51">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="45">
+    <Item class="Folder" referent="52">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="46">
+      <Item class="Folder" referent="53">
         <Properties>
           <string name="Name">Arena</string>
         </Properties>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">ArenaBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12184,7 +12368,7 @@ return ArenaBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">Build</string>
             <string name="Source"><![CDATA[--!strict
@@ -12308,7 +12492,7 @@ return Build
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">TestFieldBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12427,7 +12611,7 @@ return TestFieldBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">TrainingBuilder</string>
             <string name="Source"><![CDATA[--!strict
@@ -12925,7 +13109,7 @@ return TrainingBuilder
           </Properties>
         </Item>
       </Item>
-      <Item class="Script" referent="51">
+      <Item class="Script" referent="58">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -12993,44 +13177,45 @@ print("[Breakpoint] server ready")
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="52">
+      <Item class="Folder" referent="59">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">AbilityService</string>
             <string name="Source"><![CDATA[--!strict
 --[[
-	AbilityService (server) — the FLOW meter and ability activations
-	(Config/Abilities).
+	AbilityService (server) — when an ability fires (src/shared/Abilities).
 
-	  * The meter fills only from validated play: techniques the
-	    MovementService accepted (Perfect ones most) and match stats
-	    (catches, completions, assists, blocks, interceptions, goals,
-	    Callahans, Greatests). It is written to the character as UBFlow
-	    (0..100) for the HUD, and re-stamped after a respawn.
-	  * The Ability remote (abilityId) fires an ability when the meter is
-	    full and the player isn't frozen: the meter empties and the character
-	    gets UBAbility (id), UBAbilityT (Net.now()) and UBAbilityUntil. The
-	    owner's client applies the movement effect; every client draws the
-	    aura. In Training the meter refills at once so abilities can be
-	    practised.
+	The Ability remote (abilityId) fires it when the player owns it (Shop /
+	Locker), it is off cooldown, the player isn't frozen and the ability's
+	own canUse agrees. Then the character gets:
+	  UBAbility         the id
+	  UBAbilityT        Net.now() it fired (the owner's client applies the
+	                    movement part; every client plays the cast)
+	  UBAbilityUntil    when its effect ends (aura, throw and catch hooks)
+	  UBAbilityReadyAt  when it can fire again (the HUD's cooldown)
+	  UBAbilityCooldown its length, for the HUD
+	Throw and catch effects are read from those attributes by ThrowService
+	and CatchingService through the framework, so the server is always the
+	one applying them. In Training the cooldown is short so abilities can be
+	practised.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Abilities = require(Shared.Config.Abilities)
-local MovementConfig = require(Shared.Config.Movement)
+local Abilities = require(Shared.Abilities)
 local Net = require(Shared.Net)
 
 local AbilityService = {}
 
 local services: any
-local meters: { [number]: number } = {}
+local readyAt: { [number]: number } = {} -- actor id -> Net.now() it is ready again
+local cooldownOf: { [number]: number } = {}
 
-local MIN_CLEAN_POINTS = 100 -- Clean techs below this combo value (jumps, plants) earn nothing
+local TRAINING_COOLDOWN = 2
 
 local function characterOf(id: number): Model?
 	local actor = services.PlayerService.get(id)
@@ -13040,42 +13225,21 @@ end
 local function write(id: number)
 	local c = characterOf(id)
 	if c then
-		c:SetAttribute("UBFlow", math.floor((meters[id] or 0) + 0.5))
+		c:SetAttribute("UBAbilityReadyAt", readyAt[id] or 0)
+		c:SetAttribute("UBAbilityCooldown", cooldownOf[id] or 0)
 	end
 end
 
-function AbilityService.meter(id: number): number
-	return meters[id] or 0
+-- Seconds until actor `id` can fire again (0 = ready).
+function AbilityService.cooldownLeft(id: number): number
+	return math.max(0, (readyAt[id] or 0) - Net.now())
 end
 
-function AbilityService.gain(id: number, amount: number)
-	if amount <= 0 then
-		return
-	end
-	local before = meters[id] or 0
-	local after = math.min(Abilities.MeterMax, before + amount)
-	if after ~= before then
-		meters[id] = after
-		write(id)
-	end
-end
-
--- Match stats (MatchService.stat) feed the meter.
-function AbilityService.onStat(id: number, key: string, n: number?)
-	local g = (Abilities.Gain :: any)[key]
-	if type(g) == "number" then
-		AbilityService.gain(id, g * (n or 1))
-	end
-end
-
-local function onTech(id: number, tech: string, quality: string)
-	if quality == "Perfect" then
-		AbilityService.gain(id, Abilities.Gain.PerfectTech)
-	elseif quality == "Clean" then
-		local pts = (MovementConfig.ComboPoints :: any)[tech]
-		if type(pts) == "number" and pts >= MIN_CLEAN_POINTS then
-			AbilityService.gain(id, Abilities.Gain.CleanTech)
-		end
+-- Ends the running effect now (a throw spent it).
+function AbilityService.spend(id: number)
+	local c = characterOf(id)
+	if c then
+		c:SetAttribute("UBAbilityUntil", Net.now())
 	end
 end
 
@@ -13094,20 +13258,29 @@ function AbilityService.activate(id: number, abilityId: any): boolean
 	if actor.player and not services.ProgressionService.owns(actor.player, "ability", def.id) then
 		return false
 	end
-	local track = services.MovementService.track(id)
-	if def.id == "FlashStep" and track and track.holding then
-		return false -- a blink while holding the disc would be a travel
-	end
-	local training = actor.role == "Training"
-	if not training and (meters[id] or 0) < Abilities.MeterMax then
+	local t = Net.now()
+	if t < (readyAt[id] or 0) then
 		return false
 	end
-	local t = Net.now()
-	meters[id] = if training then Abilities.MeterMax else 0
-	write(id)
+	if def.canUse then
+		-- the server's view of "in the air" lags a jump, so it is left
+		-- unknown here (the client checked it); holding is the server's own
+		local track = services.MovementService.track(id)
+		local ok = def.canUse({ grounded = nil, holding = track ~= nil and track.holding == true })
+		if not ok then
+			return false
+		end
+	end
+	local cooldown = if actor.role == "Training" then math.min(def.cooldown, TRAINING_COOLDOWN) else def.cooldown
+	readyAt[id] = t + cooldown
+	cooldownOf[id] = cooldown
+	if def.airAction then
+		services.MovementService.grantAirAction(id)
+	end
 	c:SetAttribute("UBAbility", def.id)
 	c:SetAttribute("UBAbilityUntil", t + def.duration)
 	c:SetAttribute("UBAbilityT", t)
+	write(id)
 	return true
 end
 
@@ -13123,19 +13296,17 @@ function AbilityService.Start()
 			AbilityService.activate(actor.id, abilityId)
 		end
 	end)
-	services.MovementService.TechAccepted:Connect(function(id: number, tech: string, quality: string)
-		onTech(id, tech, quality)
-	end)
-	-- re-stamp the meter on new characters (respawns)
+	-- re-stamp the cooldown on new characters (respawns)
 	task.spawn(function()
 		while true do
 			task.wait(1)
-			for id in meters do
+			for id in readyAt do
 				local c = characterOf(id)
-				if c and c:GetAttribute("UBFlow") == nil then
+				if c and c:GetAttribute("UBAbilityReadyAt") == nil then
 					write(id)
 				elseif not services.PlayerService.get(id) then
-					meters[id] = nil
+					readyAt[id] = nil
+					cooldownOf[id] = nil
 				end
 			end
 		end
@@ -13146,7 +13317,7 @@ return AbilityService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">ArenaService</string>
             <string name="Source"><![CDATA[--!strict
@@ -13274,7 +13445,7 @@ return ArenaService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">BotService</string>
             <string name="Source"><![CDATA[--!strict
@@ -15962,7 +16133,7 @@ return BotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">CatchingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16268,9 +16439,7 @@ function CatchingService.claim(
 		end
 	end
 	local slack = if actor.isBot then 0 else CatchGeometry.slack(ping, serverVel.Magnitude)
-	if Abilities.activeOn(actor.character, "MagnetHands", Net.now()) then
-		slack += Abilities.MagnetReach
-	end
+	slack += Abilities.catchReach(actor.character, Net.now())
 	if _kind == "Tip" then
 		-- airborne only: the client says it is in the air (its jump reached
 		-- us before this claim), or our own lagging view agrees
@@ -16662,7 +16831,7 @@ return CatchingService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--!strict
@@ -16740,7 +16909,7 @@ local function template(): { [string]: any }
 			banner = "Slate",
 			title = "Rookie",
 			aura = "None",
-			ability = "FlashStep",
+			ability = "AirBurst",
 		},
 		coins = ShopConfig.StartingCoins,
 		owned = {}, -- "slot:id" -> true (shop purchases)
@@ -16993,7 +17162,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">DefenseService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17034,7 +17203,7 @@ return DataService
 	                aim for HAND_BLOCK_ACTIVE: a disc through it in the
 	                first HandBlockCheckTime of the flight is blocked. A swing
 	                within POINT_BLOCK_WINDOW (+ ping) of the release is a
-	                Point Block (+FLOW). Swings are rate-limited.
+	                Point Block. Swings are rate-limited.
 	  Force side    each team's markers force a side per point (UBState
 	                ForceA / ForceB = "FH" | "BH", set by MatchService);
 	                forceFor(team) reads it for bots and the HUD.
@@ -17380,7 +17549,6 @@ function DefenseService.checkHandBlock(
 				if armHit or CatchGeometry.inMarkBox(c.box, p) then
 					if armHit then
 						swings[c.id] = nil
-						services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
 						local actor = services.PlayerService.get(c.id)
 						if actor and actor.player then
 							Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })
@@ -17417,7 +17585,7 @@ return DefenseService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">DiscService</string>
             <string name="Source"><![CDATA[--!strict
@@ -17953,7 +18121,7 @@ return DiscService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">HighlightService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18186,7 +18354,7 @@ return HighlightService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="68">
           <Properties>
             <string name="Name">JerseyService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18392,7 +18560,7 @@ return JerseyService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="69">
           <Properties>
             <string name="Name">LeaderboardService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18491,7 +18659,7 @@ return LeaderboardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="63">
+        <Item class="ModuleScript" referent="70">
           <Properties>
             <string name="Name">MatchService</string>
             <string name="Source"><![CDATA[--!strict
@@ -18548,7 +18716,6 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
-local Abilities = require(Shared.Config.Abilities)
 local ModesConfig = require(Shared.Config.Modes)
 local ArenasConfig = require(Shared.Config.Arenas)
 local TeamsConfig = require(Shared.Config.Teams)
@@ -18715,7 +18882,6 @@ function MatchService.stat(actorId: number, key: string, n: number?)
 	end
 	local amount = n or 1
 	st[key] = (st[key] or 0) + amount
-	services.AbilityService.onStat(actorId, key, amount)
 	local actor = services.PlayerService.get(actorId)
 	if actor and not actor.isBot and S.phase ~= "Intermission" then
 		services.ProgressionService.stat(actor, key, amount)
@@ -19202,15 +19368,10 @@ function applyOutcomes(outcomes: { any }, ctx: { [string]: any }?)
 				if o.from then
 					MatchService.stat(o.from, "completions")
 				end
-				-- the pass chain: quick releases caught in a row light up the
-				-- team and feed both players' FLOW
+				-- the pass chain: quick releases caught in a row light up the team
 				local lp = S.lastPass
 				if lp and lp.chained and (lp.flow or 0) >= 2 then
 					local n = lp.flow :: number
-					services.AbilityService.gain(o.id, Abilities.Gain.passChain * n)
-					if o.from then
-						services.AbilityService.gain(o.from, Abilities.Gain.passChain * n)
-					end
 					Net.event("Feedback"):FireAllClients("PassChain", { count = n, team = o.team, id = o.id })
 				end
 			elseif kind == "Interception" then
@@ -20294,7 +20455,7 @@ return MatchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="64">
+        <Item class="ModuleScript" referent="71">
           <Properties>
             <string name="Name">MovementService</string>
             <string name="Source"><![CDATA[--!strict
@@ -20356,7 +20517,6 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
-local Abilities = require(Shared.Config.Abilities)
 local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
@@ -20757,6 +20917,14 @@ end
 
 -- Root height above the ground when standing (for placing a pivot or a
 -- teleport on the ground).
+-- An ability gave this actor one more air action this airtime (AbilityService).
+function MovementService.grantAirAction(id: number)
+	local t = tracks[id]
+	if t then
+		t.airGrants += 1
+	end
+end
+
 -- Server time of this actor's last accepted `tech` (-inf if none).
 function MovementService.techTime(id: number, tech: string): number
 	local t = tracks[id]
@@ -21089,18 +21257,6 @@ end
 
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
--- Sky Walk (an ability) is live on this character: extra air actions.
-local function skyWalkDodges(t: Track): number
-	local c = character(t.id)
-	if c and c:GetAttribute("UBAbility") == "SkyWalk" then
-		local untilT = c:GetAttribute("UBAbilityUntil")
-		if type(untilT) == "number" and now() <= untilT + 0.5 then
-			return Abilities.SkyWalkDodges
-		end
-	end
-	return 0
-end
-
 -- The one air action per airtime (stage 2): a dive or a Sky Reach.
 local function isAirAction(tech: string, info: string?): boolean
 	return tech == "AirDodge" or tech == "SkyReach" or (tech == "Layout" and info == "Air")
@@ -21110,7 +21266,7 @@ local function judge(t: Track, tech: string, quality: string, info: string?, ts:
 	-- tech engine air limits (the network pass): one dodge per airtime plus
 	-- one per thing that gives it back; each give-back has its own limit
 	if isAirAction(tech, info) then
-		if t.airDodges >= 1 + t.airGrants + skyWalkDodges(t) then
+		if t.airDodges >= 1 + t.airGrants then
 			return nil
 		end
 		return quality
@@ -21665,7 +21821,7 @@ return MovementService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="65">
+        <Item class="ModuleScript" referent="72">
           <Properties>
             <string name="Name">PlayerService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22157,7 +22313,7 @@ return PlayerService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="66">
+        <Item class="ModuleScript" referent="73">
           <Properties>
             <string name="Name">ProgressionService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22288,7 +22444,7 @@ function ProgressionService.equipped(player: Player, slot: string): string
 		banner = "Slate",
 		title = "Rookie",
 		aura = "None",
-		ability = "FlashStep",
+		ability = "AirBurst",
 	} :: any)[slot] or ""
 	if not d then
 		return fallback
@@ -22752,7 +22908,7 @@ return ProgressionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="67">
+        <Item class="ModuleScript" referent="74">
           <Properties>
             <string name="Name">ShopService</string>
             <string name="Source"><![CDATA[--!strict
@@ -22863,7 +23019,7 @@ return ShopService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="68">
+        <Item class="ModuleScript" referent="75">
           <Properties>
             <string name="Name">TeamService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23183,7 +23339,7 @@ return TeamService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="69">
+        <Item class="ModuleScript" referent="76">
           <Properties>
             <string name="Name">ThrowService</string>
             <string name="Source"><![CDATA[--!strict
@@ -23526,15 +23682,11 @@ function ThrowService.throw(actorId: number, raw: any, isBot: boolean?): Result?
 		end
 	end
 
-	-- Tempest Throw: only while armed, and it is spent by this throw
-	local body = actor.character
-	if Abilities.activeOn(body, "TempestThrow", Net.now()) then
-		p.tempest = true
-		if body then
-			body:SetAttribute("UBAbilityUntil", Net.now())
-		end
-	else
-		p.tempest = nil
+	-- the thrower's ability shapes the throw (after the shape check, so an
+	-- ability may go past what plain inputs can do); some are spent by it
+	local used = Abilities.applyThrow(actor.character, Net.now(), p :: any)
+	if used and used.spendOnThrow then
+		services.AbilityService.spend(actorId)
 	end
 
 	local launch = ThrowModel.launch(p, prep.rootPos, prep.velocity)
@@ -23695,7 +23847,7 @@ return ThrowService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="70">
+        <Item class="ModuleScript" referent="77">
           <Properties>
             <string name="Name">TrainingService</string>
             <string name="Source"><![CDATA[--!strict
@@ -25722,13 +25874,13 @@ return TrainingService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="71">
+  <Item class="SoundService" referent="78">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="72">
+  <Item class="StarterPlayer" referent="79">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <bool name="AutoJumpEnabled">false</bool>
@@ -25741,11 +25893,11 @@ return TrainingService
       <bool name="EnableMouseLockOption">false</bool>
       <token name="GameSettingsAvatar">1</token>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="73">
+    <Item class="StarterCharacterScripts" referent="80">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="74">
+      <Item class="LocalScript" referent="81">
         <Properties>
           <string name="Name">Animate</string>
           <string name="Source"><![CDATA[--!strict
@@ -25828,38 +25980,41 @@ end)
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="75">
+    <Item class="StarterPlayerScripts" referent="82">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="76">
+      <Item class="Folder" referent="83">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="77">
+        <Item class="Folder" referent="84">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">AbilityController</string>
               <string name="Source"><![CDATA[--!strict
 --[[
-	AbilityController — your ability (Config/Abilities) on the client.
+	AbilityController — your one ability on the client (src/shared/Abilities).
 
-	  * The Ability key asks the server to fire the ability chosen in
-	    Settings (AbilityService checks the FLOW meter).
-	  * When the server stamps UBAbilityT on your character, the effect
-	    starts: Flash Step blinks the body up to 18 studs (stopping short of
-	    walls) and surges your speed; The Zone, Sky Walk and Overdrive start
-	    in the tech core; Magnet Hands and Tempest Throw are read from the
-	    attributes by the catch and throw code (both checked on the server).
-	    Every cast is an anime power-up: impact frame, camera punch, rings
-	    of light, an aura flare and a cast pose (PoseController).
-	  * Everyone with an active ability glows in its colour (a Highlight);
-	    a Flash Step leaves afterimages for everyone.
-	  * A small FLOW bar over the Burst bar, with the ability's name lit when
-	    the meter is full. It names your ability, never what to combo.
+	  * The Ability chord (Config/Input.AbilityChord: Jump + Sprint pressed
+	    together) asks the server to fire the ability you picked in the
+	    Locker, if it is off cooldown and its own canUse agrees (the reason
+	    is shown when it doesn't).
+	  * When the server stamps UBAbilityT on your character the module's
+	    start() runs on your own movement (TechCore). Throw and catch parts
+	    are applied by ThrowController / CatchController through the same
+	    framework hooks the server uses.
+	  * Every cast is an anime power-up for everyone who sees it: rings of
+	    light, an aura flare and a cast pose (PoseController); for you, an
+	    impact frame and a camera punch too.
+	  * Everyone with an active ability glows in its colour (a Highlight).
+	  * A small bar over the sprint meter: it fills as the cooldown runs
+	    down and shows the chord when the ability is ready.
+
+	This file knows nothing about any single ability.
 ]]
 
 local Players = game:GetService("Players")
@@ -25867,9 +26022,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Abilities = require(Shared.Config.Abilities)
-local TechCore = require(Shared.Movement.TechCore)
-local VecMath = require(Shared.Util.VecMath)
+local Abilities = require(Shared.Abilities)
+local InputConfig = require(Shared.Config.Input)
 local Net = require(Shared.Net)
 local Theme = require(script.Parent.Parent.UI.Theme)
 local Art = require(Shared.Config.Art)
@@ -25886,59 +26040,26 @@ local label: TextLabel? = nil
 
 local AURA_REFRESH = 0.2
 
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Exclude
-rayParams.RespectCanCollide = true
-
 function AbilityController.selected(): Abilities.Def
 	local id = controllers.SettingsController.get("Ability")
-	return Abilities.get(id) or Abilities.List[Abilities.Order[1]]
+	return Abilities.get(id) or Abilities.List[Abilities.Default]
 end
 
-local function flow(): number
+-- Seconds until your ability is ready, and the cooldown's length.
+local function cooldown(): (number, number)
 	local c = player.Character
-	local v = c and c:GetAttribute("UBFlow")
-	return if type(v) == "number" then v else 0
+	local ready = c and c:GetAttribute("UBAbilityReadyAt")
+	local length = c and c:GetAttribute("UBAbilityCooldown")
+	if type(ready) ~= "number" or type(length) ~= "number" or length <= 0 then
+		return 0, 1
+	end
+	return math.max(0, ready - Net.now()), length
 end
 
-local function flashStep(c: Model, def: Abilities.Def)
-	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not root then
-		return
-	end
-	local tech = controllers.MovementController.techState()
-	local dir = TechCore.flashDirection(tech, controllers.InputController.moveVector())
-	if controllers.MovementController.engine() ~= "Tech" then
-		local v = VecMath.flat(root.AssemblyLinearVelocity)
-		dir = if v.Magnitude > 1 then v.Unit else VecMath.flatUnit(root.CFrame.LookVector)
-	end
-	rayParams.FilterDescendantsInstances = { c, workspace:FindFirstChild("UBVisuals") :: Instance }
-	local dist = Abilities.FlashDistance
-	for _, h in { 0, -1.5 } do
-		local hit = workspace:Raycast(root.Position + Vector3.new(0, h, 0), dir * (dist + 1.5), rayParams)
-		if hit then
-			dist = math.min(dist, math.max(0, hit.Distance - 1.5))
-		end
-	end
-	controllers.AnimeFX.afterimage(c, def.color, 5)
-	local from = root.Position
-	root.CFrame += dir * dist
-	controllers.AnimeFX.slash(from:Lerp(root.Position, 0.5), dir, def.color)
-	if controllers.MovementController.engine() == "Tech" then
-		TechCore.surge(controllers.MovementController.techState(), Abilities.FlashSurge)
-	end
-end
-
--- The tech-core numbers each ability starts with.
-local function techArgs(id: string): (number?, number?)
-	if id == "Zone" then
-		return Abilities.ZoneScale, nil
-	elseif id == "SkyWalk" then
-		return Abilities.SkyWalkGravity, Abilities.SkyWalkDodges
-	elseif id == "Overdrive" then
-		return Abilities.OverdriveTop, nil
-	end
-	return nil, nil
+-- What the ability's canUse is told about you right now.
+local function context(): Abilities.Context
+	local mc = controllers.MovementController
+	return { grounded = mc.isGrounded(), holding = mc.holdingDisc() }
 end
 
 -- The anime power-up: a beat of hit-stop on the camera, a ring of light
@@ -25966,31 +26087,20 @@ local function castFx(c: Model, def: Abilities.Def, own: boolean)
 end
 
 local function onStamp(c: Model)
-	local id = c:GetAttribute("UBAbility")
-	local def = Abilities.get(id)
+	local def = Abilities.get(c:GetAttribute("UBAbility"))
 	if not def then
 		return
 	end
-	if c ~= player.Character then
-		if def.id == "FlashStep" then
-			controllers.AnimeFX.afterimage(c, def.color, 5)
-		end
-		castFx(c, def, false)
+	local own = c == player.Character
+	castFx(c, def, own)
+	if not own then
 		return
 	end
-	castFx(c, def, true)
-	if def.id == "FlashStep" then
-		flashStep(c, def)
-	elseif controllers.MovementController.engine() == "Tech" then
-		local tech = controllers.MovementController.techState()
-		local scale, dodges = techArgs(def.id)
-		TechCore.startAbility(tech, def.id, def.duration, scale, dodges)
+	if def.start then
+		def.start(controllers.MovementController.techState(), controllers.InputController.moveVector())
 	end
 	controllers.TechFeedback.play(def.name, "Perfect")
 	controllers.AudioController.play("Ability")
-	if def.id == "FlashStep" then
-		controllers.AudioController.play("Dash")
-	end
 end
 
 -- Every character with an active ability glows in its colour.
@@ -26021,7 +26131,7 @@ local function refreshAuras()
 		end
 		local untilT = m:GetAttribute("UBAbilityUntil")
 		local def = Abilities.get(m:GetAttribute("UBAbility"))
-		local active = def ~= nil and type(untilT) == "number" and t < untilT
+		local active = def ~= nil and type(untilT) == "number" and t < untilT and def.duration > 0
 		local aura = m:FindFirstChild("UBAura") :: Highlight?
 		if active and def then
 			if not aura then
@@ -26106,21 +26216,31 @@ local function buildBar()
 	label = l
 end
 
+-- The chord as the player would press it ("SPACE + SHIFT").
+local function chordLabel(): string
+	local parts = {}
+	for _, action in InputConfig.AbilityChord.actions do
+		local key = controllers.InputController.keyLabel(action)
+		table.insert(parts, if key ~= "" then key else string.upper(action))
+	end
+	return table.concat(parts, " + ")
+end
+
 local function updateBar()
 	local b, f, l = bar, fill, label
 	if not b or not f or not l then
 		return
 	end
 	local def = AbilityController.selected()
-	local k = math.clamp(flow() / Abilities.MeterMax, 0, 1)
+	local left, length = cooldown()
+	local k = math.clamp(1 - left / length, 0, 1)
 	f.Size = UDim2.fromScale(k, 1)
 	f.BackgroundColor3 = def.color
-	local ready = k >= 1
-	local key = controllers.InputController.keyLabel("Ability")
+	local ready = left <= 0
 	l.Text = if ready
-		then string.format("%s  %s", Theme.keyText(key, def.name), "READY")
-		else string.format('<font color="#96A0B4">FLOW · %s</font>', def.name)
-	l.TextTransparency = if ready then 0.5 - 0.5 * math.sin(os.clock() * 8) else 0.2
+		then string.format("%s  READY", Theme.keyText(chordLabel(), def.name))
+		else string.format('<font color="#96A0B4">%s · %.0f s</font>', def.name, math.ceil(left))
+	l.TextTransparency = if ready then 0.25 - 0.25 * math.sin(os.clock() * 6) else 0.2
 end
 
 function AbilityController.Init(c: any)
@@ -26136,9 +26256,18 @@ function AbilityController.Start()
 			return
 		end
 		local r = remote
-		if r then
-			r:FireServer(AbilityController.selected().id)
+		local def = AbilityController.selected()
+		if not r or cooldown() > 0 then
+			return -- not ready: the chord's own keys already did their thing
 		end
+		if def.canUse then
+			local ok, why = def.canUse(context())
+			if not ok then
+				controllers.MovementController.Feedback:Fire({ kind = "Context", text = why or "NOT NOW" })
+				return
+			end
+		end
+		r:FireServer(def.id)
 	end)
 	buildBar()
 	local acc = 0
@@ -26156,7 +26285,7 @@ return AbilityController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">AnimeFX</string>
               <string name="Source"><![CDATA[--!strict
@@ -26681,7 +26810,7 @@ return AnimeFX
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">AudioController</string>
               <string name="Source"><![CDATA[--!strict
@@ -26821,7 +26950,7 @@ return AudioController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">CameraController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27144,7 +27273,7 @@ return CameraController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">CatchController</string>
               <string name="Source"><![CDATA[--!strict
@@ -27516,7 +27645,8 @@ local function sweep(
 ): (CatchGeometry.Evaluation?, number)
 	local n = math.clamp(math.ceil((to - from).Magnitude / SUB_STEP), 1, MAX_SUB)
 	local best: CatchGeometry.Evaluation? = nil
-	local slack = if Abilities.activeOn(player.Character, "MagnetHands", Net.now()) then Abilities.MagnetReach else nil
+	local reach = Abilities.catchReach(player.Character, Net.now())
+	local slack = if reach > 0 then reach else nil
 	local firstT = tTo
 	for k = 1, n do
 		local a = k / n
@@ -27930,7 +28060,7 @@ return CatchController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">CursorController</string>
               <string name="Source"><![CDATA[--!strict
@@ -28051,7 +28181,7 @@ return CursorController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">DiscRenderer</string>
               <string name="Source"><![CDATA[--!strict
@@ -28917,7 +29047,7 @@ return DiscRenderer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">EffectsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -29878,7 +30008,7 @@ return EffectsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="93">
             <Properties>
               <string name="Name">InputController</string>
               <string name="Source"><![CDATA[--!strict
@@ -30239,7 +30369,7 @@ return InputController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">MovementController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31495,7 +31625,7 @@ return MovementController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">MusicController</string>
               <string name="Source"><![CDATA[--!strict
@@ -31635,7 +31765,7 @@ return MusicController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">PoseController</string>
               <string name="Source"><![CDATA[--!strict
@@ -32945,7 +33075,7 @@ return PoseController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">SettingsController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33108,7 +33238,7 @@ return SettingsController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">TechDrills</string>
               <string name="Source"><![CDATA[--!strict
@@ -33280,7 +33410,7 @@ return TechDrills
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="92">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">TechFeedback</string>
               <string name="Source"><![CDATA[--!strict
@@ -33428,7 +33558,7 @@ return TechFeedback
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="93">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">ThrowController</string>
               <string name="Source"><![CDATA[--!strict
@@ -33493,7 +33623,7 @@ local Actors = require(Shared.Actors)
 local VecMath = require(Shared.Util.VecMath)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
-local Abilities = require(Shared.Config.Abilities)
+local Abilities = require(Shared.Abilities)
 
 local T = DiscConfig.Throw
 local HD = MovementConfig.Holding
@@ -33880,10 +34010,11 @@ local function release()
 	updateShape() -- what you hold on the release frame is what counts
 	state.charging = false
 	local params = currentParams(hold)
-	params.tempest = Abilities.activeOn(player.Character, "TempestThrow", now()) or nil
-	if params.tempest then
-		controllers.TechFeedback.play("TEMPEST", "Perfect")
-		controllers.AnimeFX.impactFrame(Abilities.List.TempestThrow.color)
+	-- your ability shapes the throw (the server applies the same hook)
+	local used = Abilities.applyThrow(player.Character, now(), params :: any)
+	if used then
+		controllers.TechFeedback.play(used.name, "Perfect")
+		controllers.AnimeFX.impactFrame(used.color)
 	end
 	params.pinch = controllers.MovementController.pinch()
 	if params.pinch then
@@ -33902,7 +34033,6 @@ local function release()
 		step = params.step,
 		pivot = params.pivot,
 		pinch = params.pinch,
-		tempest = params.tempest,
 		releaseT = releaseT,
 		rootPos = root.Position,
 	})
@@ -34143,7 +34273,7 @@ return ThrowController
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="94">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">UIController</string>
               <string name="Source"><![CDATA[--!strict
@@ -34604,7 +34734,7 @@ return UIController
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="95">
+        <Item class="LocalScript" referent="102">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--!strict
@@ -34659,11 +34789,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="96">
+        <Item class="Folder" referent="103">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="104">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -35708,7 +35838,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="105">
             <Properties>
               <string name="Name">MainMenu</string>
               <string name="Source"><![CDATA[--!strict
@@ -35929,7 +36059,7 @@ return MainMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="106">
             <Properties>
               <string name="Name">Menu</string>
               <string name="Source"><![CDATA[--!strict
@@ -36097,7 +36227,11 @@ local function techGuide(): { string }
 		),
 		string.format("PICK UP — %s next to a disc on the ground.", k("Primary")),
 		"THE RULES — score by catching the disc in the end zone you attack. No running with it. A pass that hits the ground, goes out, or is blocked or intercepted is a turnover. You must throw before the stall count runs out: it counts at full speed with a defender on you and at half speed without one.",
-		string.format("ABILITY — %s and %s pressed together.", jump, burst),
+		string.format(
+			"ABILITY — you have one, picked in the Locker. Press %s and %s together to use it; then it recharges. It helps a good play, it never makes one for you.",
+			jump,
+			burst
+		),
 	}
 end
 
@@ -37405,7 +37539,7 @@ return Menu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="107">
             <Properties>
               <string name="Name">Mobile</string>
               <string name="Source"><![CDATA[--!strict
@@ -37670,7 +37804,7 @@ return Mobile
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="108">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
@@ -38049,7 +38183,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="102">
+          <Item class="ModuleScript" referent="109">
             <Properties>
               <string name="Name">TechDebug</string>
               <string name="Source"><![CDATA[--!strict
@@ -38314,7 +38448,7 @@ return TechDebug
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="103">
+          <Item class="ModuleScript" referent="110">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -38635,7 +38769,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="104">
+          <Item class="ModuleScript" referent="111">
             <Properties>
               <string name="Name">ThrowHud</string>
               <string name="Source"><![CDATA[--!strict
@@ -39107,12 +39241,12 @@ return ThrowHud
       </Item>
     </Item>
   </Item>
-  <Item class="Teams" referent="105">
+  <Item class="Teams" referent="112">
     <Properties>
       <string name="Name">Teams</string>
     </Properties>
   </Item>
-  <Item class="Workspace" referent="106">
+  <Item class="Workspace" referent="113">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">160</float>

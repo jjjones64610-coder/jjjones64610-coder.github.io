@@ -36,7 +36,7 @@
 	                aim for HAND_BLOCK_ACTIVE: a disc through it in the
 	                first HandBlockCheckTime of the flight is blocked. A swing
 	                within POINT_BLOCK_WINDOW (+ ping) of the release is a
-	                Point Block (+FLOW). Swings are rate-limited.
+	                Point Block. Swings are rate-limited.
 	  Force side    each team's markers force a side per point (UBState
 	                ForceA / ForceB = "FH" | "BH", set by MatchService);
 	                forceFor(team) reads it for bots and the HUD.
@@ -382,7 +382,6 @@ function DefenseService.checkHandBlock(
 				if armHit or CatchGeometry.inMarkBox(c.box, p) then
 					if armHit then
 						swings[c.id] = nil
-						services.AbilityService.gain(c.id, if c.point then TechConfig.POINT_BLOCK_FLOW else 6)
 						local actor = services.PlayerService.get(c.id)
 						if actor and actor.player then
 							Net.event("Feedback"):FireClient(actor.player, "HandBlock", { point = c.point })

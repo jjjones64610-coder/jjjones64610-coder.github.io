@@ -14,21 +14,22 @@
 	the shop's Robux buttons switch on. Nothing else to change.
 ]]
 
+local Abilities = require(script.Parent.Parent.Abilities)
+
 local Shop = {}
 
 Shop.CoinsPerXp = 0.25 -- coins for every XP point earned
 Shop.VipCoinMult = 1.5
 Shop.StartingCoins = 250
 
--- Abilities and their prices (Flash Step is everyone's to start).
-Shop.Abilities = {
-	{ id = "FlashStep", name = "Flash Step", price = 0 },
-	{ id = "Zone", name = "The Zone", price = 1500 },
-	{ id = "Overdrive", name = "Overdrive", price = 2000 },
-	{ id = "SkyWalk", name = "Sky Walk", price = 2500 },
-	{ id = "MagnetHands", name = "Magnet Hands", price = 1800 },
-	{ id = "TempestThrow", name = "Tempest Throw", price = 2200 },
-} :: { any }
+-- Abilities and their prices, straight from the ability modules
+-- (src/shared/Abilities: each one names its own price; 0 = everyone's to start).
+local abilityItems: { any } = {}
+for _, id in Abilities.Order do
+	local def = Abilities.List[id]
+	table.insert(abilityItems, { id = def.id, name = def.name, price = def.price, color = def.color })
+end
+Shop.Abilities = abilityItems
 
 export type Product = { id: string, productId: number, coins: number, robux: number, name: string }
 

@@ -80,7 +80,27 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 5 — Match rules (docs/CORE_DESIGN.md) ← test this now (with stages 1-4)
+### STAGE 6 — Abilities (docs/CORE_DESIGN.md) ← test this now (with stages 1-5)
+You have one ability, chosen in **Menu → Locker** (buy more in the Shop). Fire it by pressing **Space and
+Shift together** (within 40 ms). A bar over the sprint meter shows the cooldown and the chord when ready.
+On the TEST FIELD the cooldown is 2 s so you can practise. Each ability's numbers are at the top of its own
+file in `src/shared/Abilities/`.
+
+- [ ] **The chord:** Space + Shift together fires it (you also jump, on purpose). Hold Shift and then press Space as usual: it never fires by accident. Not ready or not allowed: nothing happens, or a short reason shows.
+- [ ] **AIR BURST** (free, 14 s): in the air, a shove the way you hold and your air action back: jump, dive is not needed yet — burst sideways, then still dive or Sky Reach. On the ground it says ONLY IN THE AIR. (The chord's jump puts you in the air, so pressing it on the ground and again in the air works too.)
+- [ ] **SURGE** (18 s): for 2.5 s you run about 7 faster and accelerate harder. Not usable with the disc.
+- [ ] **CURVEBALL** (16 s): arm it, then within 6 s throw with A or D held: the bend is about twice as wide. A flat throw gets nothing and still uses it up.
+- [ ] **FOCUS** (22 s): for 3 s you fall slowly (jump first to feel it) and your next release counts as Perfect if you let go near the gold line, not only exactly on it.
+- [ ] **MAGNET HANDS** (20 s): for 5 s your hands reach about 2 studs further. Hard catches still need LMB on time.
+- [ ] **The cast:** rings of light, a flash and a camera punch for you; others see the pose and the rings; you glow in the ability's colour while it lasts.
+- [ ] **Never mandatory:** play a point without it. It should feel like a small edge, not the plan.
+
+What to tell me: is any ability too strong or pointless? Cooldowns right? Does the chord ever misfire or fail to fire?
+
+Removed: the FLOW meter, Flash Step (an 18-stud teleport), The Zone, Sky Walk, Overdrive, Tempest Throw.
+Icons are reused from the old abilities until ForgeGUI is reconnected.
+
+### STAGE 5 — Match rules (docs/CORE_DESIGN.md)
 Title screen → **PLAY 3v3 (MINI)** alone: a match against bots starts at once. (7v7 is the full field.)
 The rulebook itself is unit-tested offline (20 rule tests); this checks it plays right with the new controls.
 

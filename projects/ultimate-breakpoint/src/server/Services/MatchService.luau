@@ -52,7 +52,6 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
-local Abilities = require(Shared.Config.Abilities)
 local ModesConfig = require(Shared.Config.Modes)
 local ArenasConfig = require(Shared.Config.Arenas)
 local TeamsConfig = require(Shared.Config.Teams)
@@ -219,7 +218,6 @@ function MatchService.stat(actorId: number, key: string, n: number?)
 	end
 	local amount = n or 1
 	st[key] = (st[key] or 0) + amount
-	services.AbilityService.onStat(actorId, key, amount)
 	local actor = services.PlayerService.get(actorId)
 	if actor and not actor.isBot and S.phase ~= "Intermission" then
 		services.ProgressionService.stat(actor, key, amount)
@@ -706,15 +704,10 @@ function applyOutcomes(outcomes: { any }, ctx: { [string]: any }?)
 				if o.from then
 					MatchService.stat(o.from, "completions")
 				end
-				-- the pass chain: quick releases caught in a row light up the
-				-- team and feed both players' FLOW
+				-- the pass chain: quick releases caught in a row light up the team
 				local lp = S.lastPass
 				if lp and lp.chained and (lp.flow or 0) >= 2 then
 					local n = lp.flow :: number
-					services.AbilityService.gain(o.id, Abilities.Gain.passChain * n)
-					if o.from then
-						services.AbilityService.gain(o.from, Abilities.Gain.passChain * n)
-					end
 					Net.event("Feedback"):FireAllClients("PassChain", { count = n, team = o.team, id = o.id })
 				end
 			elseif kind == "Interception" then

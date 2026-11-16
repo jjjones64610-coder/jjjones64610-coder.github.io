@@ -81,6 +81,16 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 6 — abilities (built, awaiting playtest).** `src/shared/Abilities`
+  holds one module per ability; the framework there discovers them, and a
+  new ability is one new file (it then appears in the Locker and Shop with
+  its cooldown, aura, server checks and effect). Abilities run on cooldowns
+  (the FLOW meter is gone) and fire on the chord. Starting five: Air Burst,
+  Surge, Curveball, Focus (the multiplayer-safe stand-in for "slowed time
+  while aiming": a hang plus a forgiving release), Magnet Hands. TechCore
+  and ThrowModel expose generic hooks and know no ability by name. Each
+  module keeps its own numbers (the one exception to "all tuning in
+  Config/Tuning", so that a new ability stays a single file).
 - **Stage 5 — match rules (audited, awaiting playtest).** The rulebook
   (teams, end zones, pulls, goals, turnovers, out of bounds, the Greatest,
   match end) was already a tested pure state machine and is kept. Changed:

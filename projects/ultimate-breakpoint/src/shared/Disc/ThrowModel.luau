@@ -32,7 +32,6 @@ local Shared = script.Parent.Parent
 local DiscConfig = require(Shared.Config.Disc)
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
-local Abilities = require(Shared.Config.Abilities)
 local DiscPhysics = require(script.Parent.DiscPhysics)
 
 local T = DiscConfig.Throw
@@ -54,7 +53,7 @@ export type Params = {
 	step: Vector3?, -- flat free-foot step from P (world); ignored without a pivot
 	swinging: boolean?, -- released while a Quick Swing is still moving the step
 	pinch: string?, -- "Perfect" | "Clean": released as the feet touched down (TechCore.pinch)
-	tempest: boolean?, -- Tempest Throw is armed (Config/Abilities): faster, more spin
+	snapAssist: number?, -- s: a release this close to the Snap point counts as on it (abilities)
 	-- Carried through sanitize for ThrowService; the model itself ignores them.
 	releaseT: number?, -- client Net.now() at release
 	rootPos: Vector3?, -- client root position at release
@@ -273,7 +272,6 @@ function ThrowModel.sanitize(raw: any): Params?
 		step = ThrowModel.clampStep(raw.step, yaw),
 		swinging = raw.swinging == true,
 		pinch = if raw.pinch == "Perfect" or raw.pinch == "Clean" then raw.pinch :: string else nil,
-		tempest = raw.tempest == true,
 		releaseT = if type(releaseT) == "number" and finite(releaseT) then releaseT else nil,
 		rootPos = finiteVector(raw.rootPos),
 	}
@@ -332,7 +330,12 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 	local mirror = if p.leftHanded then -1 else 1
 	local pivoting = p.pivot ~= nil and not p.groundThrow
 
-	local power, quality, spinFactor = ThrowModel.charge(p.holdTime, p.throwType)
+	local hold = p.holdTime
+	local assist = p.snapAssist
+	if assist and math.abs(hold - T.SnapPoint * T.ChargeTime) <= assist then
+		hold = T.SnapPoint * T.ChargeTime -- close enough: it leaves as a Snap
+	end
+	local power, quality, spinFactor = ThrowModel.charge(hold, p.throwType)
 	if p.offBalance then
 		power = math.min(power, T.OffBalancePowerCap)
 		spinFactor *= T.OffBalanceSpin
@@ -379,10 +382,6 @@ function ThrowModel.launch(p: Params, rootPos: Vector3, throwerVel: Vector3): La
 		speed *= TechConfig.PINCH_SPEED_PERFECT
 	elseif p.pinch == "Clean" then
 		speed *= TechConfig.PINCH_SPEED
-	end
-	if p.tempest then
-		speed *= Abilities.TempestSpeed
-		spinFactor *= Abilities.TempestSpin
 	end
 
 	-- A release on the move (the catch skid, or in the air) aims exactly

@@ -126,7 +126,7 @@ function ProgressionService.equipped(player: Player, slot: string): string
 		banner = "Slate",
 		title = "Rookie",
 		aura = "None",
-		ability = "FlashStep",
+		ability = "AirBurst",
 	} :: any)[slot] or ""
 	if not d then
 		return fallback

@@ -1,20 +1,23 @@
 --!strict
 --[[
-	AbilityController — your ability (Config/Abilities) on the client.
+	AbilityController — your one ability on the client (src/shared/Abilities).
 
-	  * The Ability key asks the server to fire the ability chosen in
-	    Settings (AbilityService checks the FLOW meter).
-	  * When the server stamps UBAbilityT on your character, the effect
-	    starts: Flash Step blinks the body up to 18 studs (stopping short of
-	    walls) and surges your speed; The Zone, Sky Walk and Overdrive start
-	    in the tech core; Magnet Hands and Tempest Throw are read from the
-	    attributes by the catch and throw code (both checked on the server).
-	    Every cast is an anime power-up: impact frame, camera punch, rings
-	    of light, an aura flare and a cast pose (PoseController).
-	  * Everyone with an active ability glows in its colour (a Highlight);
-	    a Flash Step leaves afterimages for everyone.
-	  * A small FLOW bar over the Burst bar, with the ability's name lit when
-	    the meter is full. It names your ability, never what to combo.
+	  * The Ability chord (Config/Input.AbilityChord: Jump + Sprint pressed
+	    together) asks the server to fire the ability you picked in the
+	    Locker, if it is off cooldown and its own canUse agrees (the reason
+	    is shown when it doesn't).
+	  * When the server stamps UBAbilityT on your character the module's
+	    start() runs on your own movement (TechCore). Throw and catch parts
+	    are applied by ThrowController / CatchController through the same
+	    framework hooks the server uses.
+	  * Every cast is an anime power-up for everyone who sees it: rings of
+	    light, an aura flare and a cast pose (PoseController); for you, an
+	    impact frame and a camera punch too.
+	  * Everyone with an active ability glows in its colour (a Highlight).
+	  * A small bar over the sprint meter: it fills as the cooldown runs
+	    down and shows the chord when the ability is ready.
+
+	This file knows nothing about any single ability.
 ]]
 
 local Players = game:GetService("Players")
@@ -22,9 +25,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Abilities = require(Shared.Config.Abilities)
-local TechCore = require(Shared.Movement.TechCore)
-local VecMath = require(Shared.Util.VecMath)
+local Abilities = require(Shared.Abilities)
+local InputConfig = require(Shared.Config.Input)
 local Net = require(Shared.Net)
 local Theme = require(script.Parent.Parent.UI.Theme)
 local Art = require(Shared.Config.Art)
@@ -41,59 +43,26 @@ local label: TextLabel? = nil
 
 local AURA_REFRESH = 0.2
 
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Exclude
-rayParams.RespectCanCollide = true
-
 function AbilityController.selected(): Abilities.Def
 	local id = controllers.SettingsController.get("Ability")
-	return Abilities.get(id) or Abilities.List[Abilities.Order[1]]
+	return Abilities.get(id) or Abilities.List[Abilities.Default]
 end
 
-local function flow(): number
+-- Seconds until your ability is ready, and the cooldown's length.
+local function cooldown(): (number, number)
 	local c = player.Character
-	local v = c and c:GetAttribute("UBFlow")
-	return if type(v) == "number" then v else 0
+	local ready = c and c:GetAttribute("UBAbilityReadyAt")
+	local length = c and c:GetAttribute("UBAbilityCooldown")
+	if type(ready) ~= "number" or type(length) ~= "number" or length <= 0 then
+		return 0, 1
+	end
+	return math.max(0, ready - Net.now()), length
 end
 
-local function flashStep(c: Model, def: Abilities.Def)
-	local root = c:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not root then
-		return
-	end
-	local tech = controllers.MovementController.techState()
-	local dir = TechCore.flashDirection(tech, controllers.InputController.moveVector())
-	if controllers.MovementController.engine() ~= "Tech" then
-		local v = VecMath.flat(root.AssemblyLinearVelocity)
-		dir = if v.Magnitude > 1 then v.Unit else VecMath.flatUnit(root.CFrame.LookVector)
-	end
-	rayParams.FilterDescendantsInstances = { c, workspace:FindFirstChild("UBVisuals") :: Instance }
-	local dist = Abilities.FlashDistance
-	for _, h in { 0, -1.5 } do
-		local hit = workspace:Raycast(root.Position + Vector3.new(0, h, 0), dir * (dist + 1.5), rayParams)
-		if hit then
-			dist = math.min(dist, math.max(0, hit.Distance - 1.5))
-		end
-	end
-	controllers.AnimeFX.afterimage(c, def.color, 5)
-	local from = root.Position
-	root.CFrame += dir * dist
-	controllers.AnimeFX.slash(from:Lerp(root.Position, 0.5), dir, def.color)
-	if controllers.MovementController.engine() == "Tech" then
-		TechCore.surge(controllers.MovementController.techState(), Abilities.FlashSurge)
-	end
-end
-
--- The tech-core numbers each ability starts with.
-local function techArgs(id: string): (number?, number?)
-	if id == "Zone" then
-		return Abilities.ZoneScale, nil
-	elseif id == "SkyWalk" then
-		return Abilities.SkyWalkGravity, Abilities.SkyWalkDodges
-	elseif id == "Overdrive" then
-		return Abilities.OverdriveTop, nil
-	end
-	return nil, nil
+-- What the ability's canUse is told about you right now.
+local function context(): Abilities.Context
+	local mc = controllers.MovementController
+	return { grounded = mc.isGrounded(), holding = mc.holdingDisc() }
 end
 
 -- The anime power-up: a beat of hit-stop on the camera, a ring of light
@@ -121,31 +90,20 @@ local function castFx(c: Model, def: Abilities.Def, own: boolean)
 end
 
 local function onStamp(c: Model)
-	local id = c:GetAttribute("UBAbility")
-	local def = Abilities.get(id)
+	local def = Abilities.get(c:GetAttribute("UBAbility"))
 	if not def then
 		return
 	end
-	if c ~= player.Character then
-		if def.id == "FlashStep" then
-			controllers.AnimeFX.afterimage(c, def.color, 5)
-		end
-		castFx(c, def, false)
+	local own = c == player.Character
+	castFx(c, def, own)
+	if not own then
 		return
 	end
-	castFx(c, def, true)
-	if def.id == "FlashStep" then
-		flashStep(c, def)
-	elseif controllers.MovementController.engine() == "Tech" then
-		local tech = controllers.MovementController.techState()
-		local scale, dodges = techArgs(def.id)
-		TechCore.startAbility(tech, def.id, def.duration, scale, dodges)
+	if def.start then
+		def.start(controllers.MovementController.techState(), controllers.InputController.moveVector())
 	end
 	controllers.TechFeedback.play(def.name, "Perfect")
 	controllers.AudioController.play("Ability")
-	if def.id == "FlashStep" then
-		controllers.AudioController.play("Dash")
-	end
 end
 
 -- Every character with an active ability glows in its colour.
@@ -176,7 +134,7 @@ local function refreshAuras()
 		end
 		local untilT = m:GetAttribute("UBAbilityUntil")
 		local def = Abilities.get(m:GetAttribute("UBAbility"))
-		local active = def ~= nil and type(untilT) == "number" and t < untilT
+		local active = def ~= nil and type(untilT) == "number" and t < untilT and def.duration > 0
 		local aura = m:FindFirstChild("UBAura") :: Highlight?
 		if active and def then
 			if not aura then
@@ -261,21 +219,31 @@ local function buildBar()
 	label = l
 end
 
+-- The chord as the player would press it ("SPACE + SHIFT").
+local function chordLabel(): string
+	local parts = {}
+	for _, action in InputConfig.AbilityChord.actions do
+		local key = controllers.InputController.keyLabel(action)
+		table.insert(parts, if key ~= "" then key else string.upper(action))
+	end
+	return table.concat(parts, " + ")
+end
+
 local function updateBar()
 	local b, f, l = bar, fill, label
 	if not b or not f or not l then
 		return
 	end
 	local def = AbilityController.selected()
-	local k = math.clamp(flow() / Abilities.MeterMax, 0, 1)
+	local left, length = cooldown()
+	local k = math.clamp(1 - left / length, 0, 1)
 	f.Size = UDim2.fromScale(k, 1)
 	f.BackgroundColor3 = def.color
-	local ready = k >= 1
-	local key = controllers.InputController.keyLabel("Ability")
+	local ready = left <= 0
 	l.Text = if ready
-		then string.format("%s  %s", Theme.keyText(key, def.name), "READY")
-		else string.format('<font color="#96A0B4">FLOW · %s</font>', def.name)
-	l.TextTransparency = if ready then 0.5 - 0.5 * math.sin(os.clock() * 8) else 0.2
+		then string.format("%s  READY", Theme.keyText(chordLabel(), def.name))
+		else string.format('<font color="#96A0B4">%s · %.0f s</font>', def.name, math.ceil(left))
+	l.TextTransparency = if ready then 0.25 - 0.25 * math.sin(os.clock() * 6) else 0.2
 end
 
 function AbilityController.Init(c: any)
@@ -291,9 +259,18 @@ function AbilityController.Start()
 			return
 		end
 		local r = remote
-		if r then
-			r:FireServer(AbilityController.selected().id)
+		local def = AbilityController.selected()
+		if not r or cooldown() > 0 then
+			return -- not ready: the chord's own keys already did their thing
 		end
+		if def.canUse then
+			local ok, why = def.canUse(context())
+			if not ok then
+				controllers.MovementController.Feedback:Fire({ kind = "Context", text = why or "NOT NOW" })
+				return
+			end
+		end
+		r:FireServer(def.id)
 	end)
 	buildBar()
 	local acc = 0

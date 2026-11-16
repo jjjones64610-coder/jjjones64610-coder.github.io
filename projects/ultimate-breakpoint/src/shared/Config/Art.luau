@@ -42,12 +42,13 @@ Art.Ui = {
 	Logo = "111364135042535",
 	Coin = "126354451655390",
 	MenuBackground = "77694382940410", -- the store thumbnail
-	FlashStep = "120616402487903",
-	Zone = "72311911062044",
-	SkyWalk = "97193595800423",
-	Overdrive = "91517007108188",
+	-- ability icons (an ability module names its key in `icon`); these were
+	-- drawn for earlier abilities and are reused until new ones are made
+	AirBurst = "97193595800423",
+	Surge = "91517007108188",
+	Curveball = "80509612591405",
+	Focus = "72311911062044",
 	MagnetHands = "102624158698647",
-	TempestThrow = "80509612591405",
 	Emote = "89850613445736",
 	Trail = "103052506400160",
 	Aura = "106340578522274",

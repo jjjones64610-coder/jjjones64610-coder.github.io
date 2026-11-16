@@ -57,7 +57,6 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Config.Movement)
 local TechConfig = require(Shared.Config.Tech)
 local ComboEvaluator = require(Shared.Rules.ComboEvaluator)
-local Abilities = require(Shared.Config.Abilities)
 local Signatures = require(Shared.Rules.Signatures)
 local Signal = require(Shared.Util.Signal)
 local Net = require(Shared.Net)
@@ -458,6 +457,14 @@ end
 
 -- Root height above the ground when standing (for placing a pivot or a
 -- teleport on the ground).
+-- An ability gave this actor one more air action this airtime (AbilityService).
+function MovementService.grantAirAction(id: number)
+	local t = tracks[id]
+	if t then
+		t.airGrants += 1
+	end
+end
+
 -- Server time of this actor's last accepted `tech` (-inf if none).
 function MovementService.techTime(id: number, tech: string): number
 	local t = tracks[id]
@@ -790,18 +797,6 @@ end
 
 -- Per-technique rules beyond cooldown and cost. Returns the quality to
 -- record, or nil to refuse.
--- Sky Walk (an ability) is live on this character: extra air actions.
-local function skyWalkDodges(t: Track): number
-	local c = character(t.id)
-	if c and c:GetAttribute("UBAbility") == "SkyWalk" then
-		local untilT = c:GetAttribute("UBAbilityUntil")
-		if type(untilT) == "number" and now() <= untilT + 0.5 then
-			return Abilities.SkyWalkDodges
-		end
-	end
-	return 0
-end
-
 -- The one air action per airtime (stage 2): a dive or a Sky Reach.
 local function isAirAction(tech: string, info: string?): boolean
 	return tech == "AirDodge" or tech == "SkyReach" or (tech == "Layout" and info == "Air")
@@ -811,7 +806,7 @@ local function judge(t: Track, tech: string, quality: string, info: string?, ts:
 	-- tech engine air limits (the network pass): one dodge per airtime plus
 	-- one per thing that gives it back; each give-back has its own limit
 	if isAirAction(tech, info) then
-		if t.airDodges >= 1 + t.airGrants + skyWalkDodges(t) then
+		if t.airDodges >= 1 + t.airGrants then
 			return nil
 		end
 		return quality

@@ -73,7 +73,7 @@ local function template(): { [string]: any }
 			banner = "Slate",
 			title = "Rookie",
 			aura = "None",
-			ability = "FlashStep",
+			ability = "AirBurst",
 		},
 		coins = ShopConfig.StartingCoins,
 		owned = {}, -- "slot:id" -> true (shop purchases)

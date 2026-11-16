@@ -1,34 +1,35 @@
 --!strict
 --[[
-	AbilityService (server) — the FLOW meter and ability activations
-	(Config/Abilities).
+	AbilityService (server) — when an ability fires (src/shared/Abilities).
 
-	  * The meter fills only from validated play: techniques the
-	    MovementService accepted (Perfect ones most) and match stats
-	    (catches, completions, assists, blocks, interceptions, goals,
-	    Callahans, Greatests). It is written to the character as UBFlow
-	    (0..100) for the HUD, and re-stamped after a respawn.
-	  * The Ability remote (abilityId) fires an ability when the meter is
-	    full and the player isn't frozen: the meter empties and the character
-	    gets UBAbility (id), UBAbilityT (Net.now()) and UBAbilityUntil. The
-	    owner's client applies the movement effect; every client draws the
-	    aura. In Training the meter refills at once so abilities can be
-	    practised.
+	The Ability remote (abilityId) fires it when the player owns it (Shop /
+	Locker), it is off cooldown, the player isn't frozen and the ability's
+	own canUse agrees. Then the character gets:
+	  UBAbility         the id
+	  UBAbilityT        Net.now() it fired (the owner's client applies the
+	                    movement part; every client plays the cast)
+	  UBAbilityUntil    when its effect ends (aura, throw and catch hooks)
+	  UBAbilityReadyAt  when it can fire again (the HUD's cooldown)
+	  UBAbilityCooldown its length, for the HUD
+	Throw and catch effects are read from those attributes by ThrowService
+	and CatchingService through the framework, so the server is always the
+	one applying them. In Training the cooldown is short so abilities can be
+	practised.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Abilities = require(Shared.Config.Abilities)
-local MovementConfig = require(Shared.Config.Movement)
+local Abilities = require(Shared.Abilities)
 local Net = require(Shared.Net)
 
 local AbilityService = {}
 
 local services: any
-local meters: { [number]: number } = {}
+local readyAt: { [number]: number } = {} -- actor id -> Net.now() it is ready again
+local cooldownOf: { [number]: number } = {}
 
-local MIN_CLEAN_POINTS = 100 -- Clean techs below this combo value (jumps, plants) earn nothing
+local TRAINING_COOLDOWN = 2
 
 local function characterOf(id: number): Model?
 	local actor = services.PlayerService.get(id)
@@ -38,42 +39,21 @@ end
 local function write(id: number)
 	local c = characterOf(id)
 	if c then
-		c:SetAttribute("UBFlow", math.floor((meters[id] or 0) + 0.5))
+		c:SetAttribute("UBAbilityReadyAt", readyAt[id] or 0)
+		c:SetAttribute("UBAbilityCooldown", cooldownOf[id] or 0)
 	end
 end
 
-function AbilityService.meter(id: number): number
-	return meters[id] or 0
+-- Seconds until actor `id` can fire again (0 = ready).
+function AbilityService.cooldownLeft(id: number): number
+	return math.max(0, (readyAt[id] or 0) - Net.now())
 end
 
-function AbilityService.gain(id: number, amount: number)
-	if amount <= 0 then
-		return
-	end
-	local before = meters[id] or 0
-	local after = math.min(Abilities.MeterMax, before + amount)
-	if after ~= before then
-		meters[id] = after
-		write(id)
-	end
-end
-
--- Match stats (MatchService.stat) feed the meter.
-function AbilityService.onStat(id: number, key: string, n: number?)
-	local g = (Abilities.Gain :: any)[key]
-	if type(g) == "number" then
-		AbilityService.gain(id, g * (n or 1))
-	end
-end
-
-local function onTech(id: number, tech: string, quality: string)
-	if quality == "Perfect" then
-		AbilityService.gain(id, Abilities.Gain.PerfectTech)
-	elseif quality == "Clean" then
-		local pts = (MovementConfig.ComboPoints :: any)[tech]
-		if type(pts) == "number" and pts >= MIN_CLEAN_POINTS then
-			AbilityService.gain(id, Abilities.Gain.CleanTech)
-		end
+-- Ends the running effect now (a throw spent it).
+function AbilityService.spend(id: number)
+	local c = characterOf(id)
+	if c then
+		c:SetAttribute("UBAbilityUntil", Net.now())
 	end
 end
 
@@ -92,20 +72,29 @@ function AbilityService.activate(id: number, abilityId: any): boolean
 	if actor.player and not services.ProgressionService.owns(actor.player, "ability", def.id) then
 		return false
 	end
-	local track = services.MovementService.track(id)
-	if def.id == "FlashStep" and track and track.holding then
-		return false -- a blink while holding the disc would be a travel
-	end
-	local training = actor.role == "Training"
-	if not training and (meters[id] or 0) < Abilities.MeterMax then
+	local t = Net.now()
+	if t < (readyAt[id] or 0) then
 		return false
 	end
-	local t = Net.now()
-	meters[id] = if training then Abilities.MeterMax else 0
-	write(id)
+	if def.canUse then
+		-- the server's view of "in the air" lags a jump, so it is left
+		-- unknown here (the client checked it); holding is the server's own
+		local track = services.MovementService.track(id)
+		local ok = def.canUse({ grounded = nil, holding = track ~= nil and track.holding == true })
+		if not ok then
+			return false
+		end
+	end
+	local cooldown = if actor.role == "Training" then math.min(def.cooldown, TRAINING_COOLDOWN) else def.cooldown
+	readyAt[id] = t + cooldown
+	cooldownOf[id] = cooldown
+	if def.airAction then
+		services.MovementService.grantAirAction(id)
+	end
 	c:SetAttribute("UBAbility", def.id)
 	c:SetAttribute("UBAbilityUntil", t + def.duration)
 	c:SetAttribute("UBAbilityT", t)
+	write(id)
 	return true
 end
 
@@ -121,19 +110,17 @@ function AbilityService.Start()
 			AbilityService.activate(actor.id, abilityId)
 		end
 	end)
-	services.MovementService.TechAccepted:Connect(function(id: number, tech: string, quality: string)
-		onTech(id, tech, quality)
-	end)
-	-- re-stamp the meter on new characters (respawns)
+	-- re-stamp the cooldown on new characters (respawns)
 	task.spawn(function()
 		while true do
 			task.wait(1)
-			for id in meters do
+			for id in readyAt do
 				local c = characterOf(id)
-				if c and c:GetAttribute("UBFlow") == nil then
+				if c and c:GetAttribute("UBAbilityReadyAt") == nil then
 					write(id)
 				elseif not services.PlayerService.get(id) then
-					meters[id] = nil
+					readyAt[id] = nil
+					cooldownOf[id] = nil
 				end
 			end
 		end

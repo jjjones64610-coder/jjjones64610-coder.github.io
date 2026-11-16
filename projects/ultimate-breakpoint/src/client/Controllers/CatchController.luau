@@ -367,7 +367,8 @@ local function sweep(
 ): (CatchGeometry.Evaluation?, number)
 	local n = math.clamp(math.ceil((to - from).Magnitude / SUB_STEP), 1, MAX_SUB)
 	local best: CatchGeometry.Evaluation? = nil
-	local slack = if Abilities.activeOn(player.Character, "MagnetHands", Net.now()) then Abilities.MagnetReach else nil
+	local reach = Abilities.catchReach(player.Character, Net.now())
+	local slack = if reach > 0 then reach else nil
 	local firstT = tTo
 	for k = 1, n do
 		local a = k / n
