@@ -80,7 +80,23 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 4 — Catching and blocking (docs/CORE_DESIGN.md) ← test this now (with stages 1-3)
+### STAGE 5 — Match rules (docs/CORE_DESIGN.md) ← test this now (with stages 1-4)
+Title screen → **PLAY 3v3 (MINI)** alone: a match against bots starts at once. (7v7 is the full field.)
+The rulebook itself is unit-tested offline (20 rule tests); this checks it plays right with the new controls.
+
+- [ ] **Pull and teams:** teams line up in the end zones they defend; the pulling team throws off (if it is you: hold and release LMB), the other team takes the disc where it stops.
+- [ ] **Scoring:** catch the disc inside the end zone you attack: a goal, the score changes, the scorer celebrates by themselves, teams switch ends and the scored-on team receives.
+- [ ] **No scoring by running in:** catch it short of the end zone and your skid carries you in: no goal (a catch counts where you land).
+- [ ] **Turnovers:** a pass that hits the ground, lands out of bounds, is blocked or is intercepted gives the other team the disc there (brought to the goal line if it was in an end zone).
+- [ ] **Stall count:** hold the disc with a bot marking you: STALL counts up once a second; reach the limit (8 in Mini, 10 in 7v7) and it is a turnover at your feet. Hold it with nobody near: it still counts, at half speed, and shows "NO MARK". It never resets while you hold it.
+- [ ] **No running with it:** after a catch you skid to a stop and can only pivot; a layout catch slides a little and stops; you are never snapped back by a "travel" call during a normal catch.
+- [ ] **Air catch and the Greatest:** jump from in bounds, catch a disc that is going out and throw it back before you land: play goes on.
+- [ ] **Match end:** first to the target score wins; at the time cap the leader wins, a tie plays one more point.
+
+What to tell me: do points start and restart without confusion? Is the stall count the right length (Modes: StallMax,
+StallInterval; `Mark.UnmarkedStallRate` in Tuning)? Any catch or throw where the rules surprised you?
+
+### STAGE 4 — Catching and blocking (docs/CORE_DESIGN.md)
 On the **TEST FIELD**, throw the disc at least 30 studs. A few seconds after it lands it is thrown back to
 where you stand, cycling through four deliveries (the panel says which): at your chest, high, wide, and
 one to sprint through. Miss it and it comes again. Tune in `Config/Tuning.luau` ("CATCHING" and `Disc.Catch`).

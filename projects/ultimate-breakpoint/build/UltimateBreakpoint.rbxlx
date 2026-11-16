@@ -2924,7 +2924,6 @@ Tech.PIVOT_LUNGE_TIME = 0.2
 Tech.PIVOT_LUNGE_RECOVER = 0.25
 
 -- defense and rules
-Tech.STALL_COUNT = 10
 Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
@@ -3211,6 +3210,7 @@ local Disc = {
 	-- root, so a lunge cannot cause a disc-space call.
 	Mark = {
 		StallRange = 9, -- studs from P: ~10 ft
+		UnmarkedStallRate = 0.5, -- with nobody marking the stall count still runs, this fast (0.5 = half speed)
 		DiscSpace = 2.4, -- a marker closer than this to P is a disc-space call
 		MarkDistance = 3.2, -- where a marker stands upfield of P ...
 		Shade = 1.6, -- ... shaded this far toward the break side
@@ -7928,7 +7928,12 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	elseif RUNNING[s.state] then
 		flat = runFlat(s, input, dt)
 	elseif s.state == "Downed" then
-		flat = brakeFlat(s, Config.DIVE_SLIDE_FRICTION, dt) -- the belly slide
+		-- the belly slide; with the disc (a layout catch) you stop as fast as
+		-- any catch, so the slide can never carry the disc far
+		local friction = if s.holding
+			then math.max(Config.DIVE_SLIDE_FRICTION, Config.CATCH_RUNOUT_FRICTION)
+			else Config.DIVE_SLIDE_FRICTION
+		flat = brakeFlat(s, friction, dt)
 	else
 		-- Recovering
 		flat = brakeFlat(s, Config.GROUND_FRICTION, dt)
@@ -17000,18 +17005,19 @@ return DataService
 	the holder's root, so a thrower's lunge cannot change who is marking or
 	cause a disc-space call.
 
-	  Stall count   advances once per StallInterval while an opposing player
-	                is within StallRange of P. Pauses when nobody is marking,
-	                on a double team (a second defender in range who is not
-	                guarding anyone else), or on a disc-space violation (the
-	                marker inside DiscSpace of P for 0.4 s). Resets after
-	                1.5 s unmarked.
-	  Mark stance   defenders hold Secondary near the holder to mark-shuffle
-	                with their hands up (MarkStance remote: on, stance); the
-	                Slide key toggles High (hammers / hop throws) and Low
-	                (wide, knees to chest: normal and step-out releases).
-	                Replicated as the character attribute Mark so the thrower
-	                sees it.
+	  Stall count   always runs while someone holds the disc in play, so the
+	                holder has to throw within a set time: once per
+	                StallInterval with an opposing player within StallRange of
+	                P, at Mark.UnmarkedStallRate of that with nobody marking.
+	                It pauses only for the defence's own violations: a double
+	                team (a second defender in range who is not guarding
+	                anyone else) or disc space (the marker inside DiscSpace
+	                of P for 0.4 s). It never resets during a possession.
+	  Mark stance   defenders near the holder mark automatically (the client
+	                sends MarkStance: on, stance): Low and wide on the ground
+	                (normal and step-out releases), High in a jump (hammers
+	                and high releases). Replicated as the character attribute
+	                Mark so the thrower sees it.
 	  Hand blocks   on release the first HandBlockCheckTime seconds of the
 	                flight are tested against every nearby defender's hand box
 	                (CatchGeometry.markBox: the marker's facing blended toward
@@ -17227,17 +17233,33 @@ local function stepStall(dt: number)
 	table.sort(defenders, function(x, y)
 		return x.dist < y.dist
 	end)
+	-- The count always runs, so the holder has to throw within a set time
+	-- (docs/CORE_DESIGN.md): at full speed with a marker in range, at
+	-- Mark.UnmarkedStallRate without one. It never resets during a possession.
+	local function count(rate: number)
+		stall.clock += dt * rate
+		local n = math.floor(stall.clock / stall.interval)
+		if n ~= stall.count then
+			stall.count = n
+			Net.state():SetAttribute("Stall", n)
+			DefenseService.StallTick:Fire(n)
+			if n >= stall.max then
+				local h = stall.holder
+				stall.active = false
+				DefenseService.StallOut:Fire(h)
+			end
+		end
+	end
+
 	local marker = defenders[1]
 	if not marker or marker.dist > M.StallRange then
 		stall.unmarkedFor += dt
-		stall.marker = nil
-		Net.state():SetAttribute("MarkerId", 0)
-		if stall.unmarkedFor > 1.5 and stall.count > 0 then
-			stall.count = 0
-			stall.clock = 0
-			Net.state():SetAttribute("Stall", 0)
+		if stall.marker ~= nil then
+			stall.marker = nil
+			Net.state():SetAttribute("MarkerId", 0)
 		end
 		setState("Unmarked")
+		count(M.UnmarkedStallRate)
 		return
 	end
 	stall.unmarkedFor = 0
@@ -17274,18 +17296,7 @@ local function stepStall(dt: number)
 	end
 
 	setState("Counting")
-	stall.clock += dt
-	local count = math.floor(stall.clock / stall.interval)
-	if count ~= stall.count then
-		stall.count = count
-		Net.state():SetAttribute("Stall", count)
-		DefenseService.StallTick:Fire(count)
-		if count >= stall.max then
-			local h = stall.holder
-			stall.active = false
-			DefenseService.StallOut:Fire(h)
-		end
-	end
+	count(1)
 end
 
 type Candidate = { id: number, box: CatchGeometry.MarkBox, arm: Vector3?, point: boolean }
@@ -19134,6 +19145,16 @@ local function goal(o: any)
 		for _, a in services.PlayerService.onTeam(o.team) do
 			MatchService.stat(a.id, "flowGoals")
 		end
+	end
+	-- the scorer celebrates by themselves, with the celebration they chose
+	-- in the Locker (there is no celebrate key)
+	local scorer = services.PlayerService.get(o.scorer)
+	if scorer and scorer.character then
+		local emote = if scorer.player
+			then services.ProgressionService.equipped(scorer.player, "celebration")
+			else "Point"
+		scorer.character:SetAttribute("Celebrate", emote)
+		scorer.character:SetAttribute("CelebrateT", now())
 	end
 	local clutch = e.universe or e.capReached or (S.matchEnd - now() < 15)
 	services.HighlightService.onGoal(o, S.lastPass, clutch)
@@ -35646,6 +35667,7 @@ function Hud.update(_dt: number)
 	local stallMax: number = (state:GetAttribute("StallMax") or 10) :: number
 	local stallState = state:GetAttribute("StallState") or "None"
 	local inPlay = phase == "Live" and type(holderId) == "number" and holderId ~= 0
+	-- the holder always sees the count (it runs with or without a marker)
 	local involved = holderId == player.UserId or state:GetAttribute("MarkerId") == player.UserId
 	refs.stall.Visible = inPlay and involved
 	if inPlay then
@@ -35655,7 +35677,7 @@ function Hud.update(_dt: number)
 		elseif stallState == "DiscSpace" then
 			text = "DISC SPACE"
 		elseif stallState == "Unmarked" then
-			text = "NO MARK"
+			text = text .. " · NO MARK"
 		end
 		refs.stallText.Text = text
 		refs.stallText.TextColor3 = if stall >= stallMax - 3
@@ -36074,6 +36096,7 @@ local function techGuide(): { string }
 			k("Primary")
 		),
 		string.format("PICK UP — %s next to a disc on the ground.", k("Primary")),
+		"THE RULES — score by catching the disc in the end zone you attack. No running with it. A pass that hits the ground, goes out, or is blocked or intercepted is a turnover. You must throw before the stall count runs out: it counts at full speed with a defender on you and at half speed without one.",
 		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end

@@ -210,7 +210,6 @@ Tech.PIVOT_LUNGE_TIME = 0.2
 Tech.PIVOT_LUNGE_RECOVER = 0.25
 
 -- defense and rules
-Tech.STALL_COUNT = 10
 Tech.HAND_BLOCK_ACTIVE = 0.2
 Tech.POINT_BLOCK_WINDOW = 80 -- ms of the release
 Tech.POINT_BLOCK_FLOW = 20
@@ -497,6 +496,7 @@ local Disc = {
 	-- root, so a lunge cannot cause a disc-space call.
 	Mark = {
 		StallRange = 9, -- studs from P: ~10 ft
+		UnmarkedStallRate = 0.5, -- with nobody marking the stall count still runs, this fast (0.5 = half speed)
 		DiscSpace = 2.4, -- a marker closer than this to P is a disc-space call
 		MarkDistance = 3.2, -- where a marker stands upfield of P ...
 		Shade = 1.6, -- ... shaded this far toward the break side

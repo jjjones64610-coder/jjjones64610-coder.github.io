@@ -999,6 +999,7 @@ function Hud.update(_dt: number)
 	local stallMax: number = (state:GetAttribute("StallMax") or 10) :: number
 	local stallState = state:GetAttribute("StallState") or "None"
 	local inPlay = phase == "Live" and type(holderId) == "number" and holderId ~= 0
+	-- the holder always sees the count (it runs with or without a marker)
 	local involved = holderId == player.UserId or state:GetAttribute("MarkerId") == player.UserId
 	refs.stall.Visible = inPlay and involved
 	if inPlay then
@@ -1008,7 +1009,7 @@ function Hud.update(_dt: number)
 		elseif stallState == "DiscSpace" then
 			text = "DISC SPACE"
 		elseif stallState == "Unmarked" then
-			text = "NO MARK"
+			text = text .. " · NO MARK"
 		end
 		refs.stallText.Text = text
 		refs.stallText.TextColor3 = if stall >= stallMax - 3

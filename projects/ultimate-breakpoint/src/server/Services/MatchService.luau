@@ -650,6 +650,16 @@ local function goal(o: any)
 			MatchService.stat(a.id, "flowGoals")
 		end
 	end
+	-- the scorer celebrates by themselves, with the celebration they chose
+	-- in the Locker (there is no celebrate key)
+	local scorer = services.PlayerService.get(o.scorer)
+	if scorer and scorer.character then
+		local emote = if scorer.player
+			then services.ProgressionService.equipped(scorer.player, "celebration")
+			else "Point"
+		scorer.character:SetAttribute("Celebrate", emote)
+		scorer.character:SetAttribute("CelebrateT", now())
+	end
 	local clutch = e.universe or e.capReached or (S.matchEnd - now() < 15)
 	services.HighlightService.onGoal(o, S.lastPass, clutch)
 	notifyAll("Goal", teamName(o.team) .. " SCORE", {

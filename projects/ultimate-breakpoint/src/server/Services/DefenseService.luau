@@ -7,18 +7,19 @@
 	the holder's root, so a thrower's lunge cannot change who is marking or
 	cause a disc-space call.
 
-	  Stall count   advances once per StallInterval while an opposing player
-	                is within StallRange of P. Pauses when nobody is marking,
-	                on a double team (a second defender in range who is not
-	                guarding anyone else), or on a disc-space violation (the
-	                marker inside DiscSpace of P for 0.4 s). Resets after
-	                1.5 s unmarked.
-	  Mark stance   defenders hold Secondary near the holder to mark-shuffle
-	                with their hands up (MarkStance remote: on, stance); the
-	                Slide key toggles High (hammers / hop throws) and Low
-	                (wide, knees to chest: normal and step-out releases).
-	                Replicated as the character attribute Mark so the thrower
-	                sees it.
+	  Stall count   always runs while someone holds the disc in play, so the
+	                holder has to throw within a set time: once per
+	                StallInterval with an opposing player within StallRange of
+	                P, at Mark.UnmarkedStallRate of that with nobody marking.
+	                It pauses only for the defence's own violations: a double
+	                team (a second defender in range who is not guarding
+	                anyone else) or disc space (the marker inside DiscSpace
+	                of P for 0.4 s). It never resets during a possession.
+	  Mark stance   defenders near the holder mark automatically (the client
+	                sends MarkStance: on, stance): Low and wide on the ground
+	                (normal and step-out releases), High in a jump (hammers
+	                and high releases). Replicated as the character attribute
+	                Mark so the thrower sees it.
 	  Hand blocks   on release the first HandBlockCheckTime seconds of the
 	                flight are tested against every nearby defender's hand box
 	                (CatchGeometry.markBox: the marker's facing blended toward
@@ -234,17 +235,33 @@ local function stepStall(dt: number)
 	table.sort(defenders, function(x, y)
 		return x.dist < y.dist
 	end)
+	-- The count always runs, so the holder has to throw within a set time
+	-- (docs/CORE_DESIGN.md): at full speed with a marker in range, at
+	-- Mark.UnmarkedStallRate without one. It never resets during a possession.
+	local function count(rate: number)
+		stall.clock += dt * rate
+		local n = math.floor(stall.clock / stall.interval)
+		if n ~= stall.count then
+			stall.count = n
+			Net.state():SetAttribute("Stall", n)
+			DefenseService.StallTick:Fire(n)
+			if n >= stall.max then
+				local h = stall.holder
+				stall.active = false
+				DefenseService.StallOut:Fire(h)
+			end
+		end
+	end
+
 	local marker = defenders[1]
 	if not marker or marker.dist > M.StallRange then
 		stall.unmarkedFor += dt
-		stall.marker = nil
-		Net.state():SetAttribute("MarkerId", 0)
-		if stall.unmarkedFor > 1.5 and stall.count > 0 then
-			stall.count = 0
-			stall.clock = 0
-			Net.state():SetAttribute("Stall", 0)
+		if stall.marker ~= nil then
+			stall.marker = nil
+			Net.state():SetAttribute("MarkerId", 0)
 		end
 		setState("Unmarked")
+		count(M.UnmarkedStallRate)
 		return
 	end
 	stall.unmarkedFor = 0
@@ -281,18 +298,7 @@ local function stepStall(dt: number)
 	end
 
 	setState("Counting")
-	stall.clock += dt
-	local count = math.floor(stall.clock / stall.interval)
-	if count ~= stall.count then
-		stall.count = count
-		Net.state():SetAttribute("Stall", count)
-		DefenseService.StallTick:Fire(count)
-		if count >= stall.max then
-			local h = stall.holder
-			stall.active = false
-			DefenseService.StallOut:Fire(h)
-		end
-	end
+	count(1)
 end
 
 type Candidate = { id: number, box: CatchGeometry.MarkBox, arm: Vector3?, point: boolean }

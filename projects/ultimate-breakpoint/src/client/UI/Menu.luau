@@ -162,6 +162,7 @@ local function techGuide(): { string }
 			k("Primary")
 		),
 		string.format("PICK UP — %s next to a disc on the ground.", k("Primary")),
+		"THE RULES — score by catching the disc in the end zone you attack. No running with it. A pass that hits the ground, goes out, or is blocked or intercepted is a turnover. You must throw before the stall count runs out: it counts at full speed with a defender on you and at half speed without one.",
 		string.format("ABILITY — %s and %s pressed together.", jump, burst),
 	}
 end

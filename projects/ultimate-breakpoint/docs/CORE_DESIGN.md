@@ -81,6 +81,13 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 5 — match rules (audited, awaiting playtest).** The rulebook
+  (teams, end zones, pulls, goals, turnovers, out of bounds, the Greatest,
+  match end) was already a tested pure state machine and is kept. Changed:
+  the stall count now always runs (half speed with nobody marking, never
+  resetting), so the holder must always throw within a set time; a layout
+  catch's belly slide stops like any catch, inside the server's travel
+  limit; the scorer celebrates automatically (the celebrate key is gone).
 - **Stage 4 — catching and blocking (built, awaiting playtest).** Easy
   catches are automatic in a zone in front of the chest. Hard catches (in
   the air, with the layout or Sky Reach zone, at a full sprint) need LMB on

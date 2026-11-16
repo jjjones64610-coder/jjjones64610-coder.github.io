@@ -1352,7 +1352,12 @@ function TechCore.step(s: State, input: Input, env: Env, dt: number)
 	elseif RUNNING[s.state] then
 		flat = runFlat(s, input, dt)
 	elseif s.state == "Downed" then
-		flat = brakeFlat(s, Config.DIVE_SLIDE_FRICTION, dt) -- the belly slide
+		-- the belly slide; with the disc (a layout catch) you stop as fast as
+		-- any catch, so the slide can never carry the disc far
+		local friction = if s.holding
+			then math.max(Config.DIVE_SLIDE_FRICTION, Config.CATCH_RUNOUT_FRICTION)
+			else Config.DIVE_SLIDE_FRICTION
+		flat = brakeFlat(s, friction, dt)
 	else
 		-- Recovering
 		flat = brakeFlat(s, Config.GROUND_FRICTION, dt)

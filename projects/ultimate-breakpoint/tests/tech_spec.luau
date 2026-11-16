@@ -701,6 +701,19 @@ test(
 		worldStep(c)
 		expect(#events(c.s, "TechRoll") == 1, "rolls up with the disc")
 		expect(TechCore.flatSpeed(c.s) <= landing + 0.01, "but the roll adds no speed")
+
+		-- a layout catch with no roll: the belly slide stops like any catch, so
+		-- the disc never travels further than the server's limit (28 studs)
+		local l = newWorld(Config.BURST_TOP_SPEED)
+		jumpThen(l, 0.12, FWD)
+		TechCore.setHolding(l.s, true)
+		untilLanded(l)
+		local dist = 0
+		for _ = 1, 480 do
+			worldStep(l)
+			dist += TechCore.flatSpeed(l.s) * TechCore.STEP
+		end
+		expect(TechCore.flatSpeed(l.s) < 0.01 and dist < 26, "stops within the travel limit: " .. dist)
 	end
 )
 
