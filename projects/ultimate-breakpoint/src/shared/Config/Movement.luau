@@ -410,6 +410,7 @@ Movement.TechCosts = {
 	TipReset = 0,
 	-- tech engine
 	Plant = 0,
+	Skid = 0, -- sent only so others see the skid pose; scores nothing
 	PerfectCatch = 0,
 	FakeSwitch = 0,
 	FlipReset = 0,
@@ -455,6 +456,7 @@ Movement.TechCooldowns = {
 	TipReset = Movement.Reset.TipCooldown,
 	-- tech engine
 	Plant = 0,
+	Skid = 0, -- sent only so others see the skid pose; scores nothing
 	PerfectCatch = 0,
 	FakeSwitch = 0,
 	FlipReset = 0,

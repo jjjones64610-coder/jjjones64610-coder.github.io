@@ -80,7 +80,33 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 7 — Effects, camera feel, the anime pass (docs/CORE_DESIGN.md) ← test this now (with stages 1-6)
+### STAGE 8 — Multiplayer (docs/CORE_DESIGN.md) ← test this now (with stages 1-7)
+This is the one stage that needs more than one player. In Studio: **Test → Clients and Servers**, pick
+**2 players** (then 4), Start. Each client gets its own window. Then repeat with lag:
+**File → Studio Settings → Network → Incoming Replication Lag = 0.15** (a typical 150 ms player).
+
+Your own movement (instant on your screen, checked by the server)
+- [ ] With and without lag, your running, cuts, jumps and dives respond at once; you are never snapped back during normal play (sprint + Surge + dive + Air Burst included).
+- [ ] The other window sees you move smoothly, a little behind; poses (cuts, skids, dives, belly slides, tech rolls) show on the other player too.
+
+The disc (smooth and the same for everyone)
+- [ ] Throw in one window: it leaves your hand at once and flies the same curve in both windows (both simulate it from the same launch values). With lag the other window's disc starts ~150 ms later but never jumps or teleports.
+- [ ] A bent throw, a hammer, a Perfect release and a Curveball throw look the same in both windows.
+
+Catches and blocks (decided fairly by the server)
+- [ ] Catch with lag on: the disc snaps into your hands at once on your screen and the server agrees. A catch you clearly made is never taken away.
+- [ ] Both players go for the same disc: one wins, both screens agree who, and the better-timed LMB press wins a tie.
+- [ ] A block or interception by the other player shows on both screens; the defender's screen gets the flash and hit-stop, everyone sees the burst.
+- [ ] A layout or sky catch by the other player: you see its rings and dust.
+
+Abilities and bots
+- [ ] An ability used in one window: the other sees the cast and the coloured glow.
+- [ ] In a 3v3 against bots, bots use their abilities too (Surge on a cut, Magnet Hands chasing a disc, Curveball or Focus with the disc).
+
+What to tell me: anything that rubber-bands, a catch or block decided against what you saw, a disc that jumps,
+or a move that shows on your screen but not on the other one.
+
+### STAGE 7 — Effects, camera feel, the anime pass (docs/CORE_DESIGN.md)
 Every effect a play triggers is one row in `Config/Tuning.luau` → `Tech.Feel.Events`, played by one module
 (`GameFeel`). `Feel.Intensity` turns the whole game up or down; `Flash`, `HitStop`, `Shake`, `Kick`,
 `Particles` turn one kind. Settings → "Anime effects" switches the layer off for a player.

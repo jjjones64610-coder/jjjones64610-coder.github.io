@@ -865,6 +865,15 @@ function EffectsController.Start()
 				EffectsController.burst(pos, color, if zone == "Dive" then 26 else 12, 10)
 				controllers.AudioController.playAt(if quality == "Clean" then "CleanCatch" else "Catch", pos)
 			end
+			-- someone else's highlight catch: you see its rings and dust too
+			-- (your own already played in full: CatchController)
+			if not mine and (zone == "Dive" or zone == "Sky") then
+				local catcher = if type(actorId) == "number" then Actors.characterOf(actorId) else nil
+				controllers.GameFeel.play(
+					if zone == "Dive" then "LayoutCatch" else "SkyCatch",
+					{ pos = pos, model = catcher }
+				)
+			end
 		elseif kind == "Block" or kind == "HandBlock" then
 			-- (your own block already played its screen effects: CatchController)
 			controllers.GameFeel.play("Block", { pos = pos, color = Theme.Colors.Bad })

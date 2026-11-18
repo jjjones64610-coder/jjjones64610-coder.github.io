@@ -728,8 +728,10 @@ local function techEvent(e: TechCore.TechEvent)
 		controllers.AudioController.play("WavedashSlide", 0.05)
 	elseif e.tech == "Skid" then
 		controllers.AudioController.play("Skid", 0.06)
-		-- a miss scores nothing, but your own body still poses the skid
+		-- a miss scores nothing, but your own body poses the skid, and it is
+		-- sent (like a Plant, worth no points) so everyone else sees it too
 		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = now(), dir = e.dir, chain = false })
+		table.insert(pending, { tech = "Skid", quality = "Sloppy", dir = e.dir, t = now() })
 	end
 	if e.quality == "Miss" then
 		return

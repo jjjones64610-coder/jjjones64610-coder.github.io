@@ -81,6 +81,16 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 
 ## Stage log
 
+- **Stage 8 — multiplayer polish (built, awaiting a multi-client playtest).**
+  The networking chosen at the start is unchanged (client-owned movement
+  with server limits; deterministic disc flights from launch values;
+  server-judged catches with lag compensation). Polish: skids now replicate
+  (sent as a no-point technique) so others see them; other players' layout
+  and sky catches show their rings and dust; bots use their abilities
+  through the same server path as players, choosing the moment from what
+  the ability does (so a new ability needs no bot code). Checked: the
+  server's speed budget (77 studs/s sustained) stays above every legal
+  stack of sprint, Surge, dive and Air Burst (hard cap 60).
 - **Stage 7 — effects, camera feel, anime pass (built, awaiting playtest).**
   One client module, `GameFeel`, plays every gameplay effect from one
   table, `Config/Tuning` → `Tech.Feel` (a row per event, a dial per kind of
@@ -132,3 +142,17 @@ At each stage, say what to test in Studio and what to pay attention to, then wai
 - **Stage 1 — movement and turning (built, awaiting playtest).** Cuts come
   from the stick (let go, then snap); skids from yanks without a plant; one
   engine; six inputs plus the chord; `Config/Tuning.luau`; the test field.
+
+## Waiting on ForgeGUI
+
+ForgeGUI needs signing in again (claude.ai → connector settings). Once it
+is back, these get made and wired in (the code already has a slot for each):
+
+- Sounds: pump fake (`Audio.Fake`, a stock placeholder now); Perfect,
+  layout, sky and sprint catches; block and interception; ability cast
+  per ability; hit-stop "impact" sting; goal sting.
+- Icons: Air Burst, Surge, Curveball, Focus (reusing old ability icons now;
+  `Config/Art` Ui).
+- Music: the two soundtrack tracks that were never confirmed (`Config/Music`
+  Match, Universe), and the crowd loop / cheer (`Audio.CrowdLoop`,
+  `CrowdCheer`).

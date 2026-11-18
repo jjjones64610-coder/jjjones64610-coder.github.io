@@ -2194,6 +2194,7 @@ Movement.TechCosts = {
 	TipReset = 0,
 	-- tech engine
 	Plant = 0,
+	Skid = 0, -- sent only so others see the skid pose; scores nothing
 	PerfectCatch = 0,
 	FakeSwitch = 0,
 	FlipReset = 0,
@@ -2239,6 +2240,7 @@ Movement.TechCooldowns = {
 	TipReset = Movement.Reset.TipCooldown,
 	-- tech engine
 	Plant = 0,
+	Skid = 0, -- sent only so others see the skid pose; scores nothing
 	PerfectCatch = 0,
 	FakeSwitch = 0,
 	FlipReset = 0,
@@ -13634,6 +13636,7 @@ local RulesEngine = require(Shared.Rules.RulesEngine)
 local MovementSim = require(Shared.Movement.MovementSim)
 local TechCore = require(Shared.Movement.TechCore)
 local TechConfig = require(Shared.Config.Tech)
+local Abilities = require(Shared.Abilities)
 local Locomotion = require(Shared.Animation.Locomotion)
 
 local BotService = {}
@@ -13726,6 +13729,7 @@ export type Bot = {
 	burstUntil: number, -- hold Burst until (server time)
 	jumpUntil: number,
 	releaseUntil: number, -- the stick let go until (the cut gesture, like a player)
+	ability: string, -- its one ability (src/shared/Abilities), on the same cooldown as a player's
 	-- intent (brain output)
 	target: Vector3?,
 	targetVel: Vector3?, -- the target moves (a guard's man): match it, no stop radius
@@ -13970,6 +13974,7 @@ function BotService.spawn(team: string, custom: ((any, number) -> ())?, role: st
 		burstUntil = 0,
 		jumpUntil = 0,
 		releaseUntil = 0,
+		ability = Abilities.Order[rng:int(1, #Abilities.Order)],
 		target = nil,
 		targetVel = nil,
 		speed = JOG,
@@ -16023,6 +16028,47 @@ local function thinkGround(b: Bot, w: World)
 	end
 end
 
+-- Bots use their ability like a player would, through the same server
+-- path (AbilityService: cooldown, canUse). When to use it is read from what
+-- the ability does, never from its name, so a new ability module needs no
+-- bot code:
+--   a throw hook      while holding, once the stall count starts to climb
+--   catch reach       chasing a disc in flight
+--   an air action     in the air, chasing a disc in flight
+--   anything else     a movement boost: while cutting or chasing
+-- Better bots use it at the right moment more often.
+local function useAbility(b: Bot, w: World)
+	local def = Abilities.get(b.ability)
+	if not def or services.AbilityService.cooldownLeft(b.id) > 0 then
+		return
+	end
+	local chasing = w.flight ~= nil and chaserOf(w, b.team) == b.id
+	local moment
+	if def.throw then
+		moment = b.sim.holding and w.stall >= 2
+	elseif def.catchReach then
+		moment = chasing
+	elseif def.airAction then
+		moment = chasing and b.techOn and not b.tech.grounded
+	else
+		moment = not b.sim.holding and (chasing or b.cut ~= nil)
+	end
+	if not moment or b.rng:next() > 0.35 * b.skill then
+		return
+	end
+	if def.canUse then
+		local ok = def.canUse({ grounded = b.tech.grounded, holding = b.sim.holding })
+		if not ok then
+			return
+		end
+	end
+	if services.AbilityService.activate(b.id, def.id) and def.start and b.techOn then
+		local pos = b.root.Position
+		local move = if b.target then VecMath.flat((b.target :: Vector3) - pos) else b.facing
+		def.start(b.tech, if move.Magnitude > 0.1 then move.Unit else b.facing)
+	end
+end
+
 local function thinkMatch(b: Bot)
 	local w = getWorld()
 	if not w then
@@ -16081,6 +16127,7 @@ local function thinkMatch(b: Bot)
 	elseif e.disc == "Ground" then
 		thinkGround(b, w)
 	end
+	useAbility(b, w)
 end
 
 function BotService.schedulePull(id: number)
@@ -29996,6 +30043,15 @@ function EffectsController.Start()
 				EffectsController.burst(pos, color, if zone == "Dive" then 26 else 12, 10)
 				controllers.AudioController.playAt(if quality == "Clean" then "CleanCatch" else "Catch", pos)
 			end
+			-- someone else's highlight catch: you see its rings and dust too
+			-- (your own already played in full: CatchController)
+			if not mine and (zone == "Dive" or zone == "Sky") then
+				local catcher = if type(actorId) == "number" then Actors.characterOf(actorId) else nil
+				controllers.GameFeel.play(
+					if zone == "Dive" then "LayoutCatch" else "SkyCatch",
+					{ pos = pos, model = catcher }
+				)
+			end
 		elseif kind == "Block" or kind == "HandBlock" then
 			-- (your own block already played its screen effects: CatchController)
 			controllers.GameFeel.play("Block", { pos = pos, color = Theme.Colors.Bad })
@@ -31519,8 +31575,10 @@ local function techEvent(e: TechCore.TechEvent)
 		controllers.AudioController.play("WavedashSlide", 0.05)
 	elseif e.tech == "Skid" then
 		controllers.AudioController.play("Skid", 0.06)
-		-- a miss scores nothing, but your own body still poses the skid
+		-- a miss scores nothing, but your own body poses the skid, and it is
+		-- sent (like a Plant, worth no points) so everyone else sees it too
 		MovementController.Tech:Fire({ tech = e.tech, quality = e.quality, t = now(), dir = e.dir, chain = false })
+		table.insert(pending, { tech = "Skid", quality = "Sloppy", dir = e.dir, t = now() })
 	end
 	if e.quality == "Miss" then
 		return
