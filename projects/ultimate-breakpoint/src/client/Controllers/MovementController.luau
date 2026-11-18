@@ -709,9 +709,10 @@ local checkContact: (Vector3) -> () -- defined with the tech frame
 -- combo chain and the server, like any technique.
 local function techEvent(e: TechCore.TechEvent)
 	local name = (MovementConfig.TechNames :: any)[e.tech] or e.tech
-	if e.quality == "Perfect" or not QUIET_TECH[e.tech] then
-		local label = if e.quality == "Perfect" then "Perfect " .. name else name
-		controllers.TechFeedback.play(label, e.quality)
+	-- only a Perfect gets words on screen; everything else speaks through
+	-- the body, the sound and GameFeel (a clean screen, like a broadcast)
+	if e.quality == "Perfect" and not QUIET_TECH[e.tech] then
+		controllers.TechFeedback.play("Perfect " .. name, e.quality)
 	end
 	-- the cut's own sound: you can hear a Perfect plant from a Clean one
 	if e.tech == "Cut" then

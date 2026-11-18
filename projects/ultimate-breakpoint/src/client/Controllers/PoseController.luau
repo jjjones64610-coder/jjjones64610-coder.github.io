@@ -77,6 +77,8 @@ type Leg = {
 type Rig = {
 	wasHolding: boolean,
 	caughtAt: number,
+	modeNow: string, -- the movement mode last frame ...
+	modeAt: number, -- ... and when it began (the layout's phases)
 	model: Model,
 	root: BasePart,
 	humanoid: Humanoid,
@@ -147,6 +149,8 @@ local SHUFFLE_LIFT = 0.3
 local NINJA_FROM = 31 -- studs/s: the anime sprint starts past a run's top speed
 local NINJA_FULL = 40
 local CAST_TIME = 0.6 -- s of the ability cast pose
+local DIVE_LAUNCH = 0.09 -- s of the layout's launch before the full stretch
+local DIVE_IMPACT = 0.14 -- s of the chest-first impact squash on landing
 
 local function now(): number
 	return Net.now()
@@ -325,6 +329,8 @@ local function buildRig(model: Model): Rig?
 		history = {},
 		wasHolding = false,
 		caughtAt = -math.huge,
+		modeNow = "",
+		modeAt = -math.huge,
 		smoothVel = Vector3.new(vel.X, 0, vel.Z),
 		shufflePhase = 0,
 		msShown = "Ground",
@@ -392,6 +398,7 @@ type Ctx = {
 	leftHanded: boolean,
 	lookAt: Vector3?, -- local space
 	castAge: number, -- s since this body cast an ability (UBAbilityT)
+	modeAge: number, -- s since the movement mode began (the layout's phases)
 	catchAge: number, -- s since this body caught the disc (HasDisc went true)
 }
 
@@ -463,6 +470,7 @@ local function gather(rig: Rig, dt: number): Ctx
 		leftHanded = m:GetAttribute("LeftHanded") == true,
 		lookAt = nil,
 		castAge = t - attrNumber(m, "UBAbilityT"),
+		modeAge = 0,
 		catchAge = math.huge,
 	}
 	-- the catch: the moment HasDisc turns on
@@ -476,7 +484,9 @@ local function gather(rig: Rig, dt: number): Ctx
 	if rig.isLocal then
 		local mc = controllers.MovementController
 		local sim = mc.sim()
-		vel = flat(sim.vel)
+		-- your body moves on the tech core: its velocity drives every lean
+		-- (the old sim no longer moves and always read zero here)
+		vel = flat(mc.techState().vel)
 		local raw = (vel - rig.lastVel) / math.max(dt, 1 / 240)
 		rig.lastVel = vel
 		if raw.Magnitude > 400 then
@@ -561,6 +571,11 @@ local function gather(rig: Rig, dt: number): Ctx
 		end
 	end
 	ctx.grounded = GROUNDED_MODES[ctx.mode] == true
+	if ctx.mode ~= rig.modeNow then
+		rig.modeNow = ctx.mode
+		rig.modeAt = t
+	end
+	ctx.modeAge = t - rig.modeAt
 	ctx.speed = vel.Magnitude
 	local localVel = toLocal(root, vel)
 	ctx.localVel = Vector3.new(localVel.X, 0, localVel.Z)
@@ -798,17 +813,41 @@ local function compute(ctx: Ctx): Pose
 		pose.LShoulder = CFrame.Angles(1.4, 0, -0.3)
 		pose.rate = 30
 	elseif mode == "Dive" then
-		pose.drop, pose.pitch, pose.roll = 0.5, -1.35, 0
+		-- THE LAYOUT, in phases (DIVE_* below):
+		--   launch   the body tips forward off the plant foot, arms swinging
+		--            up from the hips, chin down
+		--   flight   fully stretched out flat, both arms straight at the
+		--            disc, head up looking along them, a twist toward the
+		--            side you dove to
+		local a = ctx.modeAge
+		local side = math.clamp(ctx.localVel.X / 12, -1, 1)
+		if a < DIVE_LAUNCH then
+			local u = a / DIVE_LAUNCH
+			pose.drop, pose.pitch, pose.roll = 0.35, -0.55 - 0.7 * u, -side * 0.2 * u
+			pose.RShoulder = CFrame.Angles(0.8 + 2.0 * u, 0, 0.25)
+			pose.LShoulder = CFrame.Angles(0.8 + 2.0 * u, 0, -0.25)
+			pose.Neck = CFrame.Angles(-0.25, 0, 0)
+			pose.rate = 40
+		else
+			pose.drop, pose.pitch, pose.roll = 0.4, -1.5, -side * 0.35
+			pose.RShoulder = CFrame.Angles(3.05, 0, 0.08)
+			pose.LShoulder = CFrame.Angles(3.05, 0, -0.08)
+			pose.Neck = CFrame.Angles(0.75, 0, 0) -- eyes on the disc
+			pose.Waist = CFrame.Angles(0, -side * 0.25, 0)
+			pose.rate = 24
+		end
 		pose.legs = "none"
-		pose.RShoulder = CFrame.Angles(2.95, 0, 0.12)
-		pose.LShoulder = CFrame.Angles(2.95, 0, -0.12)
-		pose.rate = 18
 	elseif mode == "DiveSlide" then
-		pose.drop, pose.pitch, pose.roll = 2.1, -1.47, 0
+		-- the landing: chest-first impact (a squash), then the belly slide
+		-- with the arms still out front and the head up
+		local a = ctx.modeAge
+		local impact = math.clamp(1 - a / DIVE_IMPACT, 0, 1)
+		pose.drop, pose.pitch, pose.roll = 2.1 + 0.35 * impact, -1.5 + 0.12 * impact, 0
 		pose.legs = "none"
-		pose.RShoulder = CFrame.Angles(2.95, 0, 0.12)
-		pose.LShoulder = CFrame.Angles(2.95, 0, -0.12)
-		pose.rate = 22
+		pose.RShoulder = CFrame.Angles(2.95 - 0.5 * impact, 0, 0.18)
+		pose.LShoulder = CFrame.Angles(2.95 - 0.5 * impact, 0, -0.18)
+		pose.Neck = CFrame.Angles(0.6 - 0.3 * impact, 0, 0)
+		pose.rate = if impact > 0 then 45 else 20
 	elseif mode == "Recover" then
 		pose.drop, pose.pitch, pose.roll = 1.2, -0.6, 0
 		pose.rate = 16

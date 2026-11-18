@@ -1480,11 +1480,12 @@ end
 -- Bump SettingsVersion when a default changes on purpose; keys listed under
 -- the new version in Migrations are reset to their default for profiles saved
 -- by an older version (everything else a player saved is kept).
-Input.SettingsVersion = 4
+Input.SettingsVersion = 5
 Input.Migrations = {
 	[2] = { "ShowTechLabels" }, -- technique labels are now off by default (less HUD noise)
 	[3] = { "Bindings" }, -- the tech-spec key layout replaces saved rebinds once
 	[4] = { "Bindings" }, -- the six-input core design replaces saved rebinds once
+	[5] = { "ShowComboFeed", "TechDebug" }, -- a clean, broadcast-style screen by default
 } :: { [number]: { string } }
 
 Input.DefaultSettings = {
@@ -1495,7 +1496,7 @@ Input.DefaultSettings = {
 	InvertY = false,
 	FieldOfView = 72,
 	CameraShake = true,
-	ShowComboFeed = true,
+	ShowComboFeed = false, -- the trick-score feed (arcade); off for a clean screen
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	Ability = "AirBurst", -- an id from src/shared/Abilities
@@ -2983,7 +2984,8 @@ Tech.TURN_RATE = {
 -- FEEL: steering harder than the turn rate drifts: every 90° turned while
 -- the stick asks for more than you can turn costs this share of your speed.
 Tech.TURN_DRIFT_LOSS = 0.12
-Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
+Tech.DRIFT_ACCEL_SHARE = 0 -- FEEL: share of acceleration kept while a turn is rate-limited (0: a sharp turn always costs speed)
+Tech.LOW_SPEED_STEER = 1.6 -- FEEL: below TURN_FREE_SPEED you steer by accelerating at this x RUN_ACCEL
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
 Tech.PLAYER_GRAVITY = 175
@@ -3019,6 +3021,8 @@ Tech.PERFECT_CUT_BONUS = 3 -- ... plus this, out of the cut
 Tech.CUT_KEEP = 0.80 -- FEEL: share a Clean (mistimed) cut keeps
 Tech.CUT_SHARP_FROM = 90 -- ° past which a cut keeps less ...
 Tech.CUT_REVERSE_KEEP = 0.65 -- ... down to this share of the keep at a full 180° reversal
+Tech.CUT_TURN_TIME = 0.11 -- FEEL: s a Clean cut takes to swing onto its new line (an arc, not a snap)
+Tech.CUT_TURN_TIME_PERFECT = 0.07 -- ... and a Perfect one
 Tech.CUT_COOLDOWN = 0.35 -- s before the next plant can start
 Tech.CUT_REPEAT_TIME = 0.6 -- s: a cut this soon after the last ...
 Tech.CUT_REPEAT_CAP = 0.85 -- ... keeps at most this (no free zigzags)
@@ -7023,6 +7027,7 @@ export type State = {
 	stickOffAt: number?, -- when the stick was let go (nil while it is pushed)
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
+	redirect: { dir: Vector3, speed: number, rate: number }?, -- a cut's turn in progress (a fast arc, never a snap)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
 	wave: boolean, -- the current slide is a wavedash slide
 	reachHangUntil: number, -- the Sky Reach hang
@@ -7140,6 +7145,7 @@ function TechCore.new(now: number?): State
 		stickOffAt = nil,
 		release = nil,
 		lastCut = nil,
+		redirect = nil,
 		skid = false,
 		wave = false,
 		reachHangUntil = -math.huge,
@@ -7298,6 +7304,7 @@ function TechCore.reset(s: State)
 	s.stickOffAt = nil
 	s.release = nil
 	s.lastCut = nil
+	s.redirect = nil
 	s.skid = false
 	s.wave = false
 	s.reachHangUntil = -math.huge
@@ -7918,8 +7925,12 @@ local function gestureCut(s: State, want: Vector3): Vector3?
 	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
 	s.lastCutAt = s.now
 	s.lastCut = { at = s.now, origDir = r.dir, speed = r.speed }
-	s.heading = want
 	local out = r.speed * keep + bonus
+	-- FEEL: the cut turns you in a fast arc over CUT_TURN_TIME (Perfect:
+	-- CUT_TURN_TIME_PERFECT), keeping the speed, instead of flipping the
+	-- velocity in one frame (which reads as a glitch)
+	local turnTime = if perfect then Config.CUT_TURN_TIME_PERFECT else Config.CUT_TURN_TIME
+	s.redirect = { dir = want, speed = out, rate = math.max(angle / turnTime, 1) }
 	s.cutReport = {
 		quality = if perfect then "Perfect" else "Clean",
 		gapMs = gap * 1000,
@@ -7927,7 +7938,27 @@ local function gestureCut(s: State, want: Vector3): Vector3?
 		kept = if r.speed > 1e-3 then out / r.speed else 1,
 	}
 	emit(s, "Cut", if perfect then "Perfect" else "Clean", want, if mirror then "Mirror" else nil)
-	return want * out
+	return s.heading * out
+end
+
+-- A cut's arc in progress: turn toward its direction at its rate, holding
+-- its speed. Returns the flat velocity, or nil once it is done (or the
+-- stick asks for something else entirely).
+local function stepRedirect(s: State, want: Vector3?, dt: number): Vector3?
+	local rd = s.redirect
+	if rd == nil then
+		return nil
+	end
+	if want and VecMath.flatAngle(want, rd.dir) > Config.CUT_ANGLE then
+		s.redirect = nil -- the stick moved on (a juke is handled by its own rule)
+		return nil
+	end
+	local h = VecMath.rotateToward(s.heading, rd.dir, rd.rate * dt)
+	s.heading = h
+	if VecMath.flatAngle(h, rd.dir) < 0.5 then
+		s.redirect = nil
+	end
+	return h * rd.speed
 end
 
 local function runFlat(s: State, input: Input, dt: number): Vector3
@@ -7987,10 +8018,15 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 			s.lastCut = nil
 		elseif VecMath.flatAngle(lc.origDir, want) <= Config.JUKE_RETURN_ANGLE then
 			s.lastCut = nil
+			s.redirect = nil
 			s.heading = lc.origDir
 			emit(s, "Juke", "Clean", lc.origDir)
 			return lc.origDir * (lc.speed * Config.JUKE_KEEP)
 		end
+	end
+	local arc = stepRedirect(s, want, dt)
+	if arc then
+		return arc
 	end
 	-- Skid: yanking the stick hard round at speed with no plant throws you
 	-- into a skid that eats your speed (the sloppy version of a cut)
@@ -8007,10 +8043,25 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		return flat
 	end
 
-	-- steer
+	-- FEEL: slow, you steer by accelerating toward where you want to go
+	-- (LOW_SPEED_STEER x your acceleration, as a vector): a reversal slows
+	-- you through zero and back, never snaps the body round
 	if speed < Config.TURN_FREE_SPEED then
-		s.heading = want
-	else
+		local targetVel = want * (top * mag)
+		local delta = targetVel - flat
+		-- straight ahead (or from a standstill) it is plain acceleration;
+		-- turning, the extra LOW_SPEED_STEER grip swings you round
+		local turning = speed > 1 and VecMath.flatAngle(s.heading, want) > 30
+		local step = s.accel * (if turning then Config.LOW_SPEED_STEER else 1) * dt
+		local nv = if delta.Magnitude <= step then targetVel else flat + delta.Unit * step
+		if nv.Magnitude > 1e-3 then
+			s.heading = nv.Unit
+		end
+		return nv
+	end
+
+	-- steer
+	do
 		local angle = VecMath.flatAngle(s.heading, want)
 		local maxTurn = TechCore.turnRate(speed) * dt
 		if angle <= maxTurn then
@@ -25876,6 +25927,9 @@ function TrainingService.enterTestField(actor: any)
 		services.TeamService.setTraining(actor, true)
 	end
 	onTestField[actor.id] = true
+	if actor.character then
+		actor.character:SetAttribute("UBTestField", true)
+	end
 	services.PlayerService.setFrozen(actor, false)
 	services.PlayerService.setLine(actor, nil, nil)
 	services.PlayerService.teleport(actor, testField.entry, { face = true })
@@ -25884,6 +25938,9 @@ end
 
 function TrainingService.enter(actor: any)
 	onTestField[actor.id] = nil
+	if actor.character then
+		actor.character:SetAttribute("UBTestField", nil)
+	end
 	if actor.role ~= "Training" then
 		services.TeamService.setTraining(actor, true)
 	end
@@ -25894,6 +25951,9 @@ end
 
 function TrainingService.leave(actor: any)
 	onTestField[actor.id] = nil
+	if actor.character then
+		actor.character:SetAttribute("UBTestField", nil)
+	end
 	TrainingService.stopDrill(actor)
 	if actor.role == "Training" then
 		services.PlayerService.setTeam(actor, "N", "Spectate")
@@ -26295,9 +26355,9 @@ local function buildBar()
 	local b = Theme.panel({
 		Name = "Flow",
 		Parent = gui,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -86),
-		Size = UDim2.fromOffset(220, 8),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -36),
+		Size = UDim2.fromOffset(220, 5),
 		BackgroundTransparency = 0.4,
 	})
 	local f = Instance.new("Frame")
@@ -26309,10 +26369,10 @@ local function buildBar()
 	local l = Theme.label("", 13, {
 		Name = "Name",
 		Parent = gui,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -96),
-		Size = UDim2.fromOffset(300, 18),
-		TextXAlignment = Enum.TextXAlignment.Center,
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -44),
+		Size = UDim2.fromOffset(300, 16),
+		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Theme.Fonts.Heavy,
 		RichText = true,
 	})
@@ -31556,9 +31616,10 @@ local checkContact: (Vector3) -> () -- defined with the tech frame
 -- combo chain and the server, like any technique.
 local function techEvent(e: TechCore.TechEvent)
 	local name = (MovementConfig.TechNames :: any)[e.tech] or e.tech
-	if e.quality == "Perfect" or not QUIET_TECH[e.tech] then
-		local label = if e.quality == "Perfect" then "Perfect " .. name else name
-		controllers.TechFeedback.play(label, e.quality)
+	-- only a Perfect gets words on screen; everything else speaks through
+	-- the body, the sound and GameFeel (a clean screen, like a broadcast)
+	if e.quality == "Perfect" and not QUIET_TECH[e.tech] then
+		controllers.TechFeedback.play("Perfect " .. name, e.quality)
 	end
 	-- the cut's own sound: you can hear a Perfect plant from a Clean one
 	if e.tech == "Cut" then
@@ -32329,6 +32390,8 @@ type Leg = {
 type Rig = {
 	wasHolding: boolean,
 	caughtAt: number,
+	modeNow: string, -- the movement mode last frame ...
+	modeAt: number, -- ... and when it began (the layout's phases)
 	model: Model,
 	root: BasePart,
 	humanoid: Humanoid,
@@ -32399,6 +32462,8 @@ local SHUFFLE_LIFT = 0.3
 local NINJA_FROM = 31 -- studs/s: the anime sprint starts past a run's top speed
 local NINJA_FULL = 40
 local CAST_TIME = 0.6 -- s of the ability cast pose
+local DIVE_LAUNCH = 0.09 -- s of the layout's launch before the full stretch
+local DIVE_IMPACT = 0.14 -- s of the chest-first impact squash on landing
 
 local function now(): number
 	return Net.now()
@@ -32577,6 +32642,8 @@ local function buildRig(model: Model): Rig?
 		history = {},
 		wasHolding = false,
 		caughtAt = -math.huge,
+		modeNow = "",
+		modeAt = -math.huge,
 		smoothVel = Vector3.new(vel.X, 0, vel.Z),
 		shufflePhase = 0,
 		msShown = "Ground",
@@ -32644,6 +32711,7 @@ type Ctx = {
 	leftHanded: boolean,
 	lookAt: Vector3?, -- local space
 	castAge: number, -- s since this body cast an ability (UBAbilityT)
+	modeAge: number, -- s since the movement mode began (the layout's phases)
 	catchAge: number, -- s since this body caught the disc (HasDisc went true)
 }
 
@@ -32715,6 +32783,7 @@ local function gather(rig: Rig, dt: number): Ctx
 		leftHanded = m:GetAttribute("LeftHanded") == true,
 		lookAt = nil,
 		castAge = t - attrNumber(m, "UBAbilityT"),
+		modeAge = 0,
 		catchAge = math.huge,
 	}
 	-- the catch: the moment HasDisc turns on
@@ -32728,7 +32797,9 @@ local function gather(rig: Rig, dt: number): Ctx
 	if rig.isLocal then
 		local mc = controllers.MovementController
 		local sim = mc.sim()
-		vel = flat(sim.vel)
+		-- your body moves on the tech core: its velocity drives every lean
+		-- (the old sim no longer moves and always read zero here)
+		vel = flat(mc.techState().vel)
 		local raw = (vel - rig.lastVel) / math.max(dt, 1 / 240)
 		rig.lastVel = vel
 		if raw.Magnitude > 400 then
@@ -32813,6 +32884,11 @@ local function gather(rig: Rig, dt: number): Ctx
 		end
 	end
 	ctx.grounded = GROUNDED_MODES[ctx.mode] == true
+	if ctx.mode ~= rig.modeNow then
+		rig.modeNow = ctx.mode
+		rig.modeAt = t
+	end
+	ctx.modeAge = t - rig.modeAt
 	ctx.speed = vel.Magnitude
 	local localVel = toLocal(root, vel)
 	ctx.localVel = Vector3.new(localVel.X, 0, localVel.Z)
@@ -33050,17 +33126,41 @@ local function compute(ctx: Ctx): Pose
 		pose.LShoulder = CFrame.Angles(1.4, 0, -0.3)
 		pose.rate = 30
 	elseif mode == "Dive" then
-		pose.drop, pose.pitch, pose.roll = 0.5, -1.35, 0
+		-- THE LAYOUT, in phases (DIVE_* below):
+		--   launch   the body tips forward off the plant foot, arms swinging
+		--            up from the hips, chin down
+		--   flight   fully stretched out flat, both arms straight at the
+		--            disc, head up looking along them, a twist toward the
+		--            side you dove to
+		local a = ctx.modeAge
+		local side = math.clamp(ctx.localVel.X / 12, -1, 1)
+		if a < DIVE_LAUNCH then
+			local u = a / DIVE_LAUNCH
+			pose.drop, pose.pitch, pose.roll = 0.35, -0.55 - 0.7 * u, -side * 0.2 * u
+			pose.RShoulder = CFrame.Angles(0.8 + 2.0 * u, 0, 0.25)
+			pose.LShoulder = CFrame.Angles(0.8 + 2.0 * u, 0, -0.25)
+			pose.Neck = CFrame.Angles(-0.25, 0, 0)
+			pose.rate = 40
+		else
+			pose.drop, pose.pitch, pose.roll = 0.4, -1.5, -side * 0.35
+			pose.RShoulder = CFrame.Angles(3.05, 0, 0.08)
+			pose.LShoulder = CFrame.Angles(3.05, 0, -0.08)
+			pose.Neck = CFrame.Angles(0.75, 0, 0) -- eyes on the disc
+			pose.Waist = CFrame.Angles(0, -side * 0.25, 0)
+			pose.rate = 24
+		end
 		pose.legs = "none"
-		pose.RShoulder = CFrame.Angles(2.95, 0, 0.12)
-		pose.LShoulder = CFrame.Angles(2.95, 0, -0.12)
-		pose.rate = 18
 	elseif mode == "DiveSlide" then
-		pose.drop, pose.pitch, pose.roll = 2.1, -1.47, 0
+		-- the landing: chest-first impact (a squash), then the belly slide
+		-- with the arms still out front and the head up
+		local a = ctx.modeAge
+		local impact = math.clamp(1 - a / DIVE_IMPACT, 0, 1)
+		pose.drop, pose.pitch, pose.roll = 2.1 + 0.35 * impact, -1.5 + 0.12 * impact, 0
 		pose.legs = "none"
-		pose.RShoulder = CFrame.Angles(2.95, 0, 0.12)
-		pose.LShoulder = CFrame.Angles(2.95, 0, -0.12)
-		pose.rate = 22
+		pose.RShoulder = CFrame.Angles(2.95 - 0.5 * impact, 0, 0.18)
+		pose.LShoulder = CFrame.Angles(2.95 - 0.5 * impact, 0, -0.18)
+		pose.Neck = CFrame.Angles(0.6 - 0.3 * impact, 0, 0)
+		pose.rate = if impact > 0 then 45 else 20
 	elseif mode == "Recover" then
 		pose.drop, pose.pitch, pose.roll = 1.2, -0.6, 0
 		pose.rate = 16
@@ -35545,23 +35645,27 @@ function Hud.build(parent: ScreenGui, c: any)
 	refs.wind = wind
 
 	-- exertion + cooldown pips ---------------------------------------------
+	-- your sprint meter: a thin bar in the bottom-left corner (broadcast
+	-- style: the middle of the screen stays the field), shown only while it
+	-- is not full
 	local bottom = make("Frame", {
 		Name = "Body",
 		BackgroundTransparency = 1,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -18),
-		Size = UDim2.fromOffset(410, 46),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -22),
+		Size = UDim2.fromOffset(220, 8),
 		Parent = parent,
 	})
+	refs.body = bottom
 	local barBack = make("Frame", {
 		Name = "ExertionBack",
 		BackgroundColor3 = C.Panel,
 		BackgroundTransparency = 0.3,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 1, -8),
-		Size = UDim2.new(1, 0, 0, 8),
+		Position = UDim2.new(0, 0, 1, -6),
+		Size = UDim2.new(1, 0, 0, 6),
 		Parent = bottom,
-		Theme.corner(4),
+		Theme.corner(3),
 	})
 	refs.exertion = make("Frame", {
 		Name = "Exertion",
@@ -35587,6 +35691,7 @@ function Hud.build(parent: ScreenGui, c: any)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 30),
 		Parent = bottom,
+		Visible = false, -- (the old engine's cooldown pips: nothing on the tech engine)
 		Theme.list(8, true),
 	});
 	(pipRow:FindFirstChildOfClass("UIListLayout") :: UIListLayout).HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -35688,8 +35793,8 @@ function Hud.build(parent: ScreenGui, c: any)
 	refs.feedback = Theme.label("", 20, {
 		Name = "Feedback",
 		Parent = parent,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -90),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 132),
 		Size = UDim2.fromOffset(700, 26),
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextStrokeTransparency = 0.5,
@@ -35750,9 +35855,10 @@ function Hud.build(parent: ScreenGui, c: any)
 	})
 
 	-- stall + mark chip ------------------------------------------------------------
-	local stall = pill(parent, "Stall", UDim2.new(0.5, 0, 1, -150), UDim2.fromOffset(180, 46), Vector2.new(0.5, 1))
+	-- the stall count sits under the scoreboard, like a broadcast graphic
+	local stall = pill(parent, "Stall", UDim2.new(0.5, 0, 0, 92), UDim2.fromOffset(150, 34), Vector2.new(0.5, 0))
 	stall.Visible = false
-	refs.stallText = Theme.label("STALL 0", 26, {
+	refs.stallText = Theme.label("STALL 0", 20, {
 		Parent = stall,
 		Size = UDim2.fromScale(1, 1),
 		TextXAlignment = Enum.TextXAlignment.Center,
@@ -35964,6 +36070,7 @@ end
 
 function Hud.setHint(text: string)
 	refs.hint.Text = text
+	refs.hint.Visible = false -- key hints live in Menu -> Controls, not on the field
 end
 
 ---------------------------------------------------------------------------
@@ -36242,6 +36349,7 @@ function Hud.update(_dt: number)
 	local techOn = movement.engine() == "Tech"
 	local low = if techOn then movement.techState().burstLocked else sim.exertion < LOW_EXERTION
 	bar.BackgroundTransparency = if low then 0.3 + 0.3 * math.sin(clock * 9) else 0
+	refs.body.Visible = ex < 0.995 or low
 	refs.exertionHint.Visible = low and not techOn
 	if low then
 		refs.exertionHint.Text = exertionHint()
@@ -36285,7 +36393,8 @@ function Hud.update(_dt: number)
 	local inPlay = phase == "Live" and type(holderId) == "number" and holderId ~= 0
 	-- the holder always sees the count (it runs with or without a marker)
 	local involved = holderId == player.UserId or state:GetAttribute("MarkerId") == player.UserId
-	refs.stall.Visible = inPlay and involved
+	-- everyone on the field sees the count (it is part of the game state)
+	refs.stall.Visible = inPlay and (involved or myTeam == "A" or myTeam == "B")
 	if inPlay then
 		local text = "STALL " .. tostring(stall)
 		if stallState == "DoubleTeam" then
@@ -36304,7 +36413,7 @@ function Hud.update(_dt: number)
 
 	-- mark chip: your hands and the side your team forces
 	local marking = controllers.CatchController.isMarking()
-	refs.mark.Visible = marking
+	refs.mark.Visible = false -- your stance is on your body; no chip
 	if marking then
 		local stance = string.upper(controllers.CatchController.markStance())
 		local force = state:GetAttribute(if myTeam == "B" then "ForceB" else "ForceA")
@@ -38720,11 +38829,11 @@ local function visible(): boolean
 	if controllers.MovementController.engine() ~= "Tech" then
 		return false
 	end
-	-- always in Studio and in the Training hall (the timing bar is how a
-	-- tight window becomes learnable), otherwise a setting
+	-- on the test field (the timing readout is how a tight window becomes
+	-- learnable), otherwise only when switched on in Settings
 	local c = game:GetService("Players").LocalPlayer.Character
-	local training = c ~= nil and c:GetAttribute("UBRole") == "Training"
-	return RunService:IsStudio() or training or controllers.SettingsController.get("TechDebug") == true
+	local testField = c ~= nil and c:GetAttribute("UBTestField") == true
+	return testField or controllers.SettingsController.get("TechDebug") == true
 end
 
 local function bar(value: number): string

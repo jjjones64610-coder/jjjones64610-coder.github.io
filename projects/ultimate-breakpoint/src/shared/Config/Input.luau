@@ -132,11 +132,12 @@ end
 -- Bump SettingsVersion when a default changes on purpose; keys listed under
 -- the new version in Migrations are reset to their default for profiles saved
 -- by an older version (everything else a player saved is kept).
-Input.SettingsVersion = 4
+Input.SettingsVersion = 5
 Input.Migrations = {
 	[2] = { "ShowTechLabels" }, -- technique labels are now off by default (less HUD noise)
 	[3] = { "Bindings" }, -- the tech-spec key layout replaces saved rebinds once
 	[4] = { "Bindings" }, -- the six-input core design replaces saved rebinds once
+	[5] = { "ShowComboFeed", "TechDebug" }, -- a clean, broadcast-style screen by default
 } :: { [number]: { string } }
 
 Input.DefaultSettings = {
@@ -147,7 +148,7 @@ Input.DefaultSettings = {
 	InvertY = false,
 	FieldOfView = 72,
 	CameraShake = true,
-	ShowComboFeed = true,
+	ShowComboFeed = false, -- the trick-score feed (arcade); off for a clean screen
 	ShowTechLabels = false,
 	ShowHitboxes = false, -- draw everyone's fixed hitbox (Config/Hitbox)
 	Ability = "AirBurst", -- an id from src/shared/Abilities

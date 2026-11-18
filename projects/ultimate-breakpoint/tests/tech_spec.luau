@@ -110,11 +110,19 @@ test("turn rate curve matches the spec points", function()
 	expect(R[1].rate > R[2].rate and R[2].rate > R[3].rate, "faster turns slower")
 end)
 
-test("turning is instant when slow", function()
+test("slow turns are quick but never a one-frame snap; a slow reversal goes through a stop", function()
 	local s = moving(10)
 	TechCore.step(s, { move = RIGHT }, GROUND, TechCore.STEP)
-	local dir = s.vel.Unit
-	expect(dir:Dot(RIGHT) > 0.999, "a jog turns on the spot")
+	expect(s.vel.Unit:Dot(RIGHT) < 0.9, "no single-frame snap")
+	run(s, RIGHT, GROUND, 0.2)
+	expect(s.vel.Unit:Dot(RIGHT) > 0.99, "a jog is round within 0.2 s")
+	local r = moving(10)
+	local slowest = math.huge
+	for _ = 1, 60 do
+		TechCore.step(r, { move = -FWD }, GROUND, TechCore.STEP)
+		slowest = math.min(slowest, TechCore.flatSpeed(r))
+	end
+	expect(slowest < 2 and r.vel.Unit:Dot(-FWD) > 0.99, "reversed by slowing through zero")
 end)
 
 test("fast turns are rate-limited and drifting costs speed", function()
@@ -440,7 +448,9 @@ test("cut: a Perfect let-go keeps 100 % + 3, a mistimed one keeps CUT_KEEP", fun
 	letGoThen(w, 0.08, RIGHT)
 	local cuts = events(w.s, "Cut")
 	expect(#cuts == 1 and cuts[1].quality == "Perfect", "a Perfect cut")
-	expect(w.s.vel.Unit:Dot(RIGHT) > 0.99, "goes the new way at once")
+	expect(w.s.vel.Unit:Dot(RIGHT) < 0.9, "it swings round in an arc, not in one frame")
+	worldRun(w, Config.CUT_TURN_TIME_PERFECT + 0.02)
+	expect(w.s.vel.Unit:Dot(RIGHT) > 0.99, "on the new line within CUT_TURN_TIME_PERFECT")
 	expect(
 		near(TechCore.flatSpeed(w.s), Config.RUN_TOP_SPEED + Config.PERFECT_CUT_BONUS, 0.6),
 		"keeps it all + 3: " .. TechCore.flatSpeed(w.s)

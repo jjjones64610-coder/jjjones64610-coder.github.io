@@ -1895,6 +1895,9 @@ function TrainingService.enterTestField(actor: any)
 		services.TeamService.setTraining(actor, true)
 	end
 	onTestField[actor.id] = true
+	if actor.character then
+		actor.character:SetAttribute("UBTestField", true)
+	end
 	services.PlayerService.setFrozen(actor, false)
 	services.PlayerService.setLine(actor, nil, nil)
 	services.PlayerService.teleport(actor, testField.entry, { face = true })
@@ -1903,6 +1906,9 @@ end
 
 function TrainingService.enter(actor: any)
 	onTestField[actor.id] = nil
+	if actor.character then
+		actor.character:SetAttribute("UBTestField", nil)
+	end
 	if actor.role ~= "Training" then
 		services.TeamService.setTraining(actor, true)
 	end
@@ -1913,6 +1919,9 @@ end
 
 function TrainingService.leave(actor: any)
 	onTestField[actor.id] = nil
+	if actor.character then
+		actor.character:SetAttribute("UBTestField", nil)
+	end
 	TrainingService.stopDrill(actor)
 	if actor.role == "Training" then
 		services.PlayerService.setTeam(actor, "N", "Spectate")

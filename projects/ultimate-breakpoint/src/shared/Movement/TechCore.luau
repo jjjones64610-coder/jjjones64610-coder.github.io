@@ -145,6 +145,7 @@ export type State = {
 	stickOffAt: number?, -- when the stick was let go (nil while it is pushed)
 	release: { at: number, speed: number, dir: Vector3 }?, -- the stick let go at speed (a plant)
 	lastCut: { at: number, origDir: Vector3, speed: number }?, -- the last cut (a juke can undo it)
+	redirect: { dir: Vector3, speed: number, rate: number }?, -- a cut's turn in progress (a fast arc, never a snap)
 	skid: boolean, -- the current slide is a skid from a hard turn with no plant
 	wave: boolean, -- the current slide is a wavedash slide
 	reachHangUntil: number, -- the Sky Reach hang
@@ -262,6 +263,7 @@ function TechCore.new(now: number?): State
 		stickOffAt = nil,
 		release = nil,
 		lastCut = nil,
+		redirect = nil,
 		skid = false,
 		wave = false,
 		reachHangUntil = -math.huge,
@@ -420,6 +422,7 @@ function TechCore.reset(s: State)
 	s.stickOffAt = nil
 	s.release = nil
 	s.lastCut = nil
+	s.redirect = nil
 	s.skid = false
 	s.wave = false
 	s.reachHangUntil = -math.huge
@@ -1040,8 +1043,12 @@ local function gestureCut(s: State, want: Vector3): Vector3?
 	s.cutReadyAt = s.now + Config.CUT_COOLDOWN
 	s.lastCutAt = s.now
 	s.lastCut = { at = s.now, origDir = r.dir, speed = r.speed }
-	s.heading = want
 	local out = r.speed * keep + bonus
+	-- FEEL: the cut turns you in a fast arc over CUT_TURN_TIME (Perfect:
+	-- CUT_TURN_TIME_PERFECT), keeping the speed, instead of flipping the
+	-- velocity in one frame (which reads as a glitch)
+	local turnTime = if perfect then Config.CUT_TURN_TIME_PERFECT else Config.CUT_TURN_TIME
+	s.redirect = { dir = want, speed = out, rate = math.max(angle / turnTime, 1) }
 	s.cutReport = {
 		quality = if perfect then "Perfect" else "Clean",
 		gapMs = gap * 1000,
@@ -1049,7 +1056,27 @@ local function gestureCut(s: State, want: Vector3): Vector3?
 		kept = if r.speed > 1e-3 then out / r.speed else 1,
 	}
 	emit(s, "Cut", if perfect then "Perfect" else "Clean", want, if mirror then "Mirror" else nil)
-	return want * out
+	return s.heading * out
+end
+
+-- A cut's arc in progress: turn toward its direction at its rate, holding
+-- its speed. Returns the flat velocity, or nil once it is done (or the
+-- stick asks for something else entirely).
+local function stepRedirect(s: State, want: Vector3?, dt: number): Vector3?
+	local rd = s.redirect
+	if rd == nil then
+		return nil
+	end
+	if want and VecMath.flatAngle(want, rd.dir) > Config.CUT_ANGLE then
+		s.redirect = nil -- the stick moved on (a juke is handled by its own rule)
+		return nil
+	end
+	local h = VecMath.rotateToward(s.heading, rd.dir, rd.rate * dt)
+	s.heading = h
+	if VecMath.flatAngle(h, rd.dir) < 0.5 then
+		s.redirect = nil
+	end
+	return h * rd.speed
 end
 
 local function runFlat(s: State, input: Input, dt: number): Vector3
@@ -1109,10 +1136,15 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 			s.lastCut = nil
 		elseif VecMath.flatAngle(lc.origDir, want) <= Config.JUKE_RETURN_ANGLE then
 			s.lastCut = nil
+			s.redirect = nil
 			s.heading = lc.origDir
 			emit(s, "Juke", "Clean", lc.origDir)
 			return lc.origDir * (lc.speed * Config.JUKE_KEEP)
 		end
+	end
+	local arc = stepRedirect(s, want, dt)
+	if arc then
+		return arc
 	end
 	-- Skid: yanking the stick hard round at speed with no plant throws you
 	-- into a skid that eats your speed (the sloppy version of a cut)
@@ -1129,10 +1161,25 @@ local function runFlat(s: State, input: Input, dt: number): Vector3
 		return flat
 	end
 
-	-- steer
+	-- FEEL: slow, you steer by accelerating toward where you want to go
+	-- (LOW_SPEED_STEER x your acceleration, as a vector): a reversal slows
+	-- you through zero and back, never snaps the body round
 	if speed < Config.TURN_FREE_SPEED then
-		s.heading = want
-	else
+		local targetVel = want * (top * mag)
+		local delta = targetVel - flat
+		-- straight ahead (or from a standstill) it is plain acceleration;
+		-- turning, the extra LOW_SPEED_STEER grip swings you round
+		local turning = speed > 1 and VecMath.flatAngle(s.heading, want) > 30
+		local step = s.accel * (if turning then Config.LOW_SPEED_STEER else 1) * dt
+		local nv = if delta.Magnitude <= step then targetVel else flat + delta.Unit * step
+		if nv.Magnitude > 1e-3 then
+			s.heading = nv.Unit
+		end
+		return nv
+	end
+
+	-- steer
+	do
 		local angle = VecMath.flatAngle(s.heading, want)
 		local maxTurn = TechCore.turnRate(speed) * dt
 		if angle <= maxTurn then

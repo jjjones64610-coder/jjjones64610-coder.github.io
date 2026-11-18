@@ -80,7 +80,15 @@ Regenerate the throw table in DESIGN §5.1 with `lune run tests/flight_table.lua
 4. View → Output open. `[Breakpoint] X.Init/Start failed` or
    `MOVEMENT ERROR` is a bug: copy it.
 
-### STAGE 8 — Multiplayer (docs/CORE_DESIGN.md) ← test this now (with stages 1-7)
+### FEEL PASS 1 (after the first full playtest) ← test this first
+Fixed from your notes: "turning is jank", "no animation for laying out", "everything on the bottom".
+- [ ] **Leaning is back:** your body leans into turns and accelerations and pitches low at a sprint. (Bug: the pose system read your speed from the retired movement engine, so to it you were always standing still.)
+- [ ] **Turning:** at a jog you turn quickly but smoothly, and a reversal slows you through a stop instead of spinning you on the spot. A cut swings you onto the new line in a fast arc (0.07 s Perfect, 0.11 s Clean) instead of flipping your velocity in one frame. Wide turns at speed still keep momentum; sharp ones still cost speed.
+- [ ] **The layout:** jump, Space + a direction: the body tips forward off the foot with the arms swinging up, then stretches out flat, arms straight at the disc, head up, twisted toward the side you dove. On landing a chest-first squash, then the belly slide with the head up.
+- [ ] **A clean screen:** nothing in the bottom middle. Your sprint bar is a thin line bottom-left (only while it is not full), with the ability bar just above it. The stall count sits under the scoreboard for everyone. No mark chip, no key hints, no trick-score feed (Settings can turn it back on), no debug readout outside the Test Field, and only Perfect moves put words on screen.
+- If the layout or the leans still don't show: open **View → Output** in Studio, play, and send me any red lines, especially ones starting with `[PoseController]`. I can't run Studio from here, so that log is the fastest way for me to see what your screen sees.
+
+### STAGE 8 — Multiplayer (docs/CORE_DESIGN.md)
 This is the one stage that needs more than one player. In Studio: **Test → Clients and Servers**, pick
 **2 players** (then 4), Start. Each client gets its own window. Then repeat with lag:
 **File → Studio Settings → Network → Incoming Replication Lag = 0.15** (a typical 150 ms player).

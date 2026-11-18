@@ -169,9 +169,9 @@ local function buildBar()
 	local b = Theme.panel({
 		Name = "Flow",
 		Parent = gui,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -86),
-		Size = UDim2.fromOffset(220, 8),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -36),
+		Size = UDim2.fromOffset(220, 5),
 		BackgroundTransparency = 0.4,
 	})
 	local f = Instance.new("Frame")
@@ -183,10 +183,10 @@ local function buildBar()
 	local l = Theme.label("", 13, {
 		Name = "Name",
 		Parent = gui,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -96),
-		Size = UDim2.fromOffset(300, 18),
-		TextXAlignment = Enum.TextXAlignment.Center,
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -44),
+		Size = UDim2.fromOffset(300, 16),
+		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Theme.Fonts.Heavy,
 		RichText = true,
 	})

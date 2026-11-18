@@ -47,7 +47,8 @@ Tech.TURN_RATE = {
 -- FEEL: steering harder than the turn rate drifts: every 90° turned while
 -- the stick asks for more than you can turn costs this share of your speed.
 Tech.TURN_DRIFT_LOSS = 0.12
-Tech.DRIFT_ACCEL_SHARE = 0 -- accel while a turn is rate-limited (0: a fast turn always costs)
+Tech.DRIFT_ACCEL_SHARE = 0 -- FEEL: share of acceleration kept while a turn is rate-limited (0: a sharp turn always costs speed)
+Tech.LOW_SPEED_STEER = 1.6 -- FEEL: below TURN_FREE_SPEED you steer by accelerating at this x RUN_ACCEL
 
 -- gravity (the player's own; the disc has DISC_GRAVITY)
 Tech.PLAYER_GRAVITY = 175
@@ -83,6 +84,8 @@ Tech.PERFECT_CUT_BONUS = 3 -- ... plus this, out of the cut
 Tech.CUT_KEEP = 0.80 -- FEEL: share a Clean (mistimed) cut keeps
 Tech.CUT_SHARP_FROM = 90 -- ° past which a cut keeps less ...
 Tech.CUT_REVERSE_KEEP = 0.65 -- ... down to this share of the keep at a full 180° reversal
+Tech.CUT_TURN_TIME = 0.11 -- FEEL: s a Clean cut takes to swing onto its new line (an arc, not a snap)
+Tech.CUT_TURN_TIME_PERFECT = 0.07 -- ... and a Perfect one
 Tech.CUT_COOLDOWN = 0.35 -- s before the next plant can start
 Tech.CUT_REPEAT_TIME = 0.6 -- s: a cut this soon after the last ...
 Tech.CUT_REPEAT_CAP = 0.85 -- ... keeps at most this (no free zigzags)

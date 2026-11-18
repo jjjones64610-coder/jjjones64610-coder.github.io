@@ -46,11 +46,11 @@ local function visible(): boolean
 	if controllers.MovementController.engine() ~= "Tech" then
 		return false
 	end
-	-- always in Studio and in the Training hall (the timing bar is how a
-	-- tight window becomes learnable), otherwise a setting
+	-- on the test field (the timing readout is how a tight window becomes
+	-- learnable), otherwise only when switched on in Settings
 	local c = game:GetService("Players").LocalPlayer.Character
-	local training = c ~= nil and c:GetAttribute("UBRole") == "Training"
-	return RunService:IsStudio() or training or controllers.SettingsController.get("TechDebug") == true
+	local testField = c ~= nil and c:GetAttribute("UBTestField") == true
+	return testField or controllers.SettingsController.get("TechDebug") == true
 end
 
 local function bar(value: number): string

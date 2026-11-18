@@ -261,23 +261,27 @@ function Hud.build(parent: ScreenGui, c: any)
 	refs.wind = wind
 
 	-- exertion + cooldown pips ---------------------------------------------
+	-- your sprint meter: a thin bar in the bottom-left corner (broadcast
+	-- style: the middle of the screen stays the field), shown only while it
+	-- is not full
 	local bottom = make("Frame", {
 		Name = "Body",
 		BackgroundTransparency = 1,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -18),
-		Size = UDim2.fromOffset(410, 46),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -22),
+		Size = UDim2.fromOffset(220, 8),
 		Parent = parent,
 	})
+	refs.body = bottom
 	local barBack = make("Frame", {
 		Name = "ExertionBack",
 		BackgroundColor3 = C.Panel,
 		BackgroundTransparency = 0.3,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 1, -8),
-		Size = UDim2.new(1, 0, 0, 8),
+		Position = UDim2.new(0, 0, 1, -6),
+		Size = UDim2.new(1, 0, 0, 6),
 		Parent = bottom,
-		Theme.corner(4),
+		Theme.corner(3),
 	})
 	refs.exertion = make("Frame", {
 		Name = "Exertion",
@@ -303,6 +307,7 @@ function Hud.build(parent: ScreenGui, c: any)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 30),
 		Parent = bottom,
+		Visible = false, -- (the old engine's cooldown pips: nothing on the tech engine)
 		Theme.list(8, true),
 	});
 	(pipRow:FindFirstChildOfClass("UIListLayout") :: UIListLayout).HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -404,8 +409,8 @@ function Hud.build(parent: ScreenGui, c: any)
 	refs.feedback = Theme.label("", 20, {
 		Name = "Feedback",
 		Parent = parent,
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -90),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 132),
 		Size = UDim2.fromOffset(700, 26),
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextStrokeTransparency = 0.5,
@@ -466,9 +471,10 @@ function Hud.build(parent: ScreenGui, c: any)
 	})
 
 	-- stall + mark chip ------------------------------------------------------------
-	local stall = pill(parent, "Stall", UDim2.new(0.5, 0, 1, -150), UDim2.fromOffset(180, 46), Vector2.new(0.5, 1))
+	-- the stall count sits under the scoreboard, like a broadcast graphic
+	local stall = pill(parent, "Stall", UDim2.new(0.5, 0, 0, 92), UDim2.fromOffset(150, 34), Vector2.new(0.5, 0))
 	stall.Visible = false
-	refs.stallText = Theme.label("STALL 0", 26, {
+	refs.stallText = Theme.label("STALL 0", 20, {
 		Parent = stall,
 		Size = UDim2.fromScale(1, 1),
 		TextXAlignment = Enum.TextXAlignment.Center,
@@ -680,6 +686,7 @@ end
 
 function Hud.setHint(text: string)
 	refs.hint.Text = text
+	refs.hint.Visible = false -- key hints live in Menu -> Controls, not on the field
 end
 
 ---------------------------------------------------------------------------
@@ -958,6 +965,7 @@ function Hud.update(_dt: number)
 	local techOn = movement.engine() == "Tech"
 	local low = if techOn then movement.techState().burstLocked else sim.exertion < LOW_EXERTION
 	bar.BackgroundTransparency = if low then 0.3 + 0.3 * math.sin(clock * 9) else 0
+	refs.body.Visible = ex < 0.995 or low
 	refs.exertionHint.Visible = low and not techOn
 	if low then
 		refs.exertionHint.Text = exertionHint()
@@ -1001,7 +1009,8 @@ function Hud.update(_dt: number)
 	local inPlay = phase == "Live" and type(holderId) == "number" and holderId ~= 0
 	-- the holder always sees the count (it runs with or without a marker)
 	local involved = holderId == player.UserId or state:GetAttribute("MarkerId") == player.UserId
-	refs.stall.Visible = inPlay and involved
+	-- everyone on the field sees the count (it is part of the game state)
+	refs.stall.Visible = inPlay and (involved or myTeam == "A" or myTeam == "B")
 	if inPlay then
 		local text = "STALL " .. tostring(stall)
 		if stallState == "DoubleTeam" then
@@ -1020,7 +1029,7 @@ function Hud.update(_dt: number)
 
 	-- mark chip: your hands and the side your team forces
 	local marking = controllers.CatchController.isMarking()
-	refs.mark.Visible = marking
+	refs.mark.Visible = false -- your stance is on your body; no chip
 	if marking then
 		local stance = string.upper(controllers.CatchController.markStance())
 		local force = state:GetAttribute(if myTeam == "B" then "ForceB" else "ForceA")
