@@ -7,44 +7,52 @@ description: Hourly job that finds the most entertaining moments (lead-up, insan
 
 Work through these steps in order, without asking questions. Keep tool output short.
 
+Use the Google Drive connector's `search_files` and `create_file` tools. Their names may carry a prefix
+such as `mcp__Google_Drive__` or an ID; load them with ToolSearch query "Google Drive" if needed.
+
+All work files go in `.claude/skills/stream-clipper/out/` inside the repository checkout (git-ignored). Uploads
+can only read files inside the checkout, so never write clips to `/tmp`.
+
 Google Drive folders (IDs are fixed):
 - Clips: `1wadwRJJpSrJ6hxU9QIYETdvKuhoQCfOs`
 - Reports: `1Ar0xk5s3Wfa--r04NnoBcDNjhBugLAd4`
 
 ## 1. Collect what was already done
 
-Call `mcp__Google_Drive__search_files` twice with `excludeContentSnippets: true` and `pageSize: 100`, using a
+Call `search_files` twice with `excludeContentSnippets: true` and `pageSize: 100`, using a
 cutoff of 3 days ago in RFC 3339 UTC:
 
 - `parentId = '1wadwRJJpSrJ6hxU9QIYETdvKuhoQCfOs' and createdTime > '<cutoff>'`
 - `parentId = '1Ar0xk5s3Wfa--r04NnoBcDNjhBugLAd4' and createdTime > '<cutoff>'`
 
-Write every returned `title`, one per line, to `/tmp/clipper/seen.txt` (create the folder; an empty file is fine).
+Start fresh: `cd "$(git rev-parse --show-toplevel)" && rm -rf .claude/skills/stream-clipper/out && mkdir -p .claude/skills/stream-clipper/out`.
+Write every returned `title`, one per line, to `.claude/skills/stream-clipper/out/seen.txt` (an empty file is fine).
 
 ## 2. Run the clipper
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 command -v yt-dlp >/dev/null || pip install -q "yt-dlp[default]"
-timeout 2400 python3 .claude/skills/stream-clipper/clipper.py --out /tmp/clipper/out --seen /tmp/clipper/seen.txt
+O="$PWD/.claude/skills/stream-clipper/out"
+timeout 2400 python3 .claude/skills/stream-clipper/clipper.py --out "$O" --seen "$O/seen.txt"
 ```
 
 Run it in the foreground with a 40-minute timeout. Progress lines start with `[clipper]`. When it ends, read
-`/tmp/clipper/out/manifest.json`.
+`.claude/skills/stream-clipper/out/manifest.json`. Clip `path` values in it are absolute paths inside the checkout.
 
 ## 3. Upload
 
-For each entry in `clips`, call `mcp__Google_Drive__create_file` with:
+For each entry in `clips`, call `create_file` with:
 - `title`: the entry's `drive_title`
 - `parentId`: `1wadwRJJpSrJ6hxU9QIYETdvKuhoQCfOs`
 - `contentMimeType`: `video/mp4`, `disableConversionToGoogleType`: true
 - `base64Content`: `sha256:<entry.sha256>:<entry.path>` (a file reference; do not base64 the file yourself)
 
-For each entry in `reports`, call `mcp__Google_Drive__create_file` with its `title`, `parentId`
+For each entry in `reports`, call `create_file` with its `title`, `parentId`
 `1Ar0xk5s3Wfa--r04NnoBcDNjhBugLAd4`, `textContent` set to its `text`, `contentMimeType` `text/plain` and
 `disableConversionToGoogleType` true.
 
-Upload one file per call. If an upload fails, note it and continue with the rest.
+Upload the clips first, then the reports, one file per call. If an upload fails, note the error message and continue.
 
 ## 4. Finish
 
