@@ -1,0 +1,9 @@
+# Channels the stream clipper follows. One per line:
+#   platform:name | what makes a great clip for this streamer
+# platform is twitch (login name) or youtube (@handle). Lines starting with # are ignored.
+twitch:jynxzi | Raging. Rainbow Six Siege tilt, screaming at teammates or the game, desk-slamming meltdowns. The angrier and louder the reaction, the better.
+twitch:kaicenat | Hype and chaos. Huge reactions, crazy guests and stunts, laughing fits, the whole room losing it.
+twitch:caseoh_ | Funny meltdowns. Rage-quits, getting jumpscared, comedic frustration, ridiculous banter with chat.
+twitch:xqc | Unhinged reactions. Fast-talking blowups, jumping out of his chair, shock at what he's watching or playing.
+twitch:shroud | Insane plays. Cracked aim, impossible clutches and multi-kills, then his calm-or-hyped reaction.
+youtube:@IShowSpeed | W Speed. Chaotic IRL moments, screaming, barking, backflips, celebrations, crowds going wild, anything that makes him lose his mind.
