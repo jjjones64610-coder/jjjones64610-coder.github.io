@@ -138,7 +138,7 @@ def gemini_model() -> str:
     return os.environ.get('CLIPPER_GEMINI_MODEL') or os.environ.get('WATCH_GEMINI_MODEL') or 'gemini-3.7-flash'
 
 
-def with_retries(fn, what: str, attempts: int = 3):
+def with_retries(fn, what: str, attempts: int = 4):
     """Retry Gemini calls that fail from network drops or server errors."""
     for attempt in range(1, attempts + 1):
         try:
@@ -148,7 +148,7 @@ def with_retries(fn, what: str, attempts: int = 3):
             transient = text.startswith(('Gemini network', 'Gemini service', 'Gemini quota'))
             if not transient or attempt == attempts:
                 raise
-            wait = 20 * attempt
+            wait = 30 * attempt
             log(f'{what}: {text.split(". Detail:")[0]}; retrying in {wait}s ({attempt}/{attempts - 1})')
             time.sleep(wait)
 
@@ -281,7 +281,16 @@ def judge_window(gem, key: str, path: Path, channel: dict, clip: dict, window_le
         '"why": "one sentence on what happens and the reaction"}. Times are seconds from the start of THIS '
         'video. Set keep to false if nothing here is genuinely entertaining.'
     )
-    uploaded = with_retries(lambda: gem.upload_file(path, key), f'upload {path.name}')
+    # Gemini only needs to see what happens, so upload a small 360p copy: big uploads get cut off by the
+    # network proxy. Times stay the same, so the final clip is still cut from the full-quality window.
+    preview = path.with_name(path.stem + '-preview.mp4')
+    run(['ffmpeg', '-loglevel', 'error', '-y', '-i', str(path), '-vf', "scale=-2:'min(360,ih)'",
+         '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '300k', '-maxrate', '300k', '-bufsize', '600k',
+         '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-movflags', '+faststart', str(preview)], timeout=600)
+    try:
+        uploaded = with_retries(lambda: gem.upload_file(preview, key), f'upload {path.name}')
+    finally:
+        preview.unlink(missing_ok=True)
     try:
         result = with_retries(lambda: gem.ask({'uri': uploaded['uri'], 'mime_type': uploaded['mime_type']}, prompt,
                                               model=gemini_model(), key=key, timeout=600), f'judge {path.name}')
