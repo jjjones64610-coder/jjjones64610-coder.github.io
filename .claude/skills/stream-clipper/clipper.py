@@ -370,8 +370,15 @@ def process_twitch(channel: dict, args, gem, key, seen: set[str], now: float, wo
                 file_start, source = None, None
             window_len = float(run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
                                     '-of', 'csv=p=0', str(window)]).strip() or 0)
+            judged, verdict = False, None
             if key:
-                verdict = judge_window(gem, key, window, channel, c, window_len)
+                try:
+                    verdict = judge_window(gem, key, window, channel, c, window_len)
+                    judged = True
+                except SystemExit as exc:  # Gemini down or busy: still clip, picked by views
+                    log(f'{name}: Gemini unavailable for {tag} ({str(exc).split(". Detail:")[0]}); '
+                        'clipping it from viewer-clip views instead')
+            if judged:
                 if not verdict or not verdict.get('keep'):
                     log(f'{name}: Gemini passed on {tag} ({(verdict or {}).get("why", "no verdict")})')
                     results.append({'tag': tag, 'kept': False})
@@ -385,7 +392,8 @@ def process_twitch(channel: dict, args, gem, key, seen: set[str], now: float, wo
                 end = to_seconds(verdict.get('end_sec'))
                 title, why = verdict.get('title') or c.get('title'), verdict.get('why') or ''
             else:
-                score, why, title = None, 'Picked by viewer clip views (no Gemini key yet).', c.get('title')
+                note = 'Gemini was unavailable' if key else 'no Gemini key yet'
+                score, why, title = None, f'Picked by viewer clip views ({note}).', c.get('title')
                 start = end = None
             if start is None or end is None or end <= start:
                 # Fallback: the viewer clip plus lead-in and reaction tail.
