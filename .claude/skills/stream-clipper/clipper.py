@@ -351,22 +351,135 @@ def judge_window(gem, key: str, path: Path, channel: dict, clip: dict, window_le
     return verdict
 
 
-def compress(src: Path, dst: Path, start: float, end: float) -> int:
+YUNET_URL = ('https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/'
+             'face_detection_yunet/face_detection_yunet_2023mar.onnx')
+YUNET_SHA256 = '8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4'
+TOP_SHARE = 0.42          # facecam panel's share of the vertical frame height
+
+
+def face_model() -> Path | None:
+    """OpenCV's YuNet face detector (pinned by checksum), or None if OpenCV is missing."""
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        log('OpenCV not installed (pip install opencv-python-headless); vertical clips will be center-cropped')
+        return None
+    path = Path.home() / '.cache' / 'stream-clipper' / 'yunet.onnx'
+    if not path.exists() or sha256(path) != YUNET_SHA256:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.write_bytes(urllib.request.urlopen(YUNET_URL, timeout=60).read())
+        except Exception as exc:  # noqa: BLE001
+            log(f'could not download the face model ({exc}); vertical clips will be center-cropped')
+            return None
+        if sha256(path) != YUNET_SHA256:
+            path.unlink(missing_ok=True)
+            log('face model checksum mismatch; vertical clips will be center-cropped')
+            return None
+    return path
+
+
+def find_layout(src: Path, start: float, end: float, samples: int = 10) -> dict:
+    """Locate the streamer's face across sampled frames.
+
+    split:   small face in a fixed spot (webcam overlay) -> facecam on top, gameplay below
+    fullcam: big face (IRL / camera-only stream)         -> one 9:16 crop that follows the face
+    center:  no steady face found                        -> plain centered 9:16 crop
+    """
+    model = face_model()
+    if not model:
+        return {'mode': 'center'}
+    import cv2
+    boxes = []                                   # (frame index, x, y, w, h, score)
+    width = height = 0
+    tmp = src.with_name(src.stem + '-probe.jpg')
+    for i in range(samples):
+        t = start + (end - start) * (i + 0.5) / samples
+        try:
+            run(['ffmpeg', '-loglevel', 'error', '-y', '-ss', f'{t:.2f}', '-i', str(src), '-frames:v', '1', str(tmp)])
+        except RuntimeError:
+            continue
+        img = cv2.imread(str(tmp))
+        if img is None:
+            continue
+        height, width = img.shape[:2]
+        det = cv2.FaceDetectorYN.create(str(model), '', (width, height), 0.7)
+        _, faces = det.detect(img)
+        for f in faces if faces is not None else []:
+            boxes.append((i, float(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[-1])))
+    tmp.unlink(missing_ok=True)
+    if not boxes or not width:
+        return {'mode': 'center'}
+    # The webcam face sits in about the same spot in most frames; faces in the game move around.
+    best, best_frames = None, 0
+    for b in boxes:
+        cx, cy = b[1] + b[3] / 2, b[2] + b[4] / 2
+        near = [o for o in boxes if abs(o[1] + o[3] / 2 - cx) < width * 0.06 and abs(o[2] + o[4] / 2 - cy) < height * 0.08]
+        frames = len({o[0] for o in near})
+        if frames > best_frames:
+            best, best_frames = near, frames
+    if best_frames < max(3, samples // 3):
+        return {'mode': 'center', 'width': width, 'height': height}
+    med = lambda k: sorted(o[k] for o in best)[len(best) // 2]  # noqa: E731
+    fx, fy, fw, fh = med(1), med(2), med(3), med(4)
+    mode = 'fullcam' if fw >= width * 0.14 else 'split'
+    return {'mode': mode, 'width': width, 'height': height, 'cx': fx + fw / 2, 'cy': fy + fh / 2, 'fw': fw, 'fh': fh}
+
+
+def _even(v: float) -> int:
+    return max(2, int(v) // 2 * 2)
+
+
+def vertical_filter(layout: dict, out_w: int, out_h: int) -> str:
+    """ffmpeg filter_complex that turns a landscape frame into a filled 9:16 frame labelled [v]."""
+    w, h = layout.get('width'), layout.get('height')
+    if layout['mode'] == 'split':
+        top_h = _even(out_h * TOP_SHARE)
+        bot_h = out_h - top_h
+        # Facecam panel: the face takes about a third of the panel width.
+        cam_w = min(w, layout['fw'] * 2.8)
+        cam_h = cam_w * top_h / out_w
+        if cam_h > h:
+            cam_h, cam_w = h, h * out_w / top_h
+        cam_x = min(max(0, layout['cx'] - cam_w / 2), w - cam_w)
+        cam_y = min(max(0, layout['cy'] - cam_h * 0.45), h - cam_h)
+        # Gameplay panel: centered crop at full height.
+        g_h = h
+        g_w = g_h * out_w / bot_h
+        if g_w > w:
+            g_w, g_h = w, w * bot_h / out_w
+        g_x, g_y = (w - g_w) / 2, (h - g_h) / 2
+        return (f'[0:v]crop={_even(cam_w)}:{_even(cam_h)}:{int(cam_x)}:{int(cam_y)},scale={out_w}:{top_h},setsar=1[top];'
+                f'[0:v]crop={_even(g_w)}:{_even(g_h)}:{int(g_x)}:{int(g_y)},scale={out_w}:{bot_h},setsar=1[bot];'
+                f'[top][bot]vstack[v]')
+    # fullcam / center: one 9:16 crop at full height, following the face when there is one.
+    if w and h:
+        c_w = min(w, h * out_w / out_h)
+        cx = layout.get('cx', w / 2)
+        c_x = min(max(0, cx - c_w / 2), w - c_w)
+        return f'[0:v]crop={_even(c_w)}:{_even(h)}:{int(c_x)}:0,scale={out_w}:{out_h},setsar=1[v]'
+    return f'[0:v]crop=ih*{out_w}/{out_h}:ih,scale={out_w}:{out_h},setsar=1[v]'
+
+
+def compress(src: Path, dst: Path, start: float, end: float, layout: dict | None = None) -> int:
+    """Cut [start, end] as a vertical 9:16 clip that fits the Drive connector's upload limit."""
     length = max(1.0, end - start)
-    height = 720 if length <= 30 else 540 if length <= 45 else 480
+    layout = layout or find_layout(src, start, end)
+    out_w, out_h = (720, 1280) if length <= 30 else (540, 960)
     audio = 96_000
     video = max(150_000, int(TARGET_BYTES * 8 / length) - audio)
     for _ in range(4):
         run(['ffmpeg', '-loglevel', 'error', '-y', '-ss', f'{start:.2f}', '-to', f'{end:.2f}', '-i', str(src),
-             '-vf', f"scale=-2:'min({height},ih)'", '-c:v', 'libx264', '-preset', 'veryfast',
+             '-filter_complex', vertical_filter(layout, out_w, out_h), '-map', '[v]', '-map', '0:a?',
+             '-c:v', 'libx264', '-preset', 'veryfast',
              '-b:v', str(video), '-maxrate', str(video), '-bufsize', str(video * 2),
              '-c:a', 'aac', '-b:a', str(audio), '-movflags', '+faststart', str(dst)], timeout=600)
         size = dst.stat().st_size
         if size <= MAX_UPLOAD_BYTES:
             return size
         video = int(video * 0.8)
-        if video < 220_000 and height > 360:
-            height = 360
+        if video < 250_000 and out_w > 540:
+            out_w, out_h = 540, 960
     raise RuntimeError(f'could not get {dst.name} under the upload limit')
 
 
