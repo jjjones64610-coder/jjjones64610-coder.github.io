@@ -135,6 +135,8 @@ def gemini_key() -> str | None:
 
 
 _MODEL: str | None = None
+_GEMINI_OFF: str | None = None   # set once Gemini is out of quota or down, so the run stops waiting on it
+_TRANSIENT = ('Gemini network', 'Gemini service', 'Gemini quota')
 
 
 def gemini_model() -> str:
@@ -156,22 +158,28 @@ def other_flash_models(gem, key: str) -> list[str]:
 
 
 def ask_gemini(gem, key: str, video: dict, prompt: str, timeout: float, what: str) -> dict:
-    """Ask the current model; if it stays busy or unreachable, try other Flash models."""
-    global _MODEL
+    """Ask the current model; if it stays busy or unreachable, try other Flash models once each.
+
+    If none answers, Gemini is switched off for the rest of the run so later moments don't wait on it."""
+    global _MODEL, _GEMINI_OFF
+    if _GEMINI_OFF:
+        raise SystemExit(f'Gemini skipped: {_GEMINI_OFF}')
     try:
         return with_retries(lambda: gem.ask(video, prompt, model=gemini_model(), key=key, timeout=timeout), what, 3)
     except SystemExit as exc:
-        if not str(exc).startswith(('Gemini network', 'Gemini service', 'Gemini quota')):
+        if not str(exc).startswith(_TRANSIENT):
             raise
         last = exc
     for model in other_flash_models(gem, key):
-        log(f'{what}: {gemini_model()} is busy; trying {model}')
+        log(f'{what}: {gemini_model()} unavailable; trying {model}')
         try:
-            result = with_retries(lambda: gem.ask(video, prompt, model=model, key=key, timeout=timeout), what, 2)
+            result = gem.ask(video, prompt, model=model, key=key, timeout=timeout)
             _MODEL = model  # stick with the model that answered for the rest of this run
             return result
         except SystemExit as exc:
             last = exc
+    _GEMINI_OFF = str(last).split('. Detail:')[0]
+    log(f'Gemini switched off for the rest of this run ({_GEMINI_OFF})')
     raise last
 
 
@@ -182,7 +190,8 @@ def with_retries(fn, what: str, attempts: int = 4):
             return fn()
         except SystemExit as exc:
             text = str(exc)
-            transient = text.startswith(('Gemini network', 'Gemini service', 'Gemini quota'))
+            # Quota errors are not retried here: waiting rarely helps and it burns the run's time.
+            transient = text.startswith(_TRANSIENT) and not text.startswith('Gemini quota')
             if not transient or attempt == attempts:
                 raise
             wait = 30 * attempt
@@ -318,6 +327,8 @@ def judge_window(gem, key: str, path: Path, channel: dict, clip: dict, window_le
         '"why": "one sentence on what happens and the reaction"}. Times are seconds from the start of THIS '
         'video. Set keep to false if nothing here is genuinely entertaining.'
     )
+    if _GEMINI_OFF:
+        raise SystemExit(f'Gemini skipped: {_GEMINI_OFF}')
     # Gemini only needs to see what happens, so upload a small 360p copy: big uploads get cut off by the
     # network proxy. Times stay the same, so the final clip is still cut from the full-quality window.
     preview = path.with_name(path.stem + '-preview.mp4')
@@ -473,8 +484,8 @@ def process_youtube(channel: dict, args, gem, key, seen: set[str], seen_lines: l
     if done_today >= args.youtube_daily:
         log(f'{name}: YouTube daily limit reached ({done_today})')
         return None
-    if not key:
-        log(f'{name}: skipped (YouTube needs a Gemini key)')
+    if not key or _GEMINI_OFF:
+        log(f'{name}: skipped ({"Gemini is unavailable this run" if key else "YouTube needs a Gemini key"})')
         return None
     try:
         data = ytdlp_json(f'https://www.youtube.com/{name}/streams', '--flat-playlist', '--playlist-end', '3')
@@ -501,8 +512,11 @@ def process_youtube(channel: dict, args, gem, key, seen: set[str], seen_lines: l
     try:
         result = ask_gemini(gem, key, {'uri': url}, prompt, 900, f'{name} stream')
     except SystemExit as exc:
-        log(f'{name}: Gemini error: {exc}')
-        return None
+        # Record the attempt anyway: a multi-hour stream is costly, so each one gets one try per day.
+        reason = str(exc).split('. Detail:')[0]
+        log(f'{name}: Gemini error: {reason}')
+        return {'title': f"{today} {name} - {clean(stream.get('title'))} [yt-{stream['id']}] (not watched).txt",
+                'text': f"{name}: {stream.get('title')}\n{url}\n\nGemini couldn't watch this stream ({reason}).\n"}
     moments = parse_json(result['text'])
     if isinstance(moments, dict):
         moments = [moments]
