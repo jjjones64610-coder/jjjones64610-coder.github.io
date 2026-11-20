@@ -134,8 +134,45 @@ def gemini_key() -> str | None:
     return None
 
 
+_MODEL: str | None = None
+
+
 def gemini_model() -> str:
-    return os.environ.get('CLIPPER_GEMINI_MODEL') or os.environ.get('WATCH_GEMINI_MODEL') or 'gemini-3.7-flash'
+    return _MODEL or os.environ.get('CLIPPER_GEMINI_MODEL') or os.environ.get('WATCH_GEMINI_MODEL') or 'gemini-3.7-flash'
+
+
+def other_flash_models(gem, key: str) -> list[str]:
+    """Other Flash models this key can use, newest first, for when the main one is overloaded."""
+    try:
+        _, _, body = gem._call('GET', f'{gem.API}/v1beta/models?pageSize=200', key, timeout=60)
+        names = [m['name'].split('/', 1)[-1] for m in json.loads(body).get('models', [])
+                 if 'generateContent' in (m.get('supportedGenerationMethods') or [])]
+    except (SystemExit, Exception) as exc:  # noqa: BLE001
+        log(f'could not list Gemini models ({str(exc).split(". Detail:")[0]})')
+        return []
+    flash = [n for n in names if 'flash' in n and not any(x in n for x in ('image', 'tts', 'audio', 'live', 'embedding'))
+             and n != gemini_model()]
+    return sorted(flash, reverse=True)[:3]
+
+
+def ask_gemini(gem, key: str, video: dict, prompt: str, timeout: float, what: str) -> dict:
+    """Ask the current model; if it stays busy or unreachable, try other Flash models."""
+    global _MODEL
+    try:
+        return with_retries(lambda: gem.ask(video, prompt, model=gemini_model(), key=key, timeout=timeout), what, 3)
+    except SystemExit as exc:
+        if not str(exc).startswith(('Gemini network', 'Gemini service', 'Gemini quota')):
+            raise
+        last = exc
+    for model in other_flash_models(gem, key):
+        log(f'{what}: {gemini_model()} is busy; trying {model}')
+        try:
+            result = with_retries(lambda: gem.ask(video, prompt, model=model, key=key, timeout=timeout), what, 2)
+            _MODEL = model  # stick with the model that answered for the rest of this run
+            return result
+        except SystemExit as exc:
+            last = exc
+    raise last
 
 
 def with_retries(fn, what: str, attempts: int = 4):
@@ -292,8 +329,8 @@ def judge_window(gem, key: str, path: Path, channel: dict, clip: dict, window_le
     finally:
         preview.unlink(missing_ok=True)
     try:
-        result = with_retries(lambda: gem.ask({'uri': uploaded['uri'], 'mime_type': uploaded['mime_type']}, prompt,
-                                              model=gemini_model(), key=key, timeout=600), f'judge {path.name}')
+        result = ask_gemini(gem, key, {'uri': uploaded['uri'], 'mime_type': uploaded['mime_type']}, prompt,
+                            600, f'judge {path.name}')
     finally:
         gem.delete_file(uploaded['name'], key)
     verdict = parse_json(result['text'])
@@ -334,7 +371,8 @@ def process_twitch(channel: dict, args, gem, key, seen: set[str], now: float, wo
         return []
     top_views = max(c['view_count'] for c in clips)
     hour = int(now // 3600) * 3600
-    lo, hi = hour - args.hours_ago * 3600, hour - (args.hours_ago - 1) * 3600
+    lo = hour - args.hours_ago * 3600
+    hi = lo + max(1, min(args.window_hours, args.hours_ago)) * 3600
     bucket = sorted((c for c in clips if lo <= c['timestamp'] < hi), key=lambda c: -c['view_count'])
     # Several viewers often clip the same moment: keep the most viewed per 90-second span.
     picked: list[dict] = []
@@ -347,7 +385,7 @@ def process_twitch(channel: dict, args, gem, key, seen: set[str], now: float, wo
     threshold = max(args.min_views, int(top_views * share))
     candidates = [c for c in picked if c['view_count'] >= threshold and f"tw-{c['id']}" not in seen]
     candidates = candidates[:limit]
-    log(f'{name}: {len(clips)} clips in 24h, {len(bucket)} from the target hour, {len(candidates)} to review')
+    log(f'{name}: {len(clips)} clips in 24h, {len(bucket)} in the review window, {len(candidates)} to review')
 
     vods = VodIndex(name)
     results = []
@@ -461,8 +499,7 @@ def process_youtube(channel: dict, args, gem, key, seen: set[str], seen_lines: l
         'seconds from the start of the video.'
     )
     try:
-        result = with_retries(lambda: gem.ask({'uri': url}, prompt, model=gemini_model(), key=key, timeout=900),
-                              f'{name} stream')
+        result = ask_gemini(gem, key, {'uri': url}, prompt, 900, f'{name} stream')
     except SystemExit as exc:
         log(f'{name}: Gemini error: {exc}')
         return None
@@ -495,8 +532,11 @@ def main() -> int:
     ap.add_argument('--channels', default=str(HERE / 'channels.txt'))
     ap.add_argument('--only', help='comma-separated channel names to process (for testing)')
     ap.add_argument('--hours-ago', type=int, default=24,
-                    help='review Twitch clips made during the hour this many hours ago (default 24, so '
-                         'clips have had a day to collect views)')
+                    help='oldest Twitch clips to review, in hours (default 24)')
+    ap.add_argument('--window-hours', type=int, default=18,
+                    help='review Twitch clips made in this many hours starting --hours-ago ago (default 18: '
+                         'clips 6-24 hours old, so they have had time to collect views)')
+    ap.add_argument('--max-clips', type=int, default=4, help='most clips uploaded per run; the best are kept')
     ap.add_argument('--per-channel', type=int, default=2, help='Twitch moments reviewed per channel per run')
     ap.add_argument('--min-views', type=int, default=25)
     ap.add_argument('--min-score', type=int, default=7)
@@ -517,25 +557,39 @@ def main() -> int:
     now = time.time()
     today = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d')
 
-    clips, reports = [], []
+    clips, rejected, reports = [], [], []
     for ch in channels:
         if ch['platform'] == 'twitch':
-            clips += [r for r in process_twitch(ch, args, gem, key, seen, now, out) if r.get('kept')]
+            results = process_twitch(ch, args, gem, key, seen, now, out)
+            clips += [r for r in results if r.get('kept')]
+            rejected += [r['tag'] for r in results if not r.get('kept')]
         elif ch['platform'] == 'youtube' and not args.no_youtube:
             rep = process_youtube(ch, args, gem, key, seen, seen_lines, today)
             if rep:
                 reports.append(rep)
                 seen_lines.append(rep['title'])
 
-    if clips:
+    # Keep the best clips (Gemini score first, then viewer-clip views); the rest wait for a later run.
+    clips.sort(key=lambda c: (c['score'] is not None, c['score'] or 0, c['viewer_clip_views']), reverse=True)
+    if len(clips) > args.max_clips:
+        log(f'keeping the best {args.max_clips} of {len(clips)} clips this run')
+        clips = clips[:args.max_clips]
+    if clips or rejected:
         stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:00 UTC')
         body = [f'Twitch clips, run {stamp}\n']
+        if not clips:
+            body.append('No moments were good enough this run.')
         for c in sorted(clips, key=lambda c: -(c['score'] or 0)):
             score = f"[{c['score']}/10] " if c['score'] is not None else ''
             body.append(f"- {score}{c['channel']}: {c['title']} ({c['length_sec']}s)\n  {c['why']}\n"
                         f"  Drive file: {c['drive_title']}\n  Full quality: {c['full_quality']}\n"
                         f"  Viewer clip ({c['viewer_clip_views']} views): {c['viewer_clip']}")
-        reports.append({'title': f'{stamp[:13].replace(" ", " ")}h Twitch clips.txt', 'text': '\n'.join(body) + '\n'})
+        # Moments Gemini turned down go in the title so later runs skip them (titles are the run history).
+        passed = ''.join(f' [{t}]' for t in rejected)
+        if rejected:
+            body.append(f'\nPassed on {len(rejected)} moment(s):{passed}')
+        reports.append({'title': f'{stamp[:13]}h Twitch clips{" - passed" + passed if rejected else ""}.txt',
+                        'text': '\n'.join(body) + '\n'})
 
     manifest = {'generated': dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'),
                 'gemini': bool(key), 'clips': clips, 'reports': reports}
