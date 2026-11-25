@@ -5,9 +5,66 @@
         "source": "github",
         "repo": "bradautomates/claude-video"
       }
+    },
+    "headroom-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "headroomlabs-ai/headroom"
+      }
+    },
+    "codeburn": {
+      "source": {
+        "source": "github",
+        "repo": "getagentseal/codeburn"
+      }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
     }
   },
   "enabledPlugins": {
-    "watch@claude-video": true
+    "watch@claude-video": true,
+    "headroom@headroom-marketplace": true,
+    "codeburn@codeburn": true,
+    "ponytail@ponytail": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'command -v graphify >/dev/null 2>&1 || exit 0; exec graphify hook-guard search'",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'command -v graphify >/dev/null 2>&1 || exit 0; exec graphify hook-guard read'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'command -v graphify >/dev/null 2>&1 || exit 0; exec graphify hook-guard compact'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
